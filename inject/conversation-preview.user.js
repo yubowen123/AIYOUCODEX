@@ -1798,6 +1798,32 @@
     updateSectionTabState(sources.items);
   }
 
+  function sortRecentRowsByLastCommunication() {
+    const recentSection = sectionSources.get("最近")?.section;
+    if (!recentSection?.isConnected) return;
+    const rowsByList = new Map();
+    for (const row of recentSection.querySelectorAll(ROW_SELECTOR)) {
+      const listItem = row.closest('[role="listitem"]');
+      const list = listItem?.parentElement;
+      if (!listItem || list?.getAttribute("role") !== "list") continue;
+      const entries = rowsByList.get(list) || [];
+      entries.push({
+        item: listItem,
+        key: rowKey(row),
+        updatedAt: Date.parse(previews.get(rowKey(row))?.updatedAt || ""),
+      });
+      rowsByList.set(list, entries);
+    }
+    for (const [list, entries] of rowsByList) {
+      if (entries.length < 2 || entries.some((entry) => !Number.isFinite(entry.updatedAt))) continue;
+      const sorted = [...entries].sort((left, right) => right.updatedAt - left.updatedAt);
+      const currentSignature = entries.map((entry) => entry.key).join("\n");
+      const sortedSignature = sorted.map((entry) => entry.key).join("\n");
+      if (currentSignature === sortedSignature) continue;
+      for (const entry of sorted) list.appendChild(entry.item);
+    }
+  }
+
   function folderLastUsed(folder) {
     let latest = 0;
     for (const row of folder.querySelectorAll(ROW_SELECTOR)) {
@@ -2586,6 +2612,7 @@
         })
       : null;
     for (const row of rows) applySummary(row, previews.get(rowKey(row)));
+    sortRecentRowsByLastCommunication();
     if (anchor) {
       anchor.scrollIntoView({ block: viewMode === "card" ? "center" : "nearest" });
       layoutAnchored = true;
