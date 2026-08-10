@@ -123,9 +123,14 @@ test("semantic tags reject versions, status codes, and generic tool tokens", asy
 test("last communication time is compact and relative to the current day", async () => {
   const { formatLastCommunication } = await cardViewModule();
   const now = new Date("2026-08-09T12:00:00+08:00");
-  assert.equal(formatLastCommunication?.("2026-08-09T10:35:00+08:00", now), "10:35");
-  assert.equal(formatLastCommunication?.("2026-08-08T23:10:00+08:00", now), "昨天 23:10");
-  assert.equal(formatLastCommunication?.("2026-07-28T09:00:00+08:00", now), "7月28日");
+  const options = { timeZone: "Asia/Shanghai" };
+  assert.equal(formatLastCommunication?.("2026-08-09T10:35:00+08:00", now, options), "10:35");
+  assert.equal(formatLastCommunication?.("2026-08-08T23:10:00+08:00", now, options), "昨天 23:10");
+  assert.equal(formatLastCommunication?.("2026-07-28T09:00:00+08:00", now, options), "7月28日");
+  assert.equal(
+    formatLastCommunication?.("2026-08-09T10:35:00+08:00", now, { timeZone: "UTC" }),
+    "02:35",
+  );
 });
 
 test("view switch exposes its current checked state and destination", async () => {
@@ -150,7 +155,7 @@ test("card presentation always contains compact time, summary, and three tags", 
     recentInput: "增加样式切换按钮。",
     recentOutput: "已完成交互实现。",
     updatedAt: "2026-08-09T10:35:00+08:00",
-  }, new Date("2026-08-09T12:00:00+08:00"));
+  }, new Date("2026-08-09T12:00:00+08:00"), { timeZone: "Asia/Shanghai" });
   assert.equal(card?.lastCommunication, "10:35");
   assert.equal(card?.summary, "为 Codex 对话侧栏补充卡片视图和悬浮详情。");
   assert.equal(card?.tags.length, 3);
