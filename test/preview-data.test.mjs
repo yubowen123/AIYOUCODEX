@@ -133,3 +133,40 @@ test("repository reads the latest real rate limit from the newest session", asyn
     resetsAt: "2026-08-15T20:30:20.000Z",
   });
 });
+
+test("repository search catalog includes every indexed thread assigned to a saved project", async () => {
+  const codexHome = await mkdtemp(path.join(os.tmpdir(), "codex-search-catalog-test-"));
+  const targetId = "019f0d8f-9645-75a0-87f7-6e5cf6328ba6";
+  const unassignedId = "019f0d8f-9645-75a0-87f7-6e5cf6328ba7";
+  await writeFile(path.join(codexHome, "session_index.jsonl"), [
+    JSON.stringify({ id: targetId, thread_name: "旧知识卡名称", updated_at: "2026-06-27T09:00:00Z" }),
+    JSON.stringify({ id: targetId, thread_name: "创建知识卡片技能", updated_at: "2026-06-28T09:29:06Z" }),
+    JSON.stringify({ id: unassignedId, thread_name: "未分配项目的对话", updated_at: "2026-06-29T09:00:00Z" }),
+  ].join("\n"));
+  await writeFile(path.join(codexHome, ".codex-global-state.json"), JSON.stringify({
+    "local-projects": {
+      "project-innovation": {
+        id: "project-innovation",
+        name: "为创新而生",
+        rootPaths: ["/Users/test/Documents/为创新而生"],
+      },
+    },
+    "thread-project-assignments": {
+      [targetId]: {
+        projectKind: "local",
+        projectId: "project-innovation",
+        cwd: "/Users/test/Documents/为创新而生",
+      },
+    },
+  }));
+
+  const repository = new PreviewRepository({ codexHome });
+  assert.equal(typeof repository.readSearchCatalog, "function");
+  assert.deepEqual(await repository.readSearchCatalog(), [{
+    threadId: targetId,
+    title: "创建知识卡片技能",
+    updatedAt: "2026-06-28T09:29:06.000Z",
+    projectId: "project-innovation",
+    projectName: "为创新而生",
+  }]);
+});

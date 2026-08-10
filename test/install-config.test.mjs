@@ -59,6 +59,10 @@ test("installer activation writes a loadable user LaunchAgent without invoking l
     const launcherSource = await readFile(launcherExecutable, "utf8");
     assert.match(launcherSource, /PORT=9231/);
     assert.match(launcherSource, /--remote-debugging-port=\$\{PORT\}/);
+    assert.match(
+      launcherSource,
+      /--enable-features=LocalNetworkAccessForSubframeNavigationsWarningOnly/,
+    );
     assert.ok((await stat(launcherExecutable)).mode & 0o100, "launcher must be executable by its owner");
     await assert.rejects(access(legacyPlistPath));
   } finally {

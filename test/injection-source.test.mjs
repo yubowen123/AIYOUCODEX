@@ -26,7 +26,16 @@ test("injection is idempotent and reversible", () => {
 
 test("renderer receives host-pushed previews without a local HTTP fetch", () => {
   assert.match(source, /setPreviews/);
+  assert.match(source, /setHomeProjects/);
   assert.doesNotMatch(source, /fetch\s*\(/);
+});
+
+test("home project cards are accessible, pinnable, and use Codex internal navigation", () => {
+  assert.match(source, /aria-label", "当前项目"/);
+  assert.match(source, /aria-pressed/);
+  assert.match(source, /codex-conversation-preview:home-projects-state/);
+  assert.match(source, /navigate-to-route/);
+  assert.match(source, /data-codex-home-project-open/);
 });
 
 test("sidebar groups use accessible tabs and preserve native project actions", () => {

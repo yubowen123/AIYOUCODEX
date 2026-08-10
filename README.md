@@ -42,6 +42,8 @@
 - 搜索框可模糊搜索文件夹名和项目名，命中后直接展示对应文件夹。
 - 顶部 6 个功能入口改为图标卡片；超过 6 个时自动换行。
 - 顶部展示 Codex 自身记录的真实剩余比例和重置时间，不自行估算额度。
+- “新对话”首页集中展示 Taskboard 中正在执行的项目；点击卡片直接进入关联对话。
+- 项目执行完成后继续显示为“待查看”，首次点击后收起；钉住的项目跨状态、跨重启持续展示。
 
 ## 系统要求
 
@@ -96,6 +98,7 @@ node scripts/verify-section-tabs.mjs
 node scripts/verify-folder-switcher.mjs
 node scripts/verify-card-view.mjs
 node scripts/verify-reload-persistence.mjs
+node scripts/verify-home-projects.mjs
 ```
 
 ## License

@@ -19,6 +19,8 @@
   const FOLDER_SWITCHER_ID = "codex-sidebar-folder-switcher";
   const FOLDER_STORAGE_KEY = "codex-conversation-preview:folder-id";
   const VIEW_STORAGE_KEY = "codex-conversation-preview:view-mode";
+  const HOME_PROJECT_SHELF_ID = "codex-home-project-shelf";
+  const HOME_PROJECT_STATE_KEY = "codex-conversation-preview:home-projects-state";
   const SUMMARY_CLASS = "codex-conversation-core-summary";
   const DETAILS_CLASS = "codex-conversation-hover-details";
   const CARD_CONTENT_CLASS = "codex-conversation-card-content";
@@ -53,12 +55,26 @@
   let folderSearchQuery = "";
   let folderPreSearchId = null;
   let folderTagsExpanded = false;
+  let searchCatalog = [];
+  let searchCatalogByProject = new Map();
+  let folderSearchExpansionPending = null;
+  let folderSearchRevealKey = "";
+  let homeProjects = {
+    available: true,
+    cards: [],
+    message: "",
+  };
+  let homeProjectsState = null;
   try { viewMode = localStorage.getItem(VIEW_STORAGE_KEY) === "card" ? "card" : "list"; } catch {}
   try {
     const savedSectionTab = localStorage.getItem(SECTION_TAB_STORAGE_KEY);
     if (SECTION_NAMES.includes(savedSectionTab)) activeSectionTab = savedSectionTab;
   } catch {}
   try { activeFolderId = localStorage.getItem(FOLDER_STORAGE_KEY) || null; } catch {}
+  try {
+    const savedHomeProjectsState = JSON.parse(localStorage.getItem(HOME_PROJECT_STATE_KEY) || "null");
+    if (savedHomeProjectsState && typeof savedHomeProjectsState === "object") homeProjectsState = savedHomeProjectsState;
+  } catch {}
 
   function installStyles() {
     document.getElementById(STYLE_ID)?.remove();
@@ -70,6 +86,10 @@
         min-height: 48px !important;
         padding-top: 5px !important;
         padding-bottom: 5px !important;
+      }
+      ${ROW_SELECTOR}[data-codex-sidebar-search-match="true"] {
+        background: color-mix(in srgb, var(--color-accent, #2f80ed) 10%, transparent) !important;
+        box-shadow: inset 3px 0 0 color-mix(in srgb, var(--color-accent, #2f80ed) 65%, transparent);
       }
       [data-codex-conversation-preview-title="true"] {
         flex-direction: column !important;
@@ -761,6 +781,230 @@
       #${TOGGLE_ID}[aria-checked="true"] .${SWITCH_THUMB_CLASS} {
         transform: translateX(24px);
       }
+      [data-codex-home-suggestions-hidden="true"] {
+        display: none !important;
+      }
+      #${HOME_PROJECT_SHELF_ID} {
+        display: flex;
+        width: 100%;
+        min-width: 0;
+        flex-direction: column;
+        gap: 8px;
+        box-sizing: border-box;
+        color: var(--color-token-text-primary, var(--color-token-foreground, currentColor));
+      }
+      #${HOME_PROJECT_SHELF_ID} .codex-home-project-header {
+        display: flex;
+        min-width: 0;
+        height: 24px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      #${HOME_PROJECT_SHELF_ID} .codex-home-project-heading {
+        display: inline-flex;
+        min-width: 0;
+        align-items: center;
+        gap: 7px;
+        margin: 0;
+        font-size: 13px;
+        font-weight: 650;
+        line-height: 20px;
+      }
+      #${HOME_PROJECT_SHELF_ID} .codex-home-project-heading::before {
+        width: 7px;
+        height: 7px;
+        flex: 0 0 7px;
+        border-radius: 50%;
+        background: var(--vscode-textLink-foreground, #2f95ff);
+        box-shadow: 0 0 0 4px color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 10%, transparent);
+        content: "";
+      }
+      #${HOME_PROJECT_SHELF_ID} .codex-home-project-count {
+        color: var(--color-token-description-foreground, color-mix(in srgb, currentColor 56%, transparent));
+        font-size: 11px;
+        line-height: 18px;
+        white-space: nowrap;
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-grid] {
+        display: grid;
+        min-width: 0;
+        max-height: 174px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        align-items: stretch;
+        gap: 8px;
+        overflow-x: hidden;
+        overflow-y: auto;
+        padding: 1px;
+        scrollbar-gutter: stable;
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-card] {
+        position: relative;
+        min-width: 0;
+        height: 82px;
+        overflow: hidden;
+        border: 0.5px solid color-mix(in srgb, currentColor 11%, transparent);
+        border-radius: 13px;
+        background: color-mix(in srgb, var(--color-token-main-surface-secondary, Canvas) 72%, transparent);
+        box-shadow: inset 0 1px 0 color-mix(in srgb, white 22%, transparent), 0 4px 13px color-mix(in srgb, black 5%, transparent);
+        backdrop-filter: blur(14px) saturate(112%);
+        -webkit-backdrop-filter: blur(14px) saturate(112%);
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-open] {
+        display: grid;
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        grid-template-columns: 34px minmax(0, 1fr);
+        grid-template-rows: 20px 18px 18px;
+        align-content: center;
+        column-gap: 9px;
+        box-sizing: border-box;
+        padding: 9px 34px 9px 10px;
+        overflow: hidden;
+        border: 0;
+        border-radius: inherit;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+        transition: background-color 150ms ease, transform 150ms ease;
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-open]:hover {
+        background: color-mix(in srgb, var(--color-token-list-hover-background, Canvas) 82%, transparent);
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-open]:active {
+        transform: scale(0.995);
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-open]:focus-visible,
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-pin]:focus-visible {
+        outline: 2px solid var(--color-token-accent-foreground, Highlight);
+        outline-offset: -3px;
+      }
+      #${HOME_PROJECT_SHELF_ID} .codex-home-project-avatar {
+        display: inline-flex;
+        grid-row: 1 / 4;
+        width: 34px;
+        height: 34px;
+        align-self: center;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        border-radius: 10px;
+        background: color-mix(in srgb, currentColor 88%, Canvas);
+        color: var(--color-token-main-surface-primary, Canvas);
+        font-size: 13px;
+        font-weight: 680;
+        line-height: 1;
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-name],
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-task] {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-name] {
+        padding-right: 4px;
+        font-size: 13px;
+        font-weight: 640;
+        line-height: 20px;
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-task] {
+        color: var(--color-token-description-foreground, color-mix(in srgb, currentColor 63%, transparent));
+        font-size: 11px;
+        line-height: 18px;
+      }
+      #${HOME_PROJECT_SHELF_ID} .codex-home-project-meta {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 6px;
+        overflow: hidden;
+        font-size: 10px;
+        line-height: 18px;
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-status] {
+        display: inline-flex;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: 4px;
+        color: var(--color-token-description-foreground, color-mix(in srgb, currentColor 62%, transparent));
+        white-space: nowrap;
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-status]::before {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: currentColor;
+        content: "";
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-phase="active"] [data-codex-home-project-status] {
+        color: var(--vscode-textLink-foreground, #2f95ff);
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-phase="completed"] [data-codex-home-project-status] {
+        color: #b7791f;
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-phase="pinned"] [data-codex-home-project-status] {
+        color: #7c5ce0;
+      }
+      #${HOME_PROJECT_SHELF_ID} .codex-home-project-active-count {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--color-token-description-foreground, color-mix(in srgb, currentColor 52%, transparent));
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-pin] {
+        display: inline-flex;
+        position: absolute;
+        z-index: 2;
+        top: 7px;
+        right: 7px;
+        width: 25px;
+        height: 25px;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--color-token-description-foreground, color-mix(in srgb, currentColor 55%, transparent));
+        cursor: pointer;
+        transition: color 150ms ease, background-color 150ms ease, transform 150ms ease;
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-pin]:hover {
+        background: color-mix(in srgb, currentColor 7%, transparent);
+        color: var(--color-token-text-primary, currentColor);
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-pin][aria-pressed="true"] {
+        background: color-mix(in srgb, #7c5ce0 13%, transparent);
+        color: #7c5ce0;
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-pin]:active {
+        transform: scale(0.94);
+      }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-pin] svg {
+        width: 15px;
+        height: 15px;
+      }
+      #${HOME_PROJECT_SHELF_ID}[data-available="false"] {
+        width: fit-content;
+        max-width: 100%;
+        padding: 7px 10px;
+        border: 0.5px solid color-mix(in srgb, currentColor 10%, transparent);
+        border-radius: 10px;
+        background: color-mix(in srgb, var(--color-token-main-surface-secondary, Canvas) 62%, transparent);
+        color: var(--color-token-description-foreground, color-mix(in srgb, currentColor 58%, transparent));
+        font-size: 11px;
+        line-height: 18px;
+      }
+      @media (max-width: 1050px) {
+        #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-grid] {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
       @media (prefers-reduced-motion: reduce) {
         #${TOGGLE_ID},
         #${TOGGLE_ID} .${SWITCH_THUMB_CLASS},
@@ -768,7 +1012,9 @@
         #${SHORTCUT_GRID_ID} .${SHORTCUT_CARD_CLASS},
         #${SECTION_TABS_ID} [role="tab"],
         #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-tag],
-        #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-expand] svg {
+        #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-expand] svg,
+        #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-open],
+        #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-pin] {
           transition-duration: 0.01ms !important;
         }
       }
@@ -1298,6 +1544,12 @@
       const threadTitles = Array.from(folder.querySelectorAll(ROW_SELECTOR))
         .map((thread) => thread.getAttribute("data-app-action-sidebar-thread-title") || "")
         .filter(Boolean);
+      const catalogEntries = searchCatalogByProject.get(id) || [];
+      const catalogTitles = catalogEntries.map((entry) => entry.title);
+      const catalogLastUsed = catalogEntries.reduce((latest, entry) => {
+        const time = Date.parse(entry.updatedAt || "");
+        return Number.isFinite(time) && time > latest ? time : latest;
+      }, 0);
       return [{
         id,
         label,
@@ -1308,8 +1560,9 @@
         actions: rowActions || existingActions || null,
         sourceIndex,
         threadTitles,
-        searchText: [label, ...threadTitles].join(" "),
-        lastUsed: folderLastUsed(folder),
+        catalogEntries,
+        searchText: [label, ...threadTitles, ...catalogTitles].join(" "),
+        lastUsed: Math.max(folderLastUsed(folder), catalogLastUsed),
         active: Boolean(folder.querySelector('[aria-current="page"], [data-app-action-sidebar-thread-active="true"]')),
       }];
     });
@@ -1363,6 +1616,59 @@
       .sort((left, right) => needle
         ? left.searchScore - right.searchScore || right.lastUsed - left.lastUsed || left.sourceIndex - right.sourceIndex
         : right.lastUsed - left.lastUsed || left.sourceIndex - right.sourceIndex);
+  }
+
+  function normalizedThreadId(value) {
+    return String(value || "").trim().replace(/^(?:local|cloud):/i, "").toLocaleLowerCase();
+  }
+
+  function catalogMatchesForFolder(item, query = folderSearchQuery) {
+    const needle = normalizeFolderSearch(query);
+    if (!needle) return [];
+    return (item?.catalogEntries || [])
+      .map((entry) => ({ ...entry, searchScore: fuzzyFolderScore(entry.title, needle) }))
+      .filter((entry) => Number.isFinite(entry.searchScore))
+      .sort((left, right) => left.searchScore - right.searchScore
+        || Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
+  }
+
+  function revealFolderSearchMatch(item) {
+    document.querySelectorAll(`${ROW_SELECTOR}[data-codex-sidebar-search-match="true"]`).forEach((row) => {
+      row.removeAttribute("data-codex-sidebar-search-match");
+    });
+    if (!item || item.id !== activeFolderId || !normalizeFolderSearch(folderSearchQuery)) {
+      folderSearchExpansionPending = null;
+      folderSearchRevealKey = "";
+      return;
+    }
+    const matches = catalogMatchesForFolder(item);
+    if (!matches.length) return;
+    const matchingIds = new Set(matches.map((entry) => normalizedThreadId(entry.threadId)));
+    const matchingTitles = new Set(matches.map((entry) => entry.title));
+    const rows = Array.from(item.folder.querySelectorAll(ROW_SELECTOR));
+    const match = rows.find((row) => matchingIds.has(normalizedThreadId(
+      row.getAttribute("data-app-action-sidebar-thread-id"),
+    ))) || rows.find((row) => matchingTitles.has(
+      row.getAttribute("data-app-action-sidebar-thread-title") || "",
+    ));
+    if (match) {
+      folderSearchExpansionPending = null;
+      match.dataset.codexSidebarSearchMatch = "true";
+      const revealKey = `${normalizeFolderSearch(folderSearchQuery)}:${rowKey(match)}`;
+      if (folderSearchRevealKey !== revealKey) {
+        folderSearchRevealKey = revealKey;
+        requestAnimationFrame(() => match.scrollIntoView({ block: "nearest" }));
+      }
+      return;
+    }
+    const expandButton = Array.from(item.folder.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "展开显示");
+    if (!expandButton) return;
+    if (folderSearchExpansionPending?.id === item.id
+      && folderSearchExpansionPending?.rowCount === rows.length) return;
+    folderSearchExpansionPending = { id: item.id, rowCount: rows.length };
+    expandButton.click();
+    scheduleSync();
   }
 
   function setNativeFolderExpanded(item) {
@@ -1459,6 +1765,8 @@
     const input = document.querySelector(`#${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-search]`);
     if (input) input.value = "";
     folderSearchQuery = "";
+    folderSearchExpansionPending = null;
+    folderSearchRevealKey = "";
     if (folderPreSearchId && folderSources.has(folderPreSearchId)) activeFolderId = folderPreSearchId;
     folderPreSearchId = null;
     updateFolderSwitcherState(Array.from(folderSources.values()));
@@ -1591,16 +1899,21 @@
     const clear = root.querySelector("[data-codex-sidebar-folder-clear]");
     clear.hidden = !folderSearchQuery;
     const result = root.querySelector("[data-codex-sidebar-folder-result]");
+    const matchingConversationCount = ranked.reduce(
+      (count, item) => count + catalogMatchesForFolder(item).length,
+      0,
+    );
     result.textContent = !ranked.length
       ? "没有匹配的项目"
       : normalizeFolderSearch(folderSearchQuery)
-        ? `找到 ${ranked.length} 个匹配项目`
+        ? `找到 ${ranked.length} 个项目 · ${matchingConversationCount} 个对话`
         : `${ranked.length} 个文件夹 · 最近使用优先`;
     const expand = root.querySelector("[data-codex-sidebar-folder-expand]");
     expand.hidden = ranked.length <= 6;
     expand.setAttribute("aria-expanded", String(folderTagsExpanded));
     expand.querySelector("span").textContent = folderTagsExpanded ? "收起" : "展开全部";
     moveActiveFolderActions(items.find((item) => item.id === activeFolderId));
+    revealFolderSearchMatch(items.find((item) => item.id === activeFolderId));
   }
 
   function clearFolderEnhancement() {
@@ -1647,6 +1960,212 @@
       folderSources = new Map(sources.items.map((item) => [item.id, item]));
     }
     updateFolderSwitcherState(sources.items);
+  }
+
+  function persistHomeProjectsState() {
+    try {
+      if (homeProjectsState && typeof homeProjectsState === "object") {
+        localStorage.setItem(HOME_PROJECT_STATE_KEY, JSON.stringify(homeProjectsState));
+      }
+    } catch {}
+  }
+
+  function homeProjectRoute(rawThreadId) {
+    const threadId = String(rawThreadId || "").trim().replace(/^(?:local|cloud):/i, "");
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(threadId)
+      ? `/local/${threadId}`
+      : null;
+  }
+
+  function updateViewedCompletion(card) {
+    if (!card?.projectId || !card?.completionToken) return;
+    if (!homeProjectsState || typeof homeProjectsState !== "object") homeProjectsState = {};
+    if (!homeProjectsState.seenCompletionByProject || typeof homeProjectsState.seenCompletionByProject !== "object") {
+      homeProjectsState.seenCompletionByProject = {};
+    }
+    homeProjectsState.seenCompletionByProject[card.projectId] = card.completionToken;
+    persistHomeProjectsState();
+  }
+
+  function openHomeProject(card) {
+    const route = homeProjectRoute(card?.threadId);
+    if (!route) return;
+    updateViewedCompletion(card);
+    window.postMessage({ type: "navigate-to-route", path: route }, "*");
+  }
+
+  function togglePinnedHomeProject(projectId) {
+    if (!projectId) return;
+    if (!homeProjectsState || typeof homeProjectsState !== "object") homeProjectsState = {};
+    const pinned = new Set(Array.isArray(homeProjectsState.pinnedProjectIds)
+      ? homeProjectsState.pinnedProjectIds.filter((id) => typeof id === "string")
+      : []);
+    const willPin = !pinned.has(projectId);
+    if (willPin) pinned.add(projectId);
+    else pinned.delete(projectId);
+    homeProjectsState.pinnedProjectIds = [...pinned].sort();
+    persistHomeProjectsState();
+
+    homeProjects.cards = homeProjects.cards.flatMap((card) => {
+      if (card.projectId !== projectId) return [card];
+      if (willPin) {
+        return [{
+          ...card,
+          pinned: true,
+          phase: card.phase === "active" ? "active" : "pinned",
+          statusLabel: card.phase === "active" ? "执行中" : "已钉住",
+        }];
+      }
+      if (card.phase === "active") return [{ ...card, pinned: false }];
+      if (card.completionToken) {
+        return [{ ...card, pinned: false, phase: "completed", statusLabel: "待查看" }];
+      }
+      return [];
+    });
+    document.getElementById(HOME_PROJECT_SHELF_ID)?.removeAttribute("data-signature");
+    sync();
+  }
+
+  function createHomeProjectCard(card) {
+    const root = document.createElement("div");
+    root.dataset.codexHomeProjectCard = "true";
+    root.dataset.codexHomeProjectId = card.projectId;
+    root.dataset.phase = card.phase;
+
+    const open = document.createElement("button");
+    open.type = "button";
+    open.dataset.codexHomeProjectOpen = "true";
+    open.setAttribute("aria-label", `打开“${card.projectName}”项目的关联对话`);
+    open.title = card.taskTitle;
+    open.onclick = () => openHomeProject(card);
+
+    const avatar = document.createElement("span");
+    avatar.className = "codex-home-project-avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    avatar.textContent = Array.from(String(card.projectName || "项目").trim())[0] || "项";
+
+    const name = document.createElement("span");
+    name.dataset.codexHomeProjectName = "true";
+    name.textContent = card.projectName;
+
+    const task = document.createElement("span");
+    task.dataset.codexHomeProjectTask = "true";
+    task.textContent = card.taskTitle;
+
+    const meta = document.createElement("span");
+    meta.className = "codex-home-project-meta";
+    const status = document.createElement("span");
+    status.dataset.codexHomeProjectStatus = "true";
+    status.textContent = card.statusLabel;
+    const count = document.createElement("span");
+    count.className = "codex-home-project-active-count";
+    count.textContent = card.activeTaskCount > 1
+      ? `${card.activeTaskCount} 个任务正在执行`
+      : card.phase === "completed"
+        ? "完成后待查看"
+        : card.phase === "pinned"
+          ? "固定显示"
+          : card.taskIdentifier || "打开关联对话";
+    meta.append(status, count);
+    open.append(avatar, name, task, meta);
+
+    const pin = document.createElement("button");
+    pin.type = "button";
+    pin.dataset.codexHomeProjectPin = "true";
+    pin.setAttribute("aria-pressed", String(card.pinned));
+    const pinLabel = card.pinned ? `取消钉住“${card.projectName}”项目` : `钉住“${card.projectName}”项目`;
+    pin.setAttribute("aria-label", pinLabel);
+    pin.title = pinLabel;
+    pin.innerHTML = '<svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M7.1 3.5h5.8l-.7 4.1 2.3 2.3v1.2H5.5V9.9l2.3-2.3-.7-4.1Z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/><path d="M10 11.1v5.4" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>';
+    pin.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      togglePinnedHomeProject(card.projectId);
+    };
+
+    root.append(open, pin);
+    return root;
+  }
+
+  function clearHomeProjectShelf() {
+    document.getElementById(HOME_PROJECT_SHELF_ID)?.remove();
+    document.querySelectorAll("[data-codex-home-suggestions-hidden]").forEach((node) => {
+      node.removeAttribute("data-codex-home-suggestions-hidden");
+    });
+  }
+
+  function ensureHomeProjectShelf() {
+    const composer = document.querySelector('[data-composer-placement="home"]');
+    const homeIcon = document.querySelector('[data-testid="home-icon"]');
+    const suggestions = document.querySelector('[class*="group/home-suggestions"]');
+    const host = suggestions?.parentElement;
+    if (!composer || !homeIcon || !suggestions || !host) {
+      clearHomeProjectShelf();
+      return;
+    }
+
+    const cards = Array.isArray(homeProjects.cards) ? homeProjects.cards : [];
+    if (homeProjects.available !== false && !cards.length) {
+      clearHomeProjectShelf();
+      return;
+    }
+
+    let shelf = document.getElementById(HOME_PROJECT_SHELF_ID);
+    if (shelf?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN || shelf?.parentElement !== host) {
+      shelf?.remove();
+      shelf = document.createElement("section");
+      shelf.id = HOME_PROJECT_SHELF_ID;
+      shelf.dataset.codexPreviewRuntime = RUNTIME_TOKEN;
+      host.insertBefore(shelf, suggestions);
+    } else if (shelf.nextElementSibling !== suggestions) {
+      host.insertBefore(shelf, suggestions);
+    }
+
+    if (homeProjects.available === false) {
+      suggestions.removeAttribute("data-codex-home-suggestions-hidden");
+      shelf.dataset.available = "false";
+      shelf.setAttribute("role", "status");
+      shelf.setAttribute("aria-live", "polite");
+      shelf.removeAttribute("aria-label");
+      const signature = `unavailable:${homeProjects.message || ""}`;
+      if (shelf.dataset.signature !== signature) {
+        shelf.dataset.signature = signature;
+        shelf.textContent = homeProjects.message || "项目动态暂不可用";
+      }
+      return;
+    }
+
+    suggestions.dataset.codexHomeSuggestionsHidden = "true";
+    shelf.dataset.available = "true";
+    shelf.setAttribute("role", "region");
+    shelf.setAttribute("aria-label", "当前项目");
+    shelf.removeAttribute("aria-live");
+    const signature = JSON.stringify(cards.map((card) => [
+      card.projectId,
+      card.taskId,
+      card.taskTitle,
+      card.phase,
+      card.statusLabel,
+      card.activeTaskCount,
+      card.pinned,
+      card.completionToken,
+    ]));
+    if (shelf.dataset.signature === signature) return;
+    shelf.dataset.signature = signature;
+
+    const header = document.createElement("div");
+    header.className = "codex-home-project-header";
+    const heading = document.createElement("h2");
+    heading.className = "codex-home-project-heading";
+    heading.textContent = "当前项目";
+    const count = document.createElement("span");
+    count.className = "codex-home-project-count";
+    count.textContent = `${cards.length} 个项目`;
+    header.append(heading, count);
+    const grid = document.createElement("div");
+    grid.dataset.codexHomeProjectGrid = "true";
+    grid.append(...cards.map(createHomeProjectCard));
+    shelf.replaceChildren(header, grid);
   }
 
   function updateUsageState() {
@@ -1773,6 +2292,7 @@
     ensureViewToggle();
     ensureSectionTabs();
     ensureFolderSwitcher();
+    ensureHomeProjectShelf();
     const rows = visibleRows();
     const anchor = !layoutAnchored
       ? rows.find((row) => row.getAttribute("aria-current") === "page")
@@ -1795,6 +2315,19 @@
     sync();
   }
 
+  function setSearchCatalog(items) {
+    searchCatalog = (Array.isArray(items) ? items : []).filter((entry) =>
+      entry && typeof entry.projectId === "string" && typeof entry.title === "string",
+    );
+    searchCatalogByProject = new Map();
+    for (const entry of searchCatalog) {
+      const entries = searchCatalogByProject.get(entry.projectId) || [];
+      entries.push(entry);
+      searchCatalogByProject.set(entry.projectId, entries);
+    }
+    sync();
+  }
+
   function setUsage(value) {
     usage = value && typeof value === "object" ? value : {
       available: false,
@@ -1804,6 +2337,24 @@
       ariaLabel: "Codex 剩余量暂不可用",
     };
     sync();
+  }
+
+  function setHomeProjects(value) {
+    const source = value && typeof value === "object" ? value : {};
+    homeProjects = {
+      available: source.available !== false,
+      cards: Array.isArray(source.cards) ? source.cards : [],
+      message: typeof source.message === "string" ? source.message : "",
+    };
+    if (source.state && typeof source.state === "object") {
+      homeProjectsState = source.state;
+      persistHomeProjectsState();
+    }
+    sync();
+  }
+
+  function getHomeProjectsState() {
+    return homeProjectsState;
   }
 
   function scheduleSync() {
@@ -1831,6 +2382,7 @@
     document.getElementById(STYLE_ID)?.remove();
     document.getElementById(TOGGLE_ID)?.remove();
     document.getElementById(USAGE_ID)?.remove();
+    clearHomeProjectShelf();
     clearShortcutEnhancement();
     clearSectionEnhancement();
     document.documentElement.removeAttribute("data-codex-conversation-view");
@@ -1847,9 +2399,20 @@
     document.querySelectorAll('[data-codex-conversation-card-item="true"]').forEach((node) => {
       node.removeAttribute("data-codex-conversation-card-item");
     });
+    document.querySelectorAll('[data-codex-sidebar-search-match="true"]').forEach((node) => {
+      node.removeAttribute("data-codex-sidebar-search-match");
+    });
   }
 
-  window[SENTINEL] = { destroy, refresh: sync, setPreviews, setUsage };
+  window[SENTINEL] = {
+    destroy,
+    refresh: sync,
+    setPreviews,
+    setSearchCatalog,
+    setUsage,
+    setHomeProjects,
+    getHomeProjectsState,
+  };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
   else start();
 })();

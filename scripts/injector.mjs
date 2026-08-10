@@ -9,6 +9,7 @@ import { PreviewRepository } from "../lib/preview-data.mjs";
 import { presentCardPreview } from "../lib/card-view.mjs";
 import { presentRateLimit } from "../lib/usage-data.mjs";
 import { needsPreviewAttachment } from "../lib/injector-state.mjs";
+import { buildHomeProjectShelf, readTaskboardSnapshot } from "../lib/home-projects.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(root, "inject", "conversation-preview.user.js");
@@ -69,24 +70,51 @@ async function attach() {
 
 async function pushPreviews() {
   if (!client || !attachedTargetId) return;
-  const requests = await client.evaluate(`(() => {
-    const seen = new Set();
-    return Array.from(document.querySelectorAll('[data-app-action-sidebar-thread-row]')).flatMap((row) => {
-      const id = row.getAttribute('data-app-action-sidebar-thread-id') || '';
-      const title = row.getAttribute('data-app-action-sidebar-thread-title') || '';
-      const key = id + '\\n' + title;
-      if (seen.has(key)) return [];
-      seen.add(key);
-      return [{ key, id, title }];
-    });
-  })()`);
-  const previews = (await repository.readMany(Array.isArray(requests) ? requests : []))
-    .map((preview) => presentCardPreview(preview));
-  const usage = presentRateLimit(await repository.readUsage(), { timeZone: "Asia/Shanghai" });
+  const [requests, homeProjectState] = await Promise.all([
+    client.evaluate(`(() => {
+      const seen = new Set();
+      return Array.from(document.querySelectorAll('[data-app-action-sidebar-thread-row]')).flatMap((row) => {
+        const id = row.getAttribute('data-app-action-sidebar-thread-id') || '';
+        const title = row.getAttribute('data-app-action-sidebar-thread-title') || '';
+        const key = id + '\\n' + title;
+        if (seen.has(key)) return [];
+        seen.add(key);
+        return [{ key, id, title }];
+      });
+    })()`),
+    client.evaluate("window.__codexConversationPreviewInjection__?.getHomeProjectsState?.() || null"),
+  ]);
+  const [rawPreviews, rawUsage, taskboard, searchCatalog] = await Promise.all([
+    repository.readMany(Array.isArray(requests) ? requests : []),
+    repository.readUsage(),
+    readTaskboardSnapshot(),
+    repository.readSearchCatalog(),
+  ]);
+  const previews = rawPreviews.map((preview) => presentCardPreview(preview));
+  const usage = presentRateLimit(rawUsage, { timeZone: "Asia/Shanghai" });
+  const homeProjects = taskboard.available
+    ? {
+        available: true,
+        message: "",
+        ...buildHomeProjectShelf({
+          projects: taskboard.projects,
+          tasks: taskboard.tasks,
+          state: homeProjectState,
+          syncedAt: new Date().toISOString(),
+        }),
+      }
+    : {
+        available: false,
+        message: taskboard.message,
+        cards: [],
+        state: homeProjectState,
+      };
   await client.evaluate(`(() => {
     const api = window.__codexConversationPreviewInjection__;
     api?.setPreviews?.(${JSON.stringify(previews)});
     api?.setUsage?.(${JSON.stringify(usage)});
+    api?.setHomeProjects?.(${JSON.stringify(homeProjects)});
+    api?.setSearchCatalog?.(${JSON.stringify(searchCatalog)});
   })()`);
 }
 

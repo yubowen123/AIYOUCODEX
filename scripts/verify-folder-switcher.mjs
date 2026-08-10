@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { connectMainCodex } from "./cdp-client.mjs";
+import { PreviewRepository } from "../lib/preview-data.mjs";
 
 async function connectWhenReady(timeoutMs = 8_000) {
   const deadline = Date.now() + timeoutMs;
@@ -67,8 +68,10 @@ async function sessionFileTimes(ids) {
 }
 
 const client = await connectWhenReady();
+const searchCatalog = await new PreviewRepository().readSearchCatalog();
 
 try {
+  await client.evaluate(`window.__codexConversationPreviewInjection__?.setSearchCatalog?.(${JSON.stringify(searchCatalog)})`);
   await client.evaluate(`document.querySelector('[data-codex-sidebar-section-tab="项目"]')?.click()`);
   assert.equal(await waitFor(client, `Boolean(document.getElementById("codex-sidebar-folder-switcher"))`), true,
     "folder switcher must be injected above the project list");
@@ -87,10 +90,20 @@ try {
   })))()`);
   const times = await indexedConversationTimes();
   const fileTimes = await sessionFileTimes(sourceFolders.flatMap((folder) => folder.threads.map((thread) => thread.id)));
+  const catalogLastUsed = new Map();
+  for (const entry of searchCatalog) {
+    const time = Date.parse(entry.updatedAt || "");
+    if (Number.isFinite(time) && time > (catalogLastUsed.get(entry.projectId) || 0)) {
+      catalogLastUsed.set(entry.projectId, time);
+    }
+  }
   const expectedOrder = sourceFolders
     .map((folder) => ({
       ...folder,
-      lastUsed: Math.max(0, ...folder.threads.map((thread) => times.byId.get(thread.id) || fileTimes.get(thread.id) || times.byTitle.get(thread.title) || 0)),
+      lastUsed: Math.max(
+        catalogLastUsed.get(folder.id) || 0,
+        ...folder.threads.map((thread) => times.byId.get(thread.id) || fileTimes.get(thread.id) || times.byTitle.get(thread.title) || 0),
+      ),
     }))
     .sort((left, right) => right.lastUsed - left.lastUsed || left.index - right.index)
     .map((folder) => folder.label);
@@ -190,6 +203,26 @@ try {
   actual = await inspect();
   assert.equal(actual.input.value, "");
   assert.deepEqual(actual.labels, expectedOrder);
+
+  await client.evaluate(`(() => {
+    const input = document.querySelector('[data-codex-sidebar-folder-search]');
+    input.value = '知识卡片';
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: '片' }));
+  })()`);
+  assert.equal(await waitFor(client, `document.querySelector('[data-codex-sidebar-folder-tag][aria-pressed="true"]')?.dataset.codexSidebarFolderLabel === '为创新而生'`), true,
+    "full-catalog search must select the folder assigned in Codex global state");
+  assert.equal(await waitFor(client, `(() => {
+    const row = document.querySelector('[data-app-action-sidebar-thread-title="创建知识卡片技能"][data-codex-sidebar-search-match="true"]');
+    return Boolean(row && !row.closest('[data-codex-sidebar-folder-panel]')?.hidden);
+  })()`, 15_000), true,
+    "full-catalog search must page in and reveal the matching conversation");
+  actual = await inspect();
+  assert.equal(actual.selected, "为创新而生");
+  assert.match(actual.resultText, /1 个对话/);
+
+  await client.evaluate(`document.querySelector('[data-codex-sidebar-folder-clear]')?.click()`);
+  assert.equal(await waitFor(client, `document.querySelector('[data-codex-sidebar-folder-tag][aria-pressed="true"]')?.dataset.codexSidebarFolderLabel === '熔神—我要成超创'`), true,
+    "clearing a full-catalog search must restore the previous folder");
 
   await client.evaluate(`(() => {
     const input = document.querySelector('[data-codex-sidebar-folder-search]');
