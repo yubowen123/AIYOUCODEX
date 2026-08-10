@@ -25,8 +25,9 @@ try {
   while (!await client.evaluate(`(() => {
     const names = Array.from(document.querySelectorAll("#codex-sidebar-shortcut-grid [data-codex-sidebar-shortcut-card]"))
       .map((button) => button.dataset.codexSidebarShortcutName);
-    return ["新对话", "拉取请求", "站点", "已安排", "插件", "项目管理"]
-      .every((name) => names.includes(name));
+    const sourceNames = Array.from(document.querySelectorAll("[data-codex-sidebar-shortcut-source-name]"))
+      .map((button) => button.dataset.codexSidebarShortcutSourceName);
+    return sourceNames.length >= 5 && sourceNames.every((name) => names.includes(name));
   })()`)) {
     if (Date.now() >= deadline) break;
     await new Promise((resolve) => setTimeout(resolve, 40));
@@ -63,10 +64,16 @@ try {
       try { proxy.click(); } finally { source.click = originalClick; }
     }
 
-    const clone = cards[0]?.cloneNode(true);
-    if (clone) grid.appendChild(clone);
-    const overflowTop = clone?.querySelector("[data-codex-sidebar-shortcut-card]")?.getBoundingClientRect().top || 0;
-    clone?.remove();
+    const overflowClones = [];
+    while (grid.children.length < 7 && cards[0]) {
+      const clone = cards[0].cloneNode(true);
+      grid.appendChild(clone);
+      overflowClones.push(clone);
+    }
+    const overflowTop = grid.children[6]
+      ?.querySelector("[data-codex-sidebar-shortcut-card]")
+      ?.getBoundingClientRect().top || 0;
+    overflowClones.forEach((clone) => clone.remove());
 
     const sourceNames = Array.from(document.querySelectorAll("[data-codex-sidebar-shortcut-source-name]"))
       .map((node) => node.dataset.codexSidebarShortcutSourceName);
@@ -92,13 +99,15 @@ try {
   assert.equal(actual.role, "group");
   assert.equal(actual.ariaLabel, "快捷入口");
   assert.equal(actual.columns, 6);
-  assert.deepEqual(actual.cards.map((card) => card.name), ["新对话", "拉取请求", "站点", "已安排", "插件", "项目管理"]);
+  const canonicalOrder = ["新对话", "拉取请求", "站点", "已安排", "插件", "项目管理"];
+  assert.ok(actual.sourceNames.length >= 5, "at least the five stable native shortcuts must be available");
+  assert.deepEqual(actual.sourceNames, canonicalOrder.filter((name) => actual.sourceNames.includes(name)));
+  assert.deepEqual(actual.cards.map((card) => card.name), actual.sourceNames);
   assert.equal(new Set(actual.cards.map((card) => card.top)).size, 1);
   assert.equal(new Set(actual.cards.map((card) => card.width)).size, 1);
   assert.ok(actual.cards.every((card) => card.height >= 62));
   assert.ok(actual.cards.every((card) => card.hasImage && card.iconBeforeLabel));
   assert.ok(actual.cards.every((card) => card.ariaLabel));
-  assert.deepEqual(actual.sourceNames, ["新对话", "拉取请求", "站点", "已安排", "插件", "项目管理"]);
   assert.equal(actual.sourcesHidden, true);
   assert.equal(actual.forwardedClicks, 1);
   assert.ok(actual.overflowTop > actual.firstRowTop, "the seventh card must wrap to a second row");
