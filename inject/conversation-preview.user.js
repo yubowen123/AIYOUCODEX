@@ -245,7 +245,7 @@
       html[data-codex-conversation-view="card"] .${STATUS_BUTTON_CLASS} {
         display: inline-flex;
         position: absolute;
-        z-index: 4;
+        z-index: 12;
         top: 9px;
         right: 9px;
         width: 28px;

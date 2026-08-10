@@ -59,7 +59,13 @@ try {
     hasPopup: "menu",
   });
 
-  await client.evaluate(`document.querySelector(${JSON.stringify(`${rowSelector} [data-codex-conversation-status-button]`)})?.click()`);
+  const buttonCenter = await client.evaluate(`(() => {
+    const rect = document.querySelector(${JSON.stringify(`${rowSelector} [data-codex-conversation-status-button]`)})?.getBoundingClientRect();
+    return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+  })()`);
+  assert.ok(buttonCenter);
+  await client.send("Input.dispatchMouseEvent", { type: "mousePressed", ...buttonCenter, button: "left", clickCount: 1 });
+  await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...buttonCenter, button: "left", clickCount: 1 });
   assert.equal(await waitFor(client, `Boolean(document.querySelector('[data-codex-conversation-status-menu]'))`), true);
   actual = await client.evaluate(`(() => {
     const menu = document.querySelector('[data-codex-conversation-status-menu]');
