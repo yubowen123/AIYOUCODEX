@@ -97,19 +97,27 @@ try {
       catalogLastUsed.set(entry.projectId, time);
     }
   }
-  const expectedOrder = sourceFolders
+  const expectedFolderOrder = sourceFolders
     .map((folder) => ({
       ...folder,
       lastUsed: Math.max(
         catalogLastUsed.get(folder.id) || 0,
-        ...folder.threads.map((thread) => times.byId.get(thread.id) || fileTimes.get(thread.id) || times.byTitle.get(thread.title) || 0),
+        ...folder.threads.map((thread) => Math.max(
+          times.byId.get(thread.id) || 0,
+          fileTimes.get(thread.id) || 0,
+          times.byTitle.get(thread.title) || 0,
+        )),
       ),
     }))
     .sort((left, right) => right.lastUsed - left.lastUsed || left.index - right.index)
     .map((folder) => folder.label);
+  const expectedOrder = ["全部", ...expectedFolderOrder];
   const expectedOrderJson = JSON.stringify(expectedOrder);
-  assert.equal(await waitFor(client, `JSON.stringify(Array.from(document.querySelectorAll('[data-codex-sidebar-folder-tag]')).map((tag) => tag.dataset.codexSidebarFolderLabel)) === ${JSON.stringify(expectedOrderJson)}`, 15_000), true,
-    "folder tags must settle into real recent-use order after preview timestamps arrive");
+  const folderOrderSettled = await waitFor(client, `JSON.stringify(Array.from(document.querySelectorAll('[data-codex-sidebar-folder-tag]')).map((tag) => tag.dataset.codexSidebarFolderLabel)) === ${JSON.stringify(expectedOrderJson)}`, 15_000);
+  const actualFolderOrder = folderOrderSettled ? expectedOrder : await client.evaluate(`Array.from(document.querySelectorAll('[data-codex-sidebar-folder-tag]'))
+    .map((tag) => tag.dataset.codexSidebarFolderLabel)`);
+  assert.equal(folderOrderSettled, true,
+    `folder tags must settle into real recent-use order after preview timestamps arrive: expected ${JSON.stringify(expectedOrder)}, got ${JSON.stringify(actualFolderOrder)}`);
 
   const inspect = () => client.evaluate(`(() => {
     const root = document.getElementById('codex-sidebar-folder-switcher');

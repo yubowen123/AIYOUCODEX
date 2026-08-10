@@ -17,6 +17,8 @@
   const SECTION_TAB_STORAGE_KEY = "codex-conversation-preview:section-tab";
   const SECTION_NAMES = ["置顶", "项目", "最近"];
   const FOLDER_SWITCHER_ID = "codex-sidebar-folder-switcher";
+  const ALL_FOLDER_ID = "__all__";
+  const ALL_PROJECTS_PANEL_ID = "codex-sidebar-all-projects";
   const FOLDER_STORAGE_KEY = "codex-conversation-preview:folder-id";
   const VIEW_STORAGE_KEY = "codex-conversation-preview:view-mode";
   const HOME_PROJECT_SHELF_ID = "codex-home-project-shelf";
@@ -60,6 +62,7 @@
   let folderTagsExpanded = false;
   let searchCatalog = [];
   let searchCatalogByProject = new Map();
+  let searchCatalogByThread = new Map();
   let folderSearchExpansionPending = null;
   let folderSearchRevealKey = "";
   let threadStatuses = {};
@@ -745,6 +748,13 @@
         outline: 2px solid var(--color-token-accent-foreground, Highlight) !important;
         outline-offset: 1px !important;
       }
+      #${ALL_PROJECTS_PANEL_ID} {
+        min-width: 0;
+        padding-top: 8px;
+      }
+      #${ALL_PROJECTS_PANEL_ID} [data-codex-sidebar-all-project-list] {
+        min-width: 0;
+      }
       #${FOLDER_SWITCHER_ID} .codex-sidebar-folder-meta {
         display: flex;
         min-width: 0;
@@ -1194,8 +1204,54 @@
     return `${row.getAttribute("data-app-action-sidebar-thread-id") || ""}\n${row.getAttribute("data-app-action-sidebar-thread-title") || ""}`;
   }
 
+  function formatCatalogCommunication(value) {
+    const date = new Date(value || "");
+    if (!Number.isFinite(date.getTime())) return "时间待更新";
+    const now = new Date();
+    const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    const time = date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+    if (startDate === startToday) return `今天 ${time}`;
+    if (startDate === startToday - 86_400_000) return `昨天 ${time}`;
+    return `${date.getMonth() + 1}月${date.getDate()}日`;
+  }
+
+  function catalogPreviewForRow(row) {
+    const entry = searchCatalogByThread.get(normalizedThreadId(
+      row.getAttribute("data-app-action-sidebar-thread-id"),
+    ));
+    if (!entry) return null;
+    const title = entry.title || row.getAttribute("data-app-action-sidebar-thread-title") || "未命名对话";
+    const subject = title
+      .replace(/^(创建|构建|优化|更新|安装|调研|查找|梳理|整理|生成|制作)+/u, "")
+      .replace(/skills?/ig, "")
+      .trim()
+      .slice(0, 8) || "任务主题";
+    return {
+      catalogOnly: true,
+      threadId: entry.threadId,
+      updatedAt: entry.updatedAt,
+      summary: `正在读取“${title}”的核心总结…`,
+      recentInput: "",
+      recentOutput: "",
+      lastCommunication: formatCatalogCommunication(entry.updatedAt),
+      tags: [subject, entry.projectName || "未分类项目", "最近请求"],
+    };
+  }
+
+  function previewForRow(row) {
+    return previews.get(rowKey(row)) || catalogPreviewForRow(row);
+  }
+
   function visibleRows() {
-    return Array.from(document.querySelectorAll(ROW_SELECTOR)).filter((row) => row.isConnected);
+    return Array.from(document.querySelectorAll(ROW_SELECTOR)).filter((row) => {
+      if (!row.isConnected) return false;
+      if (row.hasAttribute("data-codex-sidebar-all-project-row")) {
+        return Boolean(row.closest(`#${ALL_PROJECTS_PANEL_ID}`));
+      }
+      const folderPanel = row.closest("[data-codex-sidebar-folder-panel]");
+      return !folderPanel?.hidden;
+    });
   }
 
   const STATUS_OPTIONS = [
@@ -1357,6 +1413,11 @@
     const titleHost = row.querySelector("[data-thread-title-trigger=\"true\"]");
     if (!titleHost) return;
     row.setAttribute("data-codex-conversation-preview-enhanced", "true");
+    if (preview && !preview.catalogOnly && preview.updatedAt) {
+      row.setAttribute("data-codex-conversation-preview-loaded", "true");
+    } else {
+      row.removeAttribute("data-codex-conversation-preview-loaded");
+    }
     const cardItem = row.closest('[role="listitem"]');
     cardItem?.setAttribute("data-codex-conversation-card-item", "true");
     cardItem?.parentElement?.setAttribute("data-codex-conversation-card-grid", "true");
@@ -1927,6 +1988,18 @@
         : right.lastUsed - left.lastUsed || left.sourceIndex - right.sourceIndex);
   }
 
+  function allProjectEntries() {
+    return searchCatalog
+      .map((entry, sourceIndex) => ({
+        ...entry,
+        sourceIndex,
+        time: Date.parse(entry.updatedAt || ""),
+      }))
+      .sort((left, right) => (Number.isFinite(right.time) ? right.time : 0)
+        - (Number.isFinite(left.time) ? left.time : 0)
+        || left.sourceIndex - right.sourceIndex);
+  }
+
   function normalizedThreadId(value) {
     return String(value || "").trim().replace(/^(?:local|cloud):/i, "").toLocaleLowerCase();
   }
@@ -2027,8 +2100,77 @@
     host.hidden = false;
   }
 
+  function openAllProject(entry) {
+    const route = homeProjectRoute(entry?.threadId);
+    if (route) window.postMessage({ type: "navigate-to-route", path: route }, "*");
+  }
+
+  function createAllProjectRow(entry) {
+    const sourceRow = document.querySelector(`${ROW_SELECTOR}:not([data-codex-sidebar-all-project-row])`);
+    const sourceItem = sourceRow?.closest('[role="listitem"]');
+    const sourceTitleHost = sourceRow?.querySelector('[data-thread-title-trigger="true"]');
+    const sourceTitle = sourceRow?.querySelector('[data-thread-title="true"]');
+    const item = document.createElement("div");
+    item.setAttribute("role", "listitem");
+    item.className = sourceItem?.className || "after:block after:h-px after:content-[''] last:after:hidden";
+    const row = document.createElement("div");
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    row.className = sourceRow?.className
+      || "group relative cursor-interaction text-sm hover:bg-token-list-hover-background focus-visible:outline-offset-[-2px] sidebar-item";
+    row.dataset.appActionSidebarThreadRow = "";
+    row.dataset.appActionSidebarThreadId = `local:${entry.threadId}`;
+    row.dataset.appActionSidebarThreadTitle = entry.title;
+    row.dataset.codexSidebarAllProjectRow = "true";
+    row.dataset.codexSidebarAllProjectId = entry.projectId;
+    row.dataset.codexSidebarAllProjectUpdatedAt = entry.updatedAt || "";
+    row.setAttribute("aria-label", `${entry.title}，${entry.projectName}`);
+    row.onclick = () => openAllProject(entry);
+    row.onkeydown = (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openAllProject(entry);
+    };
+    const titleHost = document.createElement("div");
+    titleHost.dataset.threadTitleTrigger = "true";
+    titleHost.className = sourceTitleHost?.className || "flex min-w-0 flex-1 items-center";
+    const title = document.createElement("span");
+    title.dataset.threadTitle = "true";
+    title.className = sourceTitle?.className || "min-w-0 truncate";
+    title.textContent = entry.title;
+    titleHost.appendChild(title);
+    row.appendChild(titleHost);
+    item.appendChild(row);
+    return item;
+  }
+
+  function ensureAllProjectsPanel(root, entries) {
+    let panel = document.getElementById(ALL_PROJECTS_PANEL_ID);
+    if (panel?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN || panel?.parentElement !== root.parentElement) {
+      panel?.remove();
+      panel = document.createElement("section");
+      panel.id = ALL_PROJECTS_PANEL_ID;
+      panel.dataset.codexPreviewRuntime = RUNTIME_TOKEN;
+      panel.setAttribute("role", "region");
+      panel.setAttribute("aria-labelledby", `codex-sidebar-folder-tag-${ALL_FOLDER_ID}`);
+      root.parentElement.insertBefore(panel, root.nextElementSibling);
+    }
+    const signature = entries.map((entry) => `${entry.threadId}:${entry.updatedAt || ""}:${entry.title}`).join("\n");
+    if (panel.dataset.signature !== signature) {
+      panel.dataset.signature = signature;
+      const list = document.createElement("div");
+      list.setAttribute("role", "list");
+      list.setAttribute("aria-label", "全部项目，按最近请求排序");
+      list.dataset.codexSidebarAllProjectList = "true";
+      list.className = "flex flex-col";
+      list.replaceChildren(...entries.map(createAllProjectRow));
+      panel.replaceChildren(list);
+    }
+    return panel;
+  }
+
   function selectFolder(id, { focus = false, persist = !normalizeFolderSearch(folderSearchQuery) } = {}) {
-    if (!folderSources.has(id)) return;
+    if (id !== ALL_FOLDER_ID && !folderSources.has(id)) return;
     activeFolderId = id;
     if (persist) {
       try { localStorage.setItem(FOLDER_STORAGE_KEY, id); } catch {}
@@ -2061,8 +2203,10 @@
     tag.dataset.codexSidebarFolderId = item.id;
     tag.dataset.codexSidebarFolderLabel = item.label;
     tag.dataset.codexSidebarFolderLastUsed = String(item.lastUsed || 0);
-    tag.setAttribute("aria-controls", `codex-sidebar-folder-panel-${item.id}`);
-    tag.setAttribute("aria-label", `显示文件夹 ${item.label}`);
+    tag.setAttribute("aria-controls", item.id === ALL_FOLDER_ID
+      ? ALL_PROJECTS_PANEL_ID
+      : `codex-sidebar-folder-panel-${item.id}`);
+    tag.setAttribute("aria-label", item.id === ALL_FOLDER_ID ? "显示全部项目" : `显示文件夹 ${item.label}`);
     tag.title = item.label;
     tag.textContent = item.label;
     tag.onclick = () => selectFolder(item.id);
@@ -2076,7 +2220,9 @@
     folderSearchQuery = "";
     folderSearchExpansionPending = null;
     folderSearchRevealKey = "";
-    if (folderPreSearchId && folderSources.has(folderPreSearchId)) activeFolderId = folderPreSearchId;
+    if (folderPreSearchId === ALL_FOLDER_ID || (folderPreSearchId && folderSources.has(folderPreSearchId))) {
+      activeFolderId = folderPreSearchId;
+    }
     folderPreSearchId = null;
     updateFolderSwitcherState(Array.from(folderSources.values()));
   }
@@ -2169,15 +2315,17 @@
     const root = document.getElementById(FOLDER_SWITCHER_ID);
     if (!root) return;
     const ranked = rankedFolders(items);
-    if (!normalizeFolderSearch(folderSearchQuery) && !items.some((item) => item.id === activeFolderId)) {
+    const searching = Boolean(normalizeFolderSearch(folderSearchQuery));
+    if (!searching && activeFolderId !== ALL_FOLDER_ID && !items.some((item) => item.id === activeFolderId)) {
       activeFolderId = items.find((item) => item.active)?.id || ranked[0]?.id || null;
-    } else if (normalizeFolderSearch(folderSearchQuery) && !ranked.some((item) => item.id === activeFolderId)) {
+    } else if (searching && !ranked.some((item) => item.id === activeFolderId)) {
       activeFolderId = ranked[0]?.id || null;
     }
+    const allSelected = !searching && activeFolderId === ALL_FOLDER_ID;
 
     for (const item of items) {
       const selected = item.id === activeFolderId;
-      item.panelHost.hidden = !selected;
+      item.panelHost.hidden = allSelected || !selected;
       item.panelHost.dataset.codexSidebarFolderPanel = item.label;
       item.panelHost.dataset.codexSidebarFolderPanelId = item.id;
       item.folder.id = `codex-sidebar-folder-panel-${item.id}`;
@@ -2190,11 +2338,18 @@
       setNativeFolderExpanded(item);
     }
 
+    const entries = allProjectEntries();
+    if (allSelected) ensureAllProjectsPanel(root, entries);
+    else document.getElementById(ALL_PROJECTS_PANEL_ID)?.remove();
+
     const tags = root.querySelector("[data-codex-sidebar-folder-tags]");
-    const signature = ranked.map((item) => `${item.id}:${item.lastUsed}`).join("\n");
+    const tagItems = searching
+      ? ranked
+      : [{ id: ALL_FOLDER_ID, label: "全部", lastUsed: entries[0]?.time || 0 }, ...ranked];
+    const signature = tagItems.map((item) => `${item.id}:${item.lastUsed}`).join("\n");
     if (tags.dataset.signature !== signature) {
       tags.dataset.signature = signature;
-      tags.replaceChildren(...ranked.map(createFolderTag));
+      tags.replaceChildren(...tagItems.map(createFolderTag));
     }
     tags.dataset.expanded = String(folderTagsExpanded);
     for (const tag of tags.querySelectorAll("[data-codex-sidebar-folder-tag]")) {
@@ -2212,22 +2367,25 @@
       (count, item) => count + catalogMatchesForFolder(item).length,
       0,
     );
-    result.textContent = !ranked.length
+    result.textContent = allSelected
+      ? `全部 ${entries.length} 个对话 · 最近请求优先`
+      : !ranked.length
       ? "没有匹配的项目"
-      : normalizeFolderSearch(folderSearchQuery)
+      : searching
         ? `找到 ${ranked.length} 个项目 · ${matchingConversationCount} 个对话`
         : `${ranked.length} 个文件夹 · 最近使用优先`;
     const expand = root.querySelector("[data-codex-sidebar-folder-expand]");
-    expand.hidden = ranked.length <= 6;
+    expand.hidden = tagItems.length <= 6;
     expand.setAttribute("aria-expanded", String(folderTagsExpanded));
     expand.querySelector("span").textContent = folderTagsExpanded ? "收起" : "展开全部";
-    moveActiveFolderActions(items.find((item) => item.id === activeFolderId));
-    revealFolderSearchMatch(items.find((item) => item.id === activeFolderId));
+    moveActiveFolderActions(allSelected ? null : items.find((item) => item.id === activeFolderId));
+    revealFolderSearchMatch(allSelected ? null : items.find((item) => item.id === activeFolderId));
   }
 
   function clearFolderEnhancement() {
     restoreFolderActions();
     document.getElementById(FOLDER_SWITCHER_ID)?.remove();
+    document.getElementById(ALL_PROJECTS_PANEL_ID)?.remove();
     document.querySelectorAll("[data-codex-sidebar-folder-heading-hidden]").forEach((row) => {
       row.removeAttribute("data-codex-sidebar-folder-heading-hidden");
     });
@@ -2262,7 +2420,7 @@
       root.dataset.sourceIds = signature;
       host.insertBefore(root, project.heading.nextElementSibling);
       folderSources = new Map(sources.items.map((item) => [item.id, item]));
-      if (!activeFolderId || !folderSources.has(activeFolderId)) {
+      if (!activeFolderId || (activeFolderId !== ALL_FOLDER_ID && !folderSources.has(activeFolderId))) {
         activeFolderId = sources.items.find((item) => item.active)?.id || rankedFolders(sources.items, "")[0]?.id || null;
       }
     } else {
@@ -2572,7 +2730,7 @@
   function enhanceTooltip() {
     const row = openRow();
     if (!row) return;
-    const preview = previews.get(rowKey(row));
+    const preview = previewForRow(row);
     if (!preview) return;
     const title = row.getAttribute("data-app-action-sidebar-thread-title") || "";
     const tooltip = Array.from(document.querySelectorAll('[role="tooltip"]')).find((candidate) =>
@@ -2611,7 +2769,7 @@
           return rect.bottom > 0 && rect.top < innerHeight;
         })
       : null;
-    for (const row of rows) applySummary(row, previews.get(rowKey(row)));
+    for (const row of rows) applySummary(row, previewForRow(row));
     sortRecentRowsByLastCommunication();
     if (anchor) {
       anchor.scrollIntoView({ block: viewMode === "card" ? "center" : "nearest" });
@@ -2621,7 +2779,9 @@
   }
 
   function setPreviews(items) {
-    previews = new Map((Array.isArray(items) ? items : []).map((preview) => [preview.key, preview]));
+    for (const preview of Array.isArray(items) ? items : []) {
+      if (preview?.key) previews.set(preview.key, preview);
+    }
     sync();
   }
 
@@ -2630,10 +2790,12 @@
       entry && typeof entry.projectId === "string" && typeof entry.title === "string",
     );
     searchCatalogByProject = new Map();
+    searchCatalogByThread = new Map();
     for (const entry of searchCatalog) {
       const entries = searchCatalogByProject.get(entry.projectId) || [];
       entries.push(entry);
       searchCatalogByProject.set(entry.projectId, entries);
+      searchCatalogByThread.set(normalizedThreadId(entry.threadId), entry);
     }
     sync();
   }

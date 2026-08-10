@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -95,7 +95,7 @@ test("repository resolves a client-new thread by the newest matching title", asy
   assert.equal(preview.threadId, newId);
   assert.equal(preview.recentInput, "新的输入");
   assert.equal(preview.recentOutput, "新的输出已经产生。");
-  assert.equal(preview.updatedAt, "2026-08-09T10:00:00.000Z");
+  assert.equal(preview.updatedAt, "2026-08-09T10:01:00.000Z");
   assert.equal(preview.tags.length, 3);
 });
 
@@ -169,4 +169,58 @@ test("repository search catalog includes every indexed thread assigned to a save
     projectId: "project-innovation",
     projectName: "为创新而生",
   }]);
+});
+
+test("repository search catalog uses newer conversation activity than the stale title index", async () => {
+  const codexHome = await mkdtemp(path.join(os.tmpdir(), "codex-search-activity-test-"));
+  const sessions = path.join(codexHome, "sessions", "2026", "08", "10");
+  const threadId = "019fe61d-6a11-7cf1-926b-435b108624b6";
+  await mkdir(sessions, { recursive: true });
+  const sessionPath = path.join(sessions, `rollout-${threadId}.jsonl`);
+  await writeFile(sessionPath, `${JSON.stringify({
+    timestamp: "2026-08-10T11:00:00Z",
+    type: "event_msg",
+    payload: { type: "user_message", message: "继续修改全部视图" },
+  })}\n`);
+  await utimes(sessionPath, new Date("2026-08-10T11:00:00Z"), new Date("2026-08-10T11:00:00Z"));
+  await writeFile(path.join(codexHome, "session_index.jsonl"), JSON.stringify({
+    id: threadId,
+    thread_name: "侧栏优化",
+    updated_at: "2026-08-09T10:00:00Z",
+  }));
+  await writeFile(path.join(codexHome, ".codex-global-state.json"), JSON.stringify({
+    "local-projects": { project: { id: "project", name: "管理优化" } },
+    "thread-project-assignments": { [threadId]: { projectId: "project" } },
+  }));
+
+  const repository = new PreviewRepository({ codexHome });
+  assert.equal((await repository.readSearchCatalog())[0].updatedAt, "2026-08-10T11:00:00.000Z");
+});
+
+test("repository preview reports the latest conversation event when the title index is stale", async () => {
+  const codexHome = await mkdtemp(path.join(os.tmpdir(), "codex-preview-activity-test-"));
+  const sessions = path.join(codexHome, "sessions", "2026", "08", "10");
+  const threadId = "019fe61d-6a11-7cf1-926b-435b108624b6";
+  await mkdir(sessions, { recursive: true });
+  await writeFile(path.join(sessions, `rollout-${threadId}.jsonl`), [
+    JSON.stringify({
+      timestamp: "2026-08-10T11:00:00Z",
+      type: "event_msg",
+      payload: { type: "user_message", message: "增加全部项目" },
+    }),
+    JSON.stringify({
+      timestamp: "2026-08-10T11:02:00Z",
+      type: "event_msg",
+      payload: { type: "agent_message", message: "全部项目正在生成。" },
+    }),
+  ].join("\n"));
+  await writeFile(path.join(codexHome, "session_index.jsonl"), JSON.stringify({
+    id: threadId,
+    thread_name: "侧栏优化",
+    updated_at: "2026-08-09T10:00:00Z",
+  }));
+
+  const repository = new PreviewRepository({ codexHome });
+  assert.equal((await repository.readPreview(`local:${threadId}`, "侧栏优化")).updatedAt,
+    "2026-08-10T11:02:00.000Z");
 });

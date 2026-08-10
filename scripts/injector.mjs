@@ -73,7 +73,13 @@ async function pushPreviews() {
   const [requests, homeProjectState] = await Promise.all([
     client.evaluate(`(() => {
       const seen = new Set();
-      return Array.from(document.querySelectorAll('[data-app-action-sidebar-thread-row]')).flatMap((row) => {
+      const allPanel = document.getElementById('codex-sidebar-all-projects');
+      const rows = allPanel
+        ? Array.from(allPanel.querySelectorAll('[data-codex-sidebar-all-project-row]'))
+        : Array.from(document.querySelectorAll('[data-app-action-sidebar-thread-row]:not([data-codex-sidebar-all-project-row])'));
+      const pending = rows.filter((row) => row.getAttribute('data-codex-conversation-preview-loaded') !== 'true');
+      const loaded = rows.filter((row) => row.getAttribute('data-codex-conversation-preview-loaded') === 'true');
+      return [...pending, ...loaded].flatMap((row) => {
         const id = row.getAttribute('data-app-action-sidebar-thread-id') || '';
         const title = row.getAttribute('data-app-action-sidebar-thread-title') || '';
         const key = id + '\\n' + title;

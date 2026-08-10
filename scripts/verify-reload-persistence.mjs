@@ -44,7 +44,7 @@ try {
     return Boolean(root)
       && document.querySelector('[data-codex-sidebar-section-tab="项目"]')?.getAttribute('aria-selected') === 'true'
       && document.documentElement.dataset.codexConversationView === 'card'
-      && tags.length === 10
+      && tags.length === 12
       && tags.find((tag) => tag.getAttribute('aria-pressed') === 'true')?.dataset.codexSidebarFolderLabel === '管理优化'
       && document.querySelector('[data-codex-sidebar-folder-expand]')?.getAttribute('aria-expanded') === 'false'
       && document.querySelectorAll('[data-codex-sidebar-folder-panel]:not([hidden])').length === 1
