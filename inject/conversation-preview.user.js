@@ -21,6 +21,9 @@
   const VIEW_STORAGE_KEY = "codex-conversation-preview:view-mode";
   const HOME_PROJECT_SHELF_ID = "codex-home-project-shelf";
   const HOME_PROJECT_STATE_KEY = "codex-conversation-preview:home-projects-state";
+  const THREAD_STATUS_STORAGE_KEY = "codex-conversation-preview:thread-statuses";
+  const STATUS_BUTTON_CLASS = "codex-conversation-status-button";
+  const STATUS_MENU_ID = "codex-conversation-status-menu";
   const SUMMARY_CLASS = "codex-conversation-core-summary";
   const DETAILS_CLASS = "codex-conversation-hover-details";
   const CARD_CONTENT_CLASS = "codex-conversation-card-content";
@@ -59,6 +62,8 @@
   let searchCatalogByProject = new Map();
   let folderSearchExpansionPending = null;
   let folderSearchRevealKey = "";
+  let threadStatuses = {};
+  let openStatusButton = null;
   let homeProjects = {
     available: true,
     cards: [],
@@ -74,6 +79,12 @@
   try {
     const savedHomeProjectsState = JSON.parse(localStorage.getItem(HOME_PROJECT_STATE_KEY) || "null");
     if (savedHomeProjectsState && typeof savedHomeProjectsState === "object") homeProjectsState = savedHomeProjectsState;
+  } catch {}
+  try {
+    const savedThreadStatuses = JSON.parse(localStorage.getItem(THREAD_STATUS_STORAGE_KEY) || "null");
+    if (savedThreadStatuses && typeof savedThreadStatuses === "object" && !Array.isArray(savedThreadStatuses)) {
+      threadStatuses = savedThreadStatuses;
+    }
   } catch {}
 
   function installStyles() {
@@ -172,7 +183,7 @@
         min-width: 0;
         max-height: 40px;
         overflow: hidden;
-        padding-right: 24px;
+        padding-right: 38px;
         color: var(--color-token-text-primary, var(--color-token-foreground, inherit));
         font-size: 14px;
         font-weight: 600;
@@ -227,6 +238,122 @@
         text-align: center;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+      .${STATUS_BUTTON_CLASS} {
+        display: none;
+      }
+      html[data-codex-conversation-view="card"] .${STATUS_BUTTON_CLASS} {
+        display: inline-flex;
+        position: absolute;
+        z-index: 4;
+        top: 9px;
+        right: 9px;
+        width: 28px;
+        height: 28px;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+        padding: 0;
+        border: 0;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--color-token-main-surface-primary, Canvas) 72%, transparent);
+        box-shadow: 0 2px 8px color-mix(in srgb, black 9%, transparent), inset 0 0 0 0.5px color-mix(in srgb, currentColor 10%, transparent);
+        cursor: pointer;
+        pointer-events: auto;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+      .${STATUS_BUTTON_CLASS}::before {
+        width: 14px;
+        height: 14px;
+        border: 2px solid color-mix(in srgb, white 72%, transparent);
+        border-radius: 50%;
+        background: #ef4755;
+        box-shadow: 0 0 0 2px color-mix(in srgb, #ef4755 22%, transparent);
+        content: "";
+      }
+      .${STATUS_BUTTON_CLASS}[data-status="urgent-or-important"]::before {
+        background: #f28a16;
+        box-shadow: 0 0 0 2px color-mix(in srgb, #f28a16 22%, transparent);
+      }
+      .${STATUS_BUTTON_CLASS}[data-status="not-urgent"]::before {
+        background: #2fa56b;
+        box-shadow: 0 0 0 2px color-mix(in srgb, #2fa56b 22%, transparent);
+      }
+      .${STATUS_BUTTON_CLASS}[data-status="clear"]::before {
+        border-color: color-mix(in srgb, white 58%, transparent);
+        background: #b5b7ba;
+        box-shadow: 0 0 0 2px color-mix(in srgb, #8f9296 22%, transparent);
+      }
+      .${STATUS_BUTTON_CLASS}:hover {
+        background: color-mix(in srgb, var(--color-token-list-hover-background, Canvas) 90%, transparent);
+        transform: scale(1.04);
+      }
+      .${STATUS_BUTTON_CLASS}:focus-visible {
+        outline: 2px solid var(--color-token-accent-foreground, Highlight) !important;
+        outline-offset: 2px !important;
+      }
+      #${STATUS_MENU_ID} {
+        display: flex;
+        position: fixed;
+        z-index: 10000;
+        width: 214px;
+        flex-direction: column;
+        gap: 3px;
+        box-sizing: border-box;
+        padding: 8px;
+        border: 0.5px solid color-mix(in srgb, currentColor 13%, transparent);
+        border-radius: 16px;
+        background: color-mix(in srgb, var(--color-token-main-surface-primary, Canvas) 92%, transparent);
+        color: var(--color-token-text-primary, currentColor);
+        box-shadow: 0 18px 50px color-mix(in srgb, black 18%, transparent), inset 0 1px 0 color-mix(in srgb, white 38%, transparent);
+        backdrop-filter: blur(22px) saturate(120%);
+        -webkit-backdrop-filter: blur(22px) saturate(120%);
+      }
+      #${STATUS_MENU_ID} [data-codex-conversation-status-option] {
+        display: grid;
+        width: 100%;
+        height: 42px;
+        grid-template-columns: 22px minmax(0, 1fr) 18px;
+        align-items: center;
+        gap: 10px;
+        box-sizing: border-box;
+        padding: 0 10px;
+        border: 0;
+        border-radius: 11px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 570;
+        line-height: 20px;
+        text-align: left;
+        cursor: pointer;
+      }
+      #${STATUS_MENU_ID} [data-codex-conversation-status-option]:hover,
+      #${STATUS_MENU_ID} [data-codex-conversation-status-option]:focus-visible {
+        outline: 0;
+        background: color-mix(in srgb, currentColor 7%, transparent);
+      }
+      #${STATUS_MENU_ID} [data-codex-conversation-status-option="clear"] {
+        margin-top: 4px;
+        border-top: 0.5px solid color-mix(in srgb, currentColor 10%, transparent);
+        border-radius: 0 0 11px 11px;
+      }
+      #${STATUS_MENU_ID} .codex-conversation-status-option-dot {
+        width: 16px;
+        height: 16px;
+        box-sizing: border-box;
+        border: 2px solid color-mix(in srgb, white 70%, transparent);
+        border-radius: 50%;
+        background: var(--codex-status-color);
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--codex-status-color) 22%, transparent);
+      }
+      #${STATUS_MENU_ID} .codex-conversation-status-option-check {
+        color: var(--color-token-text-primary, currentColor);
+        font-size: 18px;
+        line-height: 1;
+        text-align: center;
       }
       [data-codex-sidebar-shortcut-source-hidden="true"],
       [data-codex-sidebar-shortcut-source-group-hidden="true"] {
@@ -1071,6 +1198,161 @@
     return Array.from(document.querySelectorAll(ROW_SELECTOR)).filter((row) => row.isConnected);
   }
 
+  const STATUS_OPTIONS = [
+    { value: "urgent-important", label: "紧急且重要", color: "#ef4755" },
+    { value: "urgent-or-important", label: "紧急或重要", color: "#f28a16" },
+    { value: "not-urgent", label: "不紧急", color: "#2fa56b" },
+    { value: "clear", label: "清除标注", color: "#b5b7ba" },
+  ];
+
+  function threadStatusKey(row) {
+    return row.getAttribute("data-app-action-sidebar-thread-id") || rowKey(row);
+  }
+
+  function threadStatus(key) {
+    return STATUS_OPTIONS.some((option) => option.value === threadStatuses[key])
+      ? threadStatuses[key]
+      : "urgent-important";
+  }
+
+  function statusOption(value) {
+    return STATUS_OPTIONS.find((option) => option.value === value) || STATUS_OPTIONS[0];
+  }
+
+  function persistThreadStatuses() {
+    try { localStorage.setItem(THREAD_STATUS_STORAGE_KEY, JSON.stringify(threadStatuses)); } catch {}
+  }
+
+  function updateStatusButton(button, value) {
+    const option = statusOption(value);
+    button.dataset.status = option.value;
+    button.setAttribute("aria-label", `状态：${option.label}`);
+    button.title = option.label;
+  }
+
+  function closeStatusMenu({ focus = false } = {}) {
+    document.getElementById(STATUS_MENU_ID)?.remove();
+    if (openStatusButton) {
+      openStatusButton.setAttribute("aria-expanded", "false");
+      if (focus && openStatusButton.isConnected) openStatusButton.focus();
+    }
+    openStatusButton = null;
+  }
+
+  function positionStatusMenu(menu, button) {
+    const rect = button.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const gap = 6;
+    const left = Math.min(innerWidth - menuRect.width - 8, Math.max(8, rect.right - menuRect.width));
+    const below = rect.bottom + gap;
+    const top = below + menuRect.height <= innerHeight - 8
+      ? below
+      : Math.max(8, rect.top - menuRect.height - gap);
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+  }
+
+  function chooseThreadStatus(key, value) {
+    threadStatuses[key] = statusOption(value).value;
+    persistThreadStatuses();
+    document.querySelectorAll(`.${STATUS_BUTTON_CLASS}`).forEach((button) => {
+      if (button.dataset.threadStatusKey === key) updateStatusButton(button, threadStatuses[key]);
+    });
+    closeStatusMenu();
+  }
+
+  function handleStatusMenuKeydown(event) {
+    const items = Array.from(event.currentTarget.querySelectorAll("[data-codex-conversation-status-option]"));
+    const index = items.indexOf(document.activeElement);
+    let next = null;
+    if (event.key === "ArrowDown") next = items[(index + 1 + items.length) % items.length];
+    else if (event.key === "ArrowUp") next = items[(index - 1 + items.length) % items.length];
+    else if (event.key === "Home") next = items[0];
+    else if (event.key === "End") next = items.at(-1);
+    else if (event.key === "Escape") {
+      event.preventDefault();
+      closeStatusMenu({ focus: true });
+      return;
+    }
+    if (!next) return;
+    event.preventDefault();
+    next.focus();
+  }
+
+  function openThreadStatusMenu(row, button) {
+    if (openStatusButton === button && document.getElementById(STATUS_MENU_ID)) {
+      closeStatusMenu({ focus: true });
+      return;
+    }
+    closeStatusMenu();
+    const key = threadStatusKey(row);
+    const current = threadStatus(key);
+    const menu = document.createElement("div");
+    menu.id = STATUS_MENU_ID;
+    menu.dataset.codexConversationStatusMenu = "true";
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("aria-label", "设置项目状态");
+    menu.onkeydown = handleStatusMenuKeydown;
+    for (const option of STATUS_OPTIONS) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.dataset.codexConversationStatusOption = option.value;
+      item.setAttribute("role", option.value === "clear" ? "menuitem" : "menuitemradio");
+      if (option.value !== "clear") item.setAttribute("aria-checked", String(option.value === current));
+      item.style.setProperty("--codex-status-color", option.color);
+      const dot = document.createElement("span");
+      dot.className = "codex-conversation-status-option-dot";
+      dot.setAttribute("aria-hidden", "true");
+      const label = document.createElement("span");
+      label.textContent = option.label;
+      const check = document.createElement("span");
+      check.className = "codex-conversation-status-option-check";
+      check.setAttribute("aria-hidden", "true");
+      if (option.value === current && option.value !== "clear") {
+        check.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="m3.5 8.2 2.8 2.8 6.2-6.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      }
+      item.append(dot, label, check);
+      item.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        chooseThreadStatus(key, option.value);
+      };
+      menu.appendChild(item);
+    }
+    document.body.appendChild(menu);
+    openStatusButton = button;
+    button.setAttribute("aria-expanded", "true");
+    positionStatusMenu(menu, button);
+    requestAnimationFrame(() => menu.querySelector('[aria-checked="true"]')?.focus());
+  }
+
+  function ensureCardStatusButton(row) {
+    let button = Array.from(row.children).find((node) => node.classList?.contains(STATUS_BUTTON_CLASS));
+    if (!button) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.className = STATUS_BUTTON_CLASS;
+      button.dataset.codexConversationStatusButton = "true";
+      button.setAttribute("aria-haspopup", "menu");
+      button.setAttribute("aria-expanded", "false");
+      button.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openThreadStatusMenu(row, button);
+      };
+      row.appendChild(button);
+    }
+    const key = threadStatusKey(row);
+    button.dataset.threadStatusKey = key;
+    updateStatusButton(button, threadStatus(key));
+  }
+
+  function handleStatusDocumentPointerDown(event) {
+    const menu = document.getElementById(STATUS_MENU_ID);
+    if (!menu || menu.contains(event.target) || openStatusButton?.contains(event.target)) return;
+    closeStatusMenu();
+  }
+
   function applySummary(row, preview) {
     const titleHost = row.querySelector("[data-thread-title-trigger=\"true\"]");
     if (!titleHost) return;
@@ -1089,6 +1371,7 @@
     if (summary.textContent !== value) summary.textContent = value;
     summary.title = value;
     applyCardDetails(row, preview);
+    ensureCardStatusButton(row);
   }
 
   function applyCardDetails(row, preview) {
@@ -2371,6 +2654,7 @@
     observer = new MutationObserver(scheduleSync);
     observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-state", "aria-expanded"] });
     document.addEventListener("pointerover", scheduleSync, true);
+    document.addEventListener("pointerdown", handleStatusDocumentPointerDown, true);
     sync();
   }
 
@@ -2379,6 +2663,8 @@
     observer?.disconnect();
     clearTimeout(syncTimer);
     document.removeEventListener("pointerover", scheduleSync, true);
+    document.removeEventListener("pointerdown", handleStatusDocumentPointerDown, true);
+    closeStatusMenu();
     document.getElementById(STYLE_ID)?.remove();
     document.getElementById(TOGGLE_ID)?.remove();
     document.getElementById(USAGE_ID)?.remove();
@@ -2387,6 +2673,7 @@
     clearSectionEnhancement();
     document.documentElement.removeAttribute("data-codex-conversation-view");
     document.querySelectorAll(`.${SUMMARY_CLASS}, .${DETAILS_CLASS}, .${CARD_CONTENT_CLASS}`).forEach((node) => node.remove());
+    document.querySelectorAll(`.${STATUS_BUTTON_CLASS}`).forEach((node) => node.remove());
     document.querySelectorAll('[data-codex-conversation-preview-enhanced="true"]').forEach((row) => {
       row.removeAttribute("data-codex-conversation-preview-enhanced");
     });
