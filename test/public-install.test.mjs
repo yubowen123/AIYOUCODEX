@@ -6,8 +6,9 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const projectRoot = path.resolve(".");
+const macOnly = { skip: process.platform !== "darwin" };
 
-test("public installer copies a portable runtime and activates it under the current user", async () => {
+test("public installer copies a portable runtime and activates it under the current user", macOnly, async () => {
   const testHome = await mkdtemp(path.join(os.tmpdir(), "codex-sidebar-public-install-"));
   const installDir = path.join(testHome, "Library", "Application Support", "Codex Sidebar Enhancer");
   try {
@@ -40,7 +41,7 @@ test("public installer copies a portable runtime and activates it under the curr
   }
 });
 
-test("public uninstaller removes only the installed runtime, LaunchAgent, launcher, and logs", async () => {
+test("public uninstaller removes only the installed runtime, LaunchAgent, launcher, and logs", macOnly, async () => {
   const testHome = await mkdtemp(path.join(os.tmpdir(), "codex-sidebar-public-uninstall-"));
   const installDir = path.join(testHome, "Library", "Application Support", "Codex Sidebar Enhancer");
   const sharedEnv = {

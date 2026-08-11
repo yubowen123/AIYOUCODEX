@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 
 import { readFile } from "node:fs/promises";
-import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { connectMainCodex, readTargets, selectMainCodexTarget } from "./cdp-client.mjs";
@@ -13,10 +11,9 @@ import { presentCardPreview } from "../lib/card-view.mjs";
 import { presentRateLimit } from "../lib/usage-data.mjs";
 import {
   DesktopAppRecovery,
-  desktopAppLaunchArgs,
   needsPreviewAttachment,
-  parseDesktopAppProcess,
 } from "../lib/injector-state.mjs";
+import { createDesktopAppRuntime } from "../lib/desktop-runtime.mjs";
 import { buildHomeProjectShelf, readTaskboardSnapshot } from "../lib/home-projects.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -25,7 +22,6 @@ const SCRIPT_ID_GLOBAL = "__CODEX_CONVERSATION_PREVIEW_SCRIPT_IDENTIFIER__";
 const TV_HOST_BINDING_NAME = "__codexTvHostV1";
 const TV_HOST_TOKEN_GLOBAL = "__CODEX_TV_HOST_TOKEN__";
 const TV_URL = "https://dz-ailab.dzkjm.cn/canvas/projects?category=personal";
-const execFileAsync = promisify(execFile);
 
 function parseArgs(argv) {
   const options = { port: 9231, watch: false };
@@ -58,6 +54,7 @@ let tvHostToken = null;
 let tvHostUnsubscribers = [];
 let tvHostOperations = Promise.resolve();
 const desktopAppRecovery = new DesktopAppRecovery();
+const desktopAppRuntime = createDesktopAppRuntime();
 
 async function disableTvCsp(targetClient = client) {
   try { await targetClient?.send("Page.setBypassCSP", { enabled: false }); } catch {}
@@ -127,25 +124,15 @@ async function attach() {
   const nextTargetId = await targetId(options.port);
   if (!nextTargetId && options.watch) {
     let app = null;
-    try {
-      const { stdout } = await execFileAsync("/bin/ps", ["-axo", "pid=,command="]);
-      app = parseDesktopAppProcess(stdout);
-    } catch {}
+    try { app = await desktopAppRuntime.readProcess(); } catch {}
     const action = desktopAppRecovery.next({ targetAvailable: false, app });
     if (action?.type === "quit") {
       try {
-        await execFileAsync("/usr/bin/osascript", [
-          "-e",
-          `tell application id ${JSON.stringify(action.app.bundleId)} to quit`,
-        ]);
+        await desktopAppRuntime.quit(action.app);
         process.stdout.write(`Restarting ${action.app.appPath} to enable sidebar enhancement\n`);
       } catch {}
     } else if (action?.type === "launch") {
-      const child = spawn("/usr/bin/open", desktopAppLaunchArgs(action.appPath, options.port), {
-        detached: true,
-        stdio: "ignore",
-      });
-      child.unref();
+      desktopAppRuntime.launch(action.appPath, options.port);
       desktopAppRecovery.markLaunched();
       process.stdout.write(`Launching ${action.appPath} with sidebar enhancement enabled\n`);
     }

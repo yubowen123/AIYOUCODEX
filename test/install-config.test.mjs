@@ -5,7 +5,9 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-test("installer dry-run renders portable user paths and XML-safe launch configuration", async () => {
+const macOnly = { skip: process.platform !== "darwin" };
+
+test("installer dry-run renders portable user paths and XML-safe launch configuration", macOnly, async () => {
   const testHome = await mkdtemp(path.join(os.tmpdir(), "codex-sidebar-home-"));
   const installDir = path.join(testHome, "Library", "Application Support", "Codex & Sidebar");
   try {
@@ -30,7 +32,7 @@ test("installer dry-run renders portable user paths and XML-safe launch configur
   }
 });
 
-test("installer activation writes a loadable user LaunchAgent without invoking launchctl in test mode", async () => {
+test("installer activation writes a loadable user LaunchAgent without invoking launchctl in test mode", macOnly, async () => {
   const testHome = await mkdtemp(path.join(os.tmpdir(), "codex-sidebar-activate-"));
   try {
     const launchAgentsDir = path.join(testHome, "Library", "LaunchAgents");
@@ -70,7 +72,7 @@ test("installer activation writes a loadable user LaunchAgent without invoking l
   }
 });
 
-test("installer explicitly kickstarts the registered LaunchAgent after bootstrap", async () => {
+test("installer explicitly kickstarts the registered LaunchAgent after bootstrap", macOnly, async () => {
   const testHome = await mkdtemp(path.join(os.tmpdir(), "codex-sidebar-kickstart-"));
   const fakeLaunchctl = path.join(testHome, "launchctl");
   const launchctlLog = path.join(testHome, "launchctl.log");
