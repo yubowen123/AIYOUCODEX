@@ -5,7 +5,6 @@ import assert from "node:assert/strict";
 import { connectMainCodex } from "./cdp-client.mjs";
 
 const STORAGE_KEY = "codex-conversation-preview:thread-statuses";
-const CURRENT_THREAD_ID = process.env.CODEX_THREAD_ID || "019fe61d-6a11-7cf1-926b-435b108624b6";
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 async function waitFor(client, expression, timeoutMs = 20_000) {
@@ -21,6 +20,9 @@ async function waitFor(client, expression, timeoutMs = 20_000) {
 
 const client = await connectMainCodex(9231);
 let originalStorage = null;
+const activeThreadId = process.env.CODEX_THREAD_ID || await client.evaluate(`document.querySelector('[data-app-action-sidebar-thread-active="true"]')
+  ?.getAttribute('data-app-action-sidebar-thread-id')
+  ?.replace(/^(?:local|cloud):/i, '')`);
 
 try {
   originalStorage = await client.evaluate(`localStorage.getItem(${JSON.stringify(STORAGE_KEY)})`);
@@ -38,7 +40,7 @@ try {
   assert.equal(await waitFor(client, `document.documentElement.dataset.codexConversationView === 'card'`), true);
 
   const target = await client.evaluate(`(() => {
-    const row = Array.from(document.querySelectorAll('[data-app-action-sidebar-thread-row]'))
+    const row = Array.from(document.querySelectorAll('#codex-sidebar-all-projects [data-app-action-sidebar-thread-row]'))
       .find((candidate) => candidate.getClientRects().length > 0);
     return row ? {
       id: row.getAttribute('data-app-action-sidebar-thread-id'),
@@ -46,7 +48,7 @@ try {
     } : null;
   })()`);
   assert.ok(target?.id, "a visible conversation card is required");
-  const rowSelector = `[data-app-action-sidebar-thread-id=${JSON.stringify(target.id)}]`;
+  const rowSelector = `#codex-sidebar-all-projects [data-app-action-sidebar-thread-id=${JSON.stringify(target.id)}]`;
 
   assert.equal(await waitFor(client, `Boolean(document.querySelector(${JSON.stringify(`${rowSelector} [data-codex-conversation-status-button]`)}))`), true,
     "every visible conversation card must expose a status button");
@@ -137,7 +139,9 @@ try {
     })()`);
     await client.send("Page.reload", { ignoreCache: true });
     await waitFor(client, `Boolean(window.__codexConversationPreviewInjection__)`, 20_000);
-    await client.evaluate(`window.postMessage({ type: 'navigate-to-route', path: '/local/${CURRENT_THREAD_ID}' }, '*')`);
+    if (activeThreadId) {
+      await client.evaluate(`window.postMessage({ type: 'navigate-to-route', path: ${JSON.stringify(`/local/${activeThreadId}`)} }, '*')`);
+    }
   } catch {}
   client.close();
 }

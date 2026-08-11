@@ -47,3 +47,10 @@ test("sidebar groups use accessible tabs and preserve native project actions", (
   assert.match(source, /codexSidebarProjectActionSource/);
   assert.match(source, /ArrowRight/);
 });
+
+test("folder create action is bound to the selected folder and restores native markup", () => {
+  assert.match(source, /nativeFolderCreateButton/);
+  assert.match(source, /codexSidebarFolderCreate = item\.id/);
+  assert.match(source, /在“\$\{item\.label\}”文件夹下创建项目/);
+  assert.match(source, /removeAttribute\("data-codex-sidebar-folder-create"\)/);
+});

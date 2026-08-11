@@ -2076,10 +2076,25 @@
     source.querySelectorAll("[data-codex-sidebar-folder-action-source]").forEach((button) => {
       button.removeAttribute("data-codex-sidebar-folder-action-source");
     });
+    source.querySelectorAll("[data-codex-sidebar-folder-create]").forEach((button) => {
+      const originalTitle = button.getAttribute("data-codex-sidebar-folder-create-original-title");
+      if (originalTitle) button.title = originalTitle;
+      else button.removeAttribute("title");
+      button.removeAttribute("data-codex-sidebar-folder-create");
+      button.removeAttribute("data-codex-sidebar-folder-create-original-title");
+    });
     if (row?.isConnected && source.parentElement !== row) {
       const selectProject = Array.from(row.children).find((child) => child.matches?.("button[data-app-action-sidebar-select-project]"));
       row.insertBefore(source, selectProject || null);
     }
+  }
+
+  function nativeFolderCreateButton(item) {
+    if (!item?.actions) return null;
+    const expectedLabel = `在 ${item.label} 中开始新聊天`;
+    return Array.from(item.actions.querySelectorAll("button")).find((button) =>
+      button.getAttribute("aria-label") === expectedLabel,
+    ) || null;
   }
 
   function moveActiveFolderActions(item) {
@@ -2096,6 +2111,14 @@
     item.actions.querySelectorAll("button").forEach((button) => {
       button.dataset.codexSidebarFolderActionSource = button.getAttribute("aria-label") || item.label;
     });
+    const create = nativeFolderCreateButton(item);
+    if (create) {
+      if (!create.hasAttribute("data-codex-sidebar-folder-create-original-title")) {
+        create.dataset.codexSidebarFolderCreateOriginalTitle = create.getAttribute("title") || "";
+      }
+      create.dataset.codexSidebarFolderCreate = item.id;
+      create.title = `在“${item.label}”文件夹下创建项目`;
+    }
     if (item.actions.parentElement !== host) host.appendChild(item.actions);
     host.hidden = false;
   }
