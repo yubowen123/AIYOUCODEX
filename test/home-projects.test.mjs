@@ -201,6 +201,27 @@ test("projects aggregate active task count and choose the latest routable task",
   assert.equal(result?.cards[0].activeTaskCount, 2);
 });
 
+test("every routable in-progress thread is exposed for running card decoration", async () => {
+  const { buildHomeProjectShelf } = await homeProjectsModule();
+  const result = buildHomeProjectShelf?.({
+    projects: [project],
+    tasks: [
+      task({ id: "active-a", threadId: "019fe64a-ace1-7793-92aa-4d91195005ec" }),
+      task({ id: "active-b", threadId: "local:019fe61d-6a11-7cf1-926b-435b108624b6" }),
+      task({ id: "duplicate", threadId: "019fe64a-ace1-7793-92aa-4d91195005ec" }),
+      task({ id: "completed", status: "in_review", threadId: "019fe6aa-aaaa-7aaa-8aaa-4d91195005ec" }),
+      task({ id: "invalid", threadId: "not-a-thread-id" }),
+    ],
+    state: null,
+    syncedAt: "2026-08-10T03:05:00.000Z",
+  });
+
+  assert.deepEqual(result?.activeThreadIds, [
+    "019fe61d-6a11-7cf1-926b-435b108624b6",
+    "019fe64a-ace1-7793-92aa-4d91195005ec",
+  ]);
+});
+
 test("thread routes reject invalid ids and normalize local prefixes", async () => {
   const { threadRoute } = await homeProjectsModule();
   assert.equal(

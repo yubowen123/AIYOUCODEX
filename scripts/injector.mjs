@@ -149,6 +149,7 @@ async function pushPreviews() {
         available: false,
         message: taskboard.message,
         cards: [],
+        activeThreadIds: [],
         state: homeProjectState,
       };
   await client.evaluate(`(() => {

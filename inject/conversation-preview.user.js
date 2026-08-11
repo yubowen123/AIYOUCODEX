@@ -70,8 +70,10 @@
   let homeProjects = {
     available: true,
     cards: [],
+    activeThreadIds: [],
     message: "",
   };
+  let activeProjectThreadIds = new Set();
   let homeProjectsState = null;
   try { viewMode = localStorage.getItem(VIEW_STORAGE_KEY) === "card" ? "card" : "list"; } catch {}
   try {
@@ -95,6 +97,14 @@
     const style = document.createElement("style");
     style.id = STYLE_ID;
     style.textContent = `
+      @property --codex-running-angle {
+        syntax: "<angle>";
+        inherits: false;
+        initial-value: 0deg;
+      }
+      @keyframes codex-running-border-flow {
+        to { --codex-running-angle: 360deg; }
+      }
       ${ROW_SELECTOR}[data-codex-conversation-preview-enhanced="true"] {
         height: auto !important;
         min-height: 48px !important;
@@ -165,6 +175,35 @@
         border-color: color-mix(in srgb, currentColor 17%, transparent) !important;
         background: color-mix(in srgb, var(--color-token-list-hover-background, Canvas) 76%, transparent) !important;
         box-shadow: 0 9px 26px color-mix(in srgb, black 8%, transparent);
+      }
+      html[data-codex-conversation-view="card"] ${ROW_SELECTOR}[data-codex-project-running="true"] {
+        isolation: isolate;
+        border-color: color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 58%, transparent) !important;
+        box-shadow: 0 7px 22px color-mix(in srgb, black 6%, transparent),
+          0 0 0 1px color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 26%, transparent),
+          0 0 15px color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 24%, transparent) !important;
+      }
+      html[data-codex-conversation-view="card"] ${ROW_SELECTOR}[data-codex-project-running="true"]::before,
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-card][data-phase="active"]::before {
+        position: absolute;
+        z-index: 3;
+        inset: -0.5px;
+        padding: 1.5px;
+        border-radius: inherit;
+        background: conic-gradient(from var(--codex-running-angle),
+          transparent 0deg 205deg,
+          color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 20%, transparent) 230deg,
+          #4ba9ff 260deg,
+          #b9e9ff 278deg,
+          #2f95ff 296deg,
+          transparent 330deg 360deg);
+        content: "";
+        pointer-events: none;
+        filter: drop-shadow(0 0 4px color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 62%, transparent));
+        -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+        animation: codex-running-border-flow 2.4s linear infinite;
       }
       html[data-codex-conversation-view="card"] [data-codex-conversation-preview-title="true"] {
         display: none !important;
@@ -987,6 +1026,13 @@
         backdrop-filter: blur(14px) saturate(112%);
         -webkit-backdrop-filter: blur(14px) saturate(112%);
       }
+      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-card][data-phase="active"] {
+        isolation: isolate;
+        border-color: color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 58%, transparent);
+        box-shadow: inset 0 1px 0 color-mix(in srgb, white 22%, transparent),
+          0 0 0 1px color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 24%, transparent),
+          0 0 14px color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 22%, transparent);
+      }
       #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-open] {
         display: grid;
         width: 100%;
@@ -1154,6 +1200,10 @@
         #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-pin] {
           transition-duration: 0.01ms !important;
         }
+        html[data-codex-conversation-view="card"] ${ROW_SELECTOR}[data-codex-project-running="true"]::before,
+        #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-card][data-phase="active"]::before {
+          animation: none !important;
+        }
       }
       [role="tooltip"][data-codex-conversation-preview-tooltip="true"] {
         width: min(30rem, calc(100vw - 16px)) !important;
@@ -1252,6 +1302,15 @@
       const folderPanel = row.closest("[data-codex-sidebar-folder-panel]");
       return !folderPanel?.hidden;
     });
+  }
+
+  function updateProjectRunningState(row) {
+    const threadId = normalizedThreadId(row.getAttribute("data-app-action-sidebar-thread-id"));
+    if (threadId && activeProjectThreadIds.has(threadId)) {
+      row.dataset.codexProjectRunning = "true";
+    } else {
+      row.removeAttribute("data-codex-project-running");
+    }
   }
 
   const STATUS_OPTIONS = [
@@ -2792,7 +2851,10 @@
           return rect.bottom > 0 && rect.top < innerHeight;
         })
       : null;
-    for (const row of rows) applySummary(row, previewForRow(row));
+    for (const row of rows) {
+      updateProjectRunningState(row);
+      applySummary(row, previewForRow(row));
+    }
     sortRecentRowsByLastCommunication();
     if (anchor) {
       anchor.scrollIntoView({ block: viewMode === "card" ? "center" : "nearest" });
@@ -2839,8 +2901,10 @@
     homeProjects = {
       available: source.available !== false,
       cards: Array.isArray(source.cards) ? source.cards : [],
+      activeThreadIds: Array.isArray(source.activeThreadIds) ? source.activeThreadIds : [],
       message: typeof source.message === "string" ? source.message : "",
     };
+    activeProjectThreadIds = new Set(homeProjects.activeThreadIds.map(normalizedThreadId).filter(Boolean));
     if (source.state && typeof source.state === "object") {
       homeProjectsState = source.state;
       persistHomeProjectsState();
@@ -2900,6 +2964,9 @@
     });
     document.querySelectorAll('[data-codex-sidebar-search-match="true"]').forEach((node) => {
       node.removeAttribute("data-codex-sidebar-search-match");
+    });
+    document.querySelectorAll('[data-codex-project-running="true"]').forEach((node) => {
+      node.removeAttribute("data-codex-project-running");
     });
   }
 
