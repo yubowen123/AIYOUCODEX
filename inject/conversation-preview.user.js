@@ -3715,7 +3715,7 @@
       button.innerHTML = settingsShortcutSvg();
     }
     button.onclick = openShortcutSettings;
-    const notification = document.querySelector('button[aria-label="查看活动"], button[aria-label="View activity"], button[aria-label*="通知"], button[aria-label*="Notification"]');
+    const notification = document.querySelector('button[aria-label^="查看活动"], button[aria-label^="View activity"], button[aria-label*="通知"], button[aria-label*="Notification"]');
     let notificationSlot = notification;
     while (notificationSlot?.parentElement && notificationSlot.parentElement !== host) {
       notificationSlot = notificationSlot.parentElement;

@@ -100,6 +100,7 @@ npm run inject
 
 ```bash
 node scripts/verify-shortcut-grid.mjs
+node scripts/verify-shortcut-settings-click.mjs
 node scripts/verify-tv-panel.mjs
 node scripts/verify-section-tabs.mjs
 node scripts/verify-folder-switcher.mjs

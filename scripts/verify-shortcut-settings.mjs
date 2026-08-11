@@ -27,7 +27,7 @@ try {
     const grid = document.getElementById('codex-sidebar-shortcut-grid');
     const settings = document.querySelector('[data-codex-sidebar-shortcut-settings]');
     const search = document.querySelector('button[aria-label="搜索"], button[aria-label="Search"]');
-    const activity = document.querySelector('button[aria-label="查看活动"], button[aria-label="View activity"]');
+    const activity = document.querySelector('button[aria-label^="查看活动"], button[aria-label^="View activity"]');
     settings?.click();
     const cards = Array.from(grid?.querySelectorAll('[data-codex-sidebar-shortcut-card]') || []);
     return {
