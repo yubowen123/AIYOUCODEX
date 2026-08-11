@@ -14,11 +14,11 @@
 
 1. 下载到 `~/Library/Application Support/Codex Sidebar Enhancer`；
 2. 使用系统 Node.js，或 Codex/ChatGPT 桌面应用内置的 Node.js；
-3. 安装用户级 LaunchAgent，登录和应用重启后自动恢复；
+3. 安装用户级 LaunchAgent，登录和应用重启后自动恢复；若检测到桌面应用未带增强端口启动，会自动正常退出并重开一次；
 4. 在 `~/Applications` 创建 **Codex Sidebar Enhancer.app** 启动器；
-5. 打开启动器。首次启用时，如 Codex 正在运行，会询问是否重启一次。
+5. 打开启动器。首次启用时，如 Codex 正在运行，会重启一次以挂载增强界面。
 
-以后从 Spotlight、访达的“应用程序”或 `~/Applications` 打开 **Codex Sidebar Enhancer** 即可。它会以本地调试端口启动 Codex/ChatGPT；注入器只连接 `127.0.0.1:9231`。
+以后可以照常打开 Codex/ChatGPT；后台增强会在缺少本地调试端口时自动纠正启动方式。也可从 Spotlight、访达的“应用程序”或 `~/Applications` 直接打开 **Codex Sidebar Enhancer**。注入器只连接 `127.0.0.1:9231`。
 
 > 不想直接执行远程脚本？先[查看 install.sh](./install.sh)，或下载仓库后运行 `bash install.sh`。
 
@@ -78,10 +78,9 @@
 
 如果增强没有出现：
 
-1. 退出 Codex/ChatGPT；
-2. 打开 `~/Applications/Codex Sidebar Enhancer.app`；
-3. 等待约 5 秒；
-4. 仍未出现时查看上述日志。
+1. 等待约 10 秒，后台增强会自动纠正一次普通启动；
+2. 仍未出现时退出 Codex/ChatGPT，再打开 `~/Applications/Codex Sidebar Enhancer.app`；
+3. 查看上述日志。
 
 ## 本地开发
 

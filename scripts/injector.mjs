@@ -1,19 +1,27 @@
 #!/usr/bin/env node
 
 import { readFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { connectMainCodex, readTargets, selectMainCodexTarget } from "./cdp-client.mjs";
 import { PreviewRepository } from "../lib/preview-data.mjs";
 import { presentCardPreview } from "../lib/card-view.mjs";
 import { presentRateLimit } from "../lib/usage-data.mjs";
-import { needsPreviewAttachment } from "../lib/injector-state.mjs";
+import {
+  DesktopAppRecovery,
+  desktopAppLaunchArgs,
+  needsPreviewAttachment,
+  parseDesktopAppProcess,
+} from "../lib/injector-state.mjs";
 import { buildHomeProjectShelf, readTaskboardSnapshot } from "../lib/home-projects.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(root, "inject", "conversation-preview.user.js");
 const SCRIPT_ID_GLOBAL = "__CODEX_CONVERSATION_PREVIEW_SCRIPT_IDENTIFIER__";
+const execFileAsync = promisify(execFile);
 
 function parseArgs(argv) {
   const options = { port: 9231, watch: false };
@@ -42,9 +50,37 @@ let stopped = false;
 let attachedTargetId = null;
 let client = null;
 let registeredScriptIdentifier = null;
+const desktopAppRecovery = new DesktopAppRecovery();
 
 async function attach() {
   const nextTargetId = await targetId(options.port);
+  if (!nextTargetId && options.watch) {
+    let app = null;
+    try {
+      const { stdout } = await execFileAsync("/bin/ps", ["-axo", "pid=,command="]);
+      app = parseDesktopAppProcess(stdout);
+    } catch {}
+    const action = desktopAppRecovery.next({ targetAvailable: false, app });
+    if (action?.type === "quit") {
+      try {
+        await execFileAsync("/usr/bin/osascript", [
+          "-e",
+          `tell application id ${JSON.stringify(action.app.bundleId)} to quit`,
+        ]);
+        process.stdout.write(`Restarting ${action.app.appPath} to enable sidebar enhancement\n`);
+      } catch {}
+    } else if (action?.type === "launch") {
+      const child = spawn("/usr/bin/open", desktopAppLaunchArgs(action.appPath, options.port), {
+        detached: true,
+        stdio: "ignore",
+      });
+      child.unref();
+      desktopAppRecovery.markLaunched();
+      process.stdout.write(`Launching ${action.appPath} with sidebar enhancement enabled\n`);
+    }
+    return false;
+  }
+  desktopAppRecovery.next({ targetAvailable: Boolean(nextTargetId), app: null });
   if (!await needsPreviewAttachment({ client, attachedTargetId, nextTargetId })) return false;
 
   if (!client || nextTargetId !== attachedTargetId) {

@@ -25,7 +25,12 @@ let originalStorage = null;
 try {
   originalStorage = await client.evaluate(`localStorage.getItem(${JSON.stringify(STORAGE_KEY)})`);
   await client.evaluate(`document.querySelector('[data-codex-sidebar-section-tab="项目"]')?.click()`);
-  assert.equal(await waitFor(client, `Boolean(document.querySelector('[data-codex-sidebar-folder-panel]:not([hidden])'))`), true);
+  assert.equal(await waitFor(client, `Boolean(document.querySelector('[data-codex-sidebar-folder-tag="__all__"]'))`), true);
+  await client.evaluate(`(() => {
+    document.querySelector('[data-codex-sidebar-folder-clear]')?.click();
+    document.querySelector('[data-codex-sidebar-folder-tag="__all__"]')?.click();
+  })()`);
+  assert.equal(await waitFor(client, `Boolean(document.getElementById('codex-sidebar-all-projects'))`), true);
   await client.evaluate(`(() => {
     const toggle = document.getElementById('codex-conversation-view-toggle');
     if (toggle?.getAttribute('aria-checked') !== 'true') toggle.click();
@@ -58,6 +63,30 @@ try {
     label: "状态：紧急且重要",
     hasPopup: "menu",
   });
+
+  const layout = await client.evaluate(`(() => {
+    const row = document.querySelector(${JSON.stringify(rowSelector)});
+    const button = row?.querySelector('[data-codex-conversation-status-button]');
+    if (!row || !button) return null;
+    const rowRect = row.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    const centerX = buttonRect.left + buttonRect.width / 2;
+    const centerY = buttonRect.top + buttonRect.height / 2;
+    return {
+      inAllView: Boolean(row.closest('#codex-sidebar-all-projects')),
+      width: buttonRect.width,
+      height: buttonRect.height,
+      top: buttonRect.top - rowRect.top,
+      right: rowRect.right - buttonRect.right,
+      hitTarget: document.elementFromPoint(centerX, centerY) === button,
+    };
+  })()`);
+  assert.equal(layout?.inAllView, true, "the status layout regression must be exercised in the All view");
+  assert.ok(Math.abs(layout.width - 28) <= 1, `status button must stay 28px wide, got ${layout.width}px`);
+  assert.ok(Math.abs(layout.height - 28) <= 1, `status button must stay 28px high, got ${layout.height}px`);
+  assert.ok(Math.abs(layout.top - 9) <= 1, `status button must stay 9px from the card top, got ${layout.top}px`);
+  assert.ok(Math.abs(layout.right - 9) <= 1, `status button must stay 9px from the card right, got ${layout.right}px`);
+  assert.equal(layout.hitTarget, true, "the compact top-right status button must receive real pointer hits");
 
   const buttonCenter = await client.evaluate(`(() => {
     const rect = document.querySelector(${JSON.stringify(`${rowSelector} [data-codex-conversation-status-button]`)})?.getBoundingClientRect();
@@ -98,7 +127,7 @@ try {
   assert.equal(await waitFor(client, `document.querySelector(${JSON.stringify(`${rowSelector} [data-codex-conversation-status-button]`)})?.dataset.status === 'not-urgent'`), true,
     "the selected status must survive a renderer reload");
 
-  process.stdout.write(`${JSON.stringify({ target, statuses: ["urgent-important", "urgent-or-important", "not-urgent", "clear"] }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ target, layout, statuses: ["urgent-important", "urgent-or-important", "not-urgent", "clear"] }, null, 2)}\n`);
 } finally {
   try {
     await client.evaluate(`(() => {
