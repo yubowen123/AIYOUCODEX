@@ -99,3 +99,41 @@ test("desktop app recovery launches the app with the complete debugging argument
     "--enable-features=LocalNetworkAccessForSubframeNavigationsWarningOnly",
   ]);
 });
+
+test("Windows desktop app recovery ignores Electron helpers and selects the main process", async () => {
+  const state = await import("../lib/injector-state.mjs");
+  assert.equal(typeof state.parseWindowsDesktopAppProcess, "function");
+  const processList = JSON.stringify([
+    {
+      ProcessId: 401,
+      Name: "ChatGPT.exe",
+      ExecutablePath: "C:\\Program Files\\WindowsApps\\OpenAI.ChatGPT\\ChatGPT.exe",
+      CommandLine: '"C:\\Program Files\\WindowsApps\\OpenAI.ChatGPT\\ChatGPT.exe" --type=renderer',
+    },
+    {
+      ProcessId: 400,
+      Name: "ChatGPT.exe",
+      ExecutablePath: "C:\\Program Files\\WindowsApps\\OpenAI.ChatGPT\\ChatGPT.exe",
+      CommandLine: '"C:\\Program Files\\WindowsApps\\OpenAI.ChatGPT\\ChatGPT.exe"',
+    },
+  ]);
+
+  assert.deepEqual(state.parseWindowsDesktopAppProcess(processList), {
+    pid: 400,
+    appPath: "C:\\Program Files\\WindowsApps\\OpenAI.ChatGPT\\ChatGPT.exe",
+    appName: "ChatGPT.exe",
+  });
+  assert.equal(state.parseWindowsDesktopAppProcess(JSON.stringify([
+    { ProcessId: 1, Name: "Other.exe", ExecutablePath: "C:\\Other.exe", CommandLine: "C:\\Other.exe" },
+  ])), null);
+});
+
+test("Windows desktop app recovery uses the same complete debugging arguments", async () => {
+  const state = await import("../lib/injector-state.mjs");
+  assert.equal(typeof state.windowsDesktopAppLaunchArgs, "function");
+  assert.deepEqual(state.windowsDesktopAppLaunchArgs(9231), [
+    "--remote-debugging-port=9231",
+    "--remote-allow-origins=http://127.0.0.1:9231",
+    "--enable-features=LocalNetworkAccessForSubframeNavigationsWarningOnly",
+  ]);
+});
