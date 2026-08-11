@@ -23,11 +23,13 @@ const client = await connectWhenReady();
 try {
   const deadline = Date.now() + 8_000;
   while (!await client.evaluate(`(() => {
-    const names = Array.from(document.querySelectorAll("#codex-sidebar-shortcut-grid [data-codex-sidebar-shortcut-card]"))
-      .map((button) => button.dataset.codexSidebarShortcutName);
     const sourceNames = Array.from(document.querySelectorAll("[data-codex-sidebar-shortcut-source-name]"))
       .map((button) => button.dataset.codexSidebarShortcutSourceName);
-    return sourceNames.length >= 5 && sourceNames.every((name) => names.includes(name));
+    const tops = Array.from(document.querySelectorAll("#codex-sidebar-shortcut-grid [data-codex-sidebar-shortcut-card]"))
+      .map((button) => button.getBoundingClientRect().top);
+    return tops.length > 0
+      && sourceNames.length >= 5
+      && Math.max(...tops) - Math.min(...tops) <= 1;
   })()`)) {
     if (Date.now() >= deadline) break;
     await new Promise((resolve) => setTimeout(resolve, 40));
@@ -55,14 +57,16 @@ try {
       };
     });
 
-    const proxy = grid.querySelector('[data-codex-sidebar-shortcut-name="站点"]');
-    const source = document.querySelector('[data-codex-sidebar-shortcut-source-name="站点"]');
+    const proxy = grid.querySelector('[data-codex-sidebar-shortcut-name="项目管理"]');
+    const source = document.querySelector('[data-codex-sidebar-shortcut-source-name="项目管理"]');
     let forwardedClicks = 0;
     if (proxy && source) {
       const originalClick = source.click;
       source.click = () => { forwardedClicks += 1; };
       try { proxy.click(); } finally { source.click = originalClick; }
     }
+
+    const tv = grid.querySelector('[data-codex-sidebar-shortcut-name="TV"]');
 
     const overflowClones = [];
     while (grid.children.length < 7 && cards[0]) {
@@ -83,6 +87,19 @@ try {
       columns: getComputedStyle(grid).gridTemplateColumns.trim().split(/\\s+/).length,
       cards: metrics,
       sourceNames,
+      visibleNames: metrics.map((card) => card.name),
+      hiddenSettingKeys: (() => {
+        try {
+          return JSON.parse(localStorage.getItem("codex-conversation-preview:shortcut-settings") || "null")?.hidden || ["native:站点", "native:插件"];
+        } catch {
+          return ["native:站点", "native:插件"];
+        }
+      })(),
+      hiddenNativeNames: ["站点", "插件"].filter((name) => !metrics.some((card) => card.name === name)),
+      tvConfiguration: {
+        url: tv?.dataset.codexSidebarShortcutUrl || null,
+        ariaLabel: tv?.getAttribute("aria-label") || null,
+      },
       sourcesHidden: Array.from(document.querySelectorAll("[data-codex-sidebar-shortcut-source-hidden], [data-codex-sidebar-shortcut-source-group-hidden]"))
         .every((node) => getComputedStyle(node).display === "none"),
       forwardedClicks,
@@ -100,19 +117,29 @@ try {
   assert.equal(actual.ariaLabel, "快捷入口");
   assert.equal(actual.columns, 6);
   const canonicalOrder = ["新对话", "拉取请求", "站点", "已安排", "插件", "项目管理"];
+  const configurableOrder = ["新对话", "拉取请求", "TV", "站点", "已安排", "插件", "项目管理"];
+  const expectedVisible = configurableOrder.filter((name) => !actual.hiddenSettingKeys.includes(`native:${name}`));
   assert.ok(actual.sourceNames.length >= 5, "at least the five stable native shortcuts must be available");
   assert.deepEqual(actual.sourceNames, canonicalOrder.filter((name) => actual.sourceNames.includes(name)));
-  assert.deepEqual(actual.cards.map((card) => card.name), actual.sourceNames);
-  assert.equal(new Set(actual.cards.map((card) => card.top)).size, 1);
+  assert.deepEqual(actual.visibleNames, expectedVisible);
+  assert.deepEqual(actual.hiddenNativeNames, ["站点", "插件"].filter((name) => actual.hiddenSettingKeys.includes(`native:${name}`)));
+  assert.ok(Math.max(...actual.cards.map((card) => card.top)) - Math.min(...actual.cards.map((card) => card.top)) <= 1,
+    "shortcut cards must remain visually aligned within one device pixel");
   assert.equal(new Set(actual.cards.map((card) => card.width)).size, 1);
   assert.ok(actual.cards.every((card) => card.height >= 62));
   assert.ok(actual.cards.every((card) => card.hasImage && card.iconBeforeLabel));
   assert.ok(actual.cards.every((card) => card.ariaLabel));
   assert.equal(actual.sourcesHidden, true);
-  assert.equal(actual.forwardedClicks, 1);
+  assert.equal(actual.forwardedClicks, expectedVisible.includes("项目管理") ? 1 : 0);
+  if (expectedVisible.includes("TV")) {
+    assert.deepEqual(actual.tvConfiguration, {
+      url: "https://dz-ailab.dzkjm.cn/canvas/projects?category=personal",
+      ariaLabel: "打开TV",
+    });
+  }
   assert.ok(actual.overflowTop > actual.firstRowTop, "the seventh card must wrap to a second row");
-  assert.equal(actual.quickAction, true);
-  assert.equal(actual.scheduledStatus, true);
+  assert.equal(actual.quickAction, expectedVisible.includes("新对话"));
+  assert.equal(actual.scheduledStatus, expectedVisible.includes("已安排"));
 
   process.stdout.write(`${JSON.stringify(actual, null, 2)}\n`);
 } finally {

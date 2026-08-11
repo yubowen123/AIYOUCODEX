@@ -2,6 +2,7 @@
 
 import { readFile } from "node:fs/promises";
 import { execFile, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -21,6 +22,9 @@ import { buildHomeProjectShelf, readTaskboardSnapshot } from "../lib/home-projec
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(root, "inject", "conversation-preview.user.js");
 const SCRIPT_ID_GLOBAL = "__CODEX_CONVERSATION_PREVIEW_SCRIPT_IDENTIFIER__";
+const TV_HOST_BINDING_NAME = "__codexTvHostV1";
+const TV_HOST_TOKEN_GLOBAL = "__CODEX_TV_HOST_TOKEN__";
+const TV_URL = "https://dz-ailab.dzkjm.cn/canvas/projects?category=personal";
 const execFileAsync = promisify(execFile);
 
 function parseArgs(argv) {
@@ -50,7 +54,74 @@ let stopped = false;
 let attachedTargetId = null;
 let client = null;
 let registeredScriptIdentifier = null;
+let tvHostToken = null;
+let tvHostUnsubscribers = [];
+let tvHostOperations = Promise.resolve();
 const desktopAppRecovery = new DesktopAppRecovery();
+
+async function disableTvCsp(targetClient = client) {
+  try { await targetClient?.send("Page.setBypassCSP", { enabled: false }); } catch {}
+}
+
+async function closeClient() {
+  const closingClient = client;
+  const pendingTvOperations = tvHostOperations;
+  tvHostUnsubscribers.forEach((unsubscribe) => unsubscribe());
+  tvHostUnsubscribers = [];
+  tvHostToken = null;
+  tvHostOperations = Promise.resolve();
+  try { await pendingTvOperations; } catch {}
+  await disableTvCsp(closingClient);
+  closingClient?.close();
+  if (client === closingClient) client = null;
+}
+
+function reportTvHostError(targetClient, id, error) {
+  const message = error?.message || "TV 加载失败";
+  return targetClient.evaluate(`window.__codexConversationPreviewInjection__?.showTvError?.(${JSON.stringify(id)}, ${JSON.stringify(message)})`)
+    .catch(() => {});
+}
+
+async function handleTvHostBinding(targetClient, expectedToken, params) {
+  if (targetClient !== client || params?.name !== TV_HOST_BINDING_NAME) return;
+  let request;
+  try { request = JSON.parse(params.payload); } catch { return; }
+  if (request?.token !== expectedToken || typeof request?.id !== "string") return;
+
+  if (request.action === "close") {
+    await disableTvCsp(targetClient);
+    return;
+  }
+  if (request.action !== "open" || request.url !== TV_URL) return;
+
+  try {
+    await targetClient.send("Page.setBypassCSP", { enabled: true });
+    const loaded = await targetClient.evaluate(`window.__codexConversationPreviewInjection__?.loadTvFrame?.(${JSON.stringify(request.id)}) === true`);
+    if (!loaded) throw new Error("TV 面板未能挂载到 Codex 主工作区");
+  } catch (error) {
+    await disableTvCsp(targetClient);
+    await reportTvHostError(targetClient, request.id, error);
+  }
+}
+
+async function setupTvHost(targetClient) {
+  tvHostToken = randomUUID();
+  const expectedToken = tvHostToken;
+  tvHostUnsubscribers.push(targetClient.on("Runtime.bindingCalled", (params) => {
+    tvHostOperations = tvHostOperations
+      .then(() => handleTvHostBinding(targetClient, expectedToken, params))
+      .catch(() => {});
+  }));
+  tvHostUnsubscribers.push(targetClient.on("Runtime.executionContextCreated", (params) => {
+    const executionContextId = params?.context?.id;
+    if (!Number.isInteger(executionContextId)) return;
+    void targetClient.send("Runtime.addBinding", {
+      name: TV_HOST_BINDING_NAME,
+      executionContextId,
+    }).catch(() => {});
+  }));
+  await targetClient.send("Runtime.enable");
+}
 
 async function attach() {
   const nextTargetId = await targetId(options.port);
@@ -84,8 +155,9 @@ async function attach() {
   if (!await needsPreviewAttachment({ client, attachedTargetId, nextTargetId })) return false;
 
   if (!client || nextTargetId !== attachedTargetId) {
-    client?.close();
+    await closeClient();
     client = await connectMainCodex(options.port);
+    await setupTvHost(client);
     registeredScriptIdentifier = null;
   }
 
@@ -95,9 +167,10 @@ async function attach() {
     try { await client.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: oldIdentifier }); } catch {}
   }
   const userSource = await readFile(sourcePath, "utf8");
-  const registered = await client.send("Page.addScriptToEvaluateOnNewDocument", { source: userSource });
+  const rendererSource = `if (window.top === window) { window[${JSON.stringify(TV_HOST_TOKEN_GLOBAL)}] = ${JSON.stringify(tvHostToken)}; ${userSource}\n}`;
+  const registered = await client.send("Page.addScriptToEvaluateOnNewDocument", { source: rendererSource });
   registeredScriptIdentifier = registered.identifier;
-  await client.evaluate(userSource);
+  await client.evaluate(rendererSource);
   await client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] = ${JSON.stringify(registered.identifier)}`);
   attachedTargetId = nextTargetId;
   process.stdout.write(`Codex conversation preview attached to renderer ${nextTargetId}\n`);
@@ -165,7 +238,7 @@ async function stop() {
   if (stopped) return;
   stopped = true;
   try { await client?.evaluate("window.__codexConversationPreviewInjection__?.destroy?.()") } catch {}
-  client?.close();
+  await closeClient();
 }
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
@@ -183,8 +256,7 @@ try {
     } catch (error) {
       attachedTargetId = null;
       registeredScriptIdentifier = null;
-      client?.close();
-      client = null;
+      await closeClient();
       if (!options.watch) throw error;
     }
     if (!options.watch) break;

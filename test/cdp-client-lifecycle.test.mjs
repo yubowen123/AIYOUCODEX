@@ -126,3 +126,33 @@ test("a renderer disconnect rejects every in-flight request", async () => {
     await closeServer(server);
   }
 });
+
+test("client delivers and can unsubscribe from CDP events", async () => {
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await new Promise((resolve, reject) => {
+    server.once("listening", resolve);
+    server.once("error", reject);
+  });
+  server.on("connection", (socket) => {
+    socket.send(JSON.stringify({
+      method: "Runtime.bindingCalled",
+      params: { name: "testBinding", payload: "first" },
+    }));
+  });
+  const port = server.address().port;
+  const client = new CdpClient(`ws://127.0.0.1:${port}`);
+
+  try {
+    const payloads = [];
+    const unsubscribe = client.on("Runtime.bindingCalled", (params) => payloads.push(params.payload));
+    await client.connect();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(payloads, ["first"]);
+    unsubscribe();
+    assert.equal(client.listeners.has("Runtime.bindingCalled"), false);
+  } finally {
+    client.close();
+    for (const socket of server.clients) socket.terminate();
+    await closeServer(server);
+  }
+});

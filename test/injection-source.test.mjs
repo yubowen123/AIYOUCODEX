@@ -48,6 +48,20 @@ test("sidebar groups use accessible tabs and preserve native project actions", (
   assert.match(source, /ArrowRight/);
 });
 
+test("shortcut grid hides site and plugin while adding an inline TV workspace", () => {
+  assert.match(source, /HIDDEN_SHORTCUT_NAMES = new Set\(\["站点", "插件"\]\)/);
+  assert.match(source, /TV_SHORTCUT_URL = "https:\/\/dz-ailab\.dzkjm\.cn\/canvas\/projects\?category=personal"/);
+  assert.match(source, /button\.dataset\.codexSidebarShortcutUrl = item\.url/);
+  assert.doesNotMatch(source, /window\.open\(/);
+  assert.match(source, /window\.__codexTaskboardInjection__\?\.close\?\.\(false\)/);
+  assert.match(source, /function openTvPanel\(\)/);
+  assert.match(source, /function loadTvFrame\(id\)/);
+  assert.match(source, /TV_HOST_BINDING_NAME = "__codexTvHostV1"/);
+  assert.match(source, /frame\.setAttribute\("sandbox", "allow-scripts allow-same-origin/);
+  assert.match(source, /data-codex-tv-open/);
+  assert.match(source, /name === "TV"/);
+});
+
 test("folder create action is bound to the selected folder and restores native markup", () => {
   assert.match(source, /nativeFolderCreateButton/);
   assert.match(source, /codexSidebarFolderCreate = item\.id/);

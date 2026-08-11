@@ -13,6 +13,31 @@
   const SHORTCUT_CARD_CLASS = "codex-sidebar-shortcut-card";
   const SHORTCUT_ICON_CLASS = "codex-sidebar-shortcut-icon";
   const SHORTCUT_LABEL_CLASS = "codex-sidebar-shortcut-label";
+  const SHORTCUT_SETTINGS_ID = "codex-sidebar-shortcut-settings-dialog";
+  const SHORTCUT_SETTINGS_BUTTON_ID = "codex-sidebar-shortcut-settings-button";
+  const SHORTCUT_SETTINGS_STORAGE_KEY = "codex-conversation-preview:shortcut-settings";
+  const CUSTOM_SHORTCUT_PAGE_ID = "codex-custom-shortcut-page";
+  const CUSTOM_SHORTCUT_FRAME_ID = "codex-custom-shortcut-frame";
+  const CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE = "data-codex-custom-shortcut-hidden";
+  const CUSTOM_SHORTCUT_HOST_ATTRIBUTE = "data-codex-custom-shortcut-host";
+  const SHORTCUT_ICON_PRESETS = {
+    link: '<path d="M10.2 13.8 13.8 10.2M8.1 15.9l-1.4 1.4a3.5 3.5 0 0 1-5-5l3-3a3.5 3.5 0 0 1 5 0M15.9 8.1l1.4-1.4a3.5 3.5 0 0 1 5 5l-3 3a3.5 3.5 0 0 1-5 0"/>',
+    book: '<path d="M4 4.5h5.5A2.5 2.5 0 0 1 12 7v13a3 3 0 0 0-3-3H4zM20 4.5h-5.5A2.5 2.5 0 0 0 12 7v13a3 3 0 0 1 3-3h5z"/>',
+    sparkle: '<path d="m12 2 1.5 5.2L19 9l-5.5 1.8L12 16l-1.5-5.2L5 9l5.5-1.8zM5 16l.8 2.2L8 19l-2.2.8L5 22l-.8-2.2L2 19l2.2-.8z"/>',
+    play: '<rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="m10 9 5 3-5 3z"/>',
+    chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    code: '<path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"/>',
+  };
+  const TV_SHORTCUT_URL = "https://dz-ailab.dzkjm.cn/canvas/projects?category=personal";
+  const TV_PAGE_ID = "codex-tv-page";
+  const TV_FRAME_ID = "codex-tv-frame";
+  const TV_STATUS_ID = "codex-tv-status";
+  const TV_HIDDEN_ATTRIBUTE = "data-codex-tv-native-hidden";
+  const TV_HOST_ATTRIBUTE = "data-codex-tv-page-host";
+  const TV_NATIVE_SELECTED_ATTRIBUTE = "data-codex-tv-native-selected";
+  const TV_HOST_BINDING_NAME = "__codexTvHostV1";
+  const TV_HOST_TOKEN_GLOBAL = "__CODEX_TV_HOST_TOKEN__";
+  const HIDDEN_SHORTCUT_NAMES = new Set(["站点", "插件"]);
   const SECTION_TABS_ID = "codex-sidebar-section-tabs";
   const SECTION_TAB_STORAGE_KEY = "codex-conversation-preview:section-tab";
   const SECTION_NAMES = ["置顶", "项目", "最近"];
@@ -42,6 +67,21 @@
   let syncTimer = null;
   let previews = new Map();
   let shortcutSources = new Map();
+  let shortcutCatalog = [];
+  let shortcutSettings = {
+    hidden: Array.from(HIDDEN_SHORTCUT_NAMES, (name) => `native:${name}`),
+    custom: [],
+  };
+  let customShortcutPage = null;
+  let customShortcutFrame = null;
+  let customShortcutLastFocusedElement = null;
+  let tvPage = null;
+  let tvFrame = null;
+  let tvStatus = null;
+  let tvActive = false;
+  let tvRequestId = "";
+  let tvLastFocusedElement = null;
+  let tvMutedNativeSelections = new Map();
   let sectionSources = new Map();
   let sectionTogglePending = new Map();
   let folderSources = new Map();
@@ -75,6 +115,18 @@
   };
   let activeProjectThreadIds = new Set();
   let homeProjectsState = null;
+  try {
+    const savedShortcutSettings = JSON.parse(localStorage.getItem(SHORTCUT_SETTINGS_STORAGE_KEY) || "null");
+    if (savedShortcutSettings && typeof savedShortcutSettings === "object") {
+      const hidden = Array.isArray(savedShortcutSettings.hidden)
+        ? savedShortcutSettings.hidden.filter((value) => typeof value === "string")
+        : shortcutSettings.hidden;
+      const custom = Array.isArray(savedShortcutSettings.custom)
+        ? savedShortcutSettings.custom.filter((item) => item && typeof item === "object")
+        : [];
+      shortcutSettings = { hidden, custom };
+    }
+  } catch {}
   try { viewMode = localStorage.getItem(VIEW_STORAGE_KEY) === "card" ? "card" : "list"; } catch {}
   try {
     const savedSectionTab = localStorage.getItem(SECTION_TAB_STORAGE_KEY);
@@ -401,6 +453,61 @@
       [data-codex-sidebar-shortcut-source-group-hidden="true"] {
         display: none !important;
       }
+      [${CUSTOM_SHORTCUT_HOST_ATTRIBUTE}="true"] {
+        position: relative !important;
+        z-index: 31 !important;
+        pointer-events: none !important;
+      }
+      [${CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE}="true"] {
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+      [${TV_HOST_ATTRIBUTE}="true"] {
+        position: relative !important;
+        z-index: 31 !important;
+        pointer-events: none !important;
+      }
+      [${TV_HIDDEN_ATTRIBUTE}="true"] {
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+      [${TV_NATIVE_SELECTED_ATTRIBUTE}="true"] {
+        background-color: transparent !important;
+      }
+      #${TV_PAGE_ID} {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        background: Canvas;
+        color: CanvasText;
+        pointer-events: auto;
+      }
+      #${TV_PAGE_ID}[hidden],
+      #${TV_FRAME_ID}[hidden],
+      #${TV_STATUS_ID}[hidden] {
+        display: none !important;
+      }
+      #${TV_FRAME_ID} {
+        display: block;
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: Canvas;
+      }
+      #${TV_STATUS_ID} {
+        display: grid;
+        width: 100%;
+        height: 100%;
+        place-items: center;
+        padding: 24px;
+        box-sizing: border-box;
+        color: var(--color-token-description-foreground, color-mix(in srgb, CanvasText 62%, transparent));
+        font-size: 13px;
+        text-align: center;
+      }
       #${SHORTCUT_GRID_ID} {
         display: grid !important;
         width: 100%;
@@ -513,6 +620,250 @@
       #${SHORTCUT_GRID_ID} [data-codex-sidebar-shortcut-quick="true"] svg {
         width: 12px !important;
         height: 12px !important;
+      }
+      #${SHORTCUT_SETTINGS_BUTTON_ID} {
+        display: inline-flex !important;
+        flex: 0 0 28px !important;
+        width: 28px !important;
+        min-width: 28px !important;
+        max-width: 28px !important;
+        height: 28px !important;
+        min-height: 28px !important;
+        align-items: center !important;
+        justify-content: center !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: 0 !important;
+        border-radius: 9px !important;
+        background: transparent !important;
+        color: var(--color-token-description-foreground, currentColor) !important;
+        cursor: pointer;
+      }
+      #${SHORTCUT_SETTINGS_BUTTON_ID}:hover {
+        background: color-mix(in srgb, currentColor 7%, transparent) !important;
+        color: var(--color-token-text-primary, currentColor) !important;
+      }
+      #${SHORTCUT_SETTINGS_BUTTON_ID}:focus-visible {
+        outline: 2px solid var(--color-token-accent-foreground, Highlight) !important;
+        outline-offset: 2px !important;
+      }
+      #${SHORTCUT_SETTINGS_BUTTON_ID} svg {
+        width: 18px !important;
+        height: 18px !important;
+      }
+      #${SHORTCUT_SETTINGS_ID} {
+        width: min(430px, calc(100vw - 32px));
+        max-height: min(680px, calc(100vh - 48px));
+        margin: auto;
+        padding: 0;
+        overflow: hidden;
+        border: 0.5px solid color-mix(in srgb, currentColor 16%, transparent);
+        border-radius: 18px;
+        background: color-mix(in srgb, var(--color-token-main-surface-primary, Canvas) 94%, transparent);
+        color: var(--color-token-text-primary, CanvasText);
+        box-shadow: 0 24px 70px color-mix(in srgb, black 24%, transparent);
+        backdrop-filter: blur(24px) saturate(125%);
+      }
+      #${SHORTCUT_SETTINGS_ID}::backdrop {
+        background: color-mix(in srgb, black 28%, transparent);
+        backdrop-filter: blur(4px);
+      }
+      #${SHORTCUT_SETTINGS_ID} .codex-shortcut-settings-shell {
+        display: flex;
+        max-height: min(680px, calc(100vh - 48px));
+        flex-direction: column;
+      }
+      #${SHORTCUT_SETTINGS_ID} .codex-shortcut-settings-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 18px 18px 12px;
+      }
+      #${SHORTCUT_SETTINGS_ID} h2,
+      #${SHORTCUT_SETTINGS_ID} h3 {
+        margin: 0;
+        font-weight: 650;
+      }
+      #${SHORTCUT_SETTINGS_ID} h2 { font-size: 17px; }
+      #${SHORTCUT_SETTINGS_ID} h3 { font-size: 13px; }
+      #${SHORTCUT_SETTINGS_ID} [data-codex-shortcut-settings-close] {
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        border: 0;
+        border-radius: 9px;
+        background: color-mix(in srgb, currentColor 6%, transparent);
+        color: inherit;
+        font-size: 20px;
+        cursor: pointer;
+      }
+      #${SHORTCUT_SETTINGS_ID} .codex-shortcut-settings-body {
+        min-height: 0;
+        padding: 0 18px 18px;
+        overflow: auto;
+      }
+      #${SHORTCUT_SETTINGS_ID} .codex-shortcut-settings-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 7px;
+        margin: 10px 0 18px;
+      }
+      #${SHORTCUT_SETTINGS_ID} .codex-shortcut-settings-row {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 10px;
+        border: 0.5px solid color-mix(in srgb, currentColor 10%, transparent);
+        border-radius: 11px;
+        background: color-mix(in srgb, currentColor 3%, transparent);
+      }
+      #${SHORTCUT_SETTINGS_ID} .codex-shortcut-settings-row > span {
+        min-width: 0;
+        flex: 1;
+        overflow: hidden;
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #${SHORTCUT_SETTINGS_ID} .codex-shortcut-settings-row input {
+        accent-color: var(--vscode-textLink-foreground, #2f95ff);
+      }
+      #${SHORTCUT_SETTINGS_ID} [data-codex-shortcut-delete] {
+        padding: 2px 5px;
+        border: 0;
+        background: transparent;
+        color: color-mix(in srgb, currentColor 55%, transparent);
+        cursor: pointer;
+      }
+      #${SHORTCUT_SETTINGS_ID} [data-codex-shortcut-custom-form] {
+        display: grid;
+        gap: 11px;
+        padding: 13px;
+        border: 0.5px solid color-mix(in srgb, currentColor 10%, transparent);
+        border-radius: 13px;
+        background: color-mix(in srgb, currentColor 3%, transparent);
+      }
+      #${SHORTCUT_SETTINGS_ID} .codex-shortcut-field {
+        display: grid;
+        gap: 6px;
+        color: color-mix(in srgb, currentColor 68%, transparent);
+        font-size: 11px;
+      }
+      #${SHORTCUT_SETTINGS_ID} .codex-shortcut-field input[type="text"],
+      #${SHORTCUT_SETTINGS_ID} .codex-shortcut-field input[type="url"] {
+        width: 100%;
+        height: 34px;
+        box-sizing: border-box;
+        padding: 0 10px;
+        border: 0.5px solid color-mix(in srgb, currentColor 13%, transparent);
+        border-radius: 9px;
+        outline: none;
+        background: color-mix(in srgb, Canvas 86%, transparent);
+        color: inherit;
+      }
+      #${SHORTCUT_SETTINGS_ID} .codex-shortcut-field input:focus-visible {
+        border-color: var(--vscode-textLink-foreground, #2f95ff);
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 17%, transparent);
+      }
+      #${SHORTCUT_SETTINGS_ID} .codex-shortcut-icon-options {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 6px;
+      }
+      #${SHORTCUT_SETTINGS_ID} [data-codex-shortcut-icon] {
+        display: grid;
+        height: 35px;
+        place-items: center;
+        padding: 0;
+        border: 0.5px solid color-mix(in srgb, currentColor 11%, transparent);
+        border-radius: 9px;
+        background: color-mix(in srgb, Canvas 72%, transparent);
+        color: inherit;
+        cursor: pointer;
+      }
+      #${SHORTCUT_SETTINGS_ID} [data-codex-shortcut-icon][aria-pressed="true"] {
+        border-color: var(--vscode-textLink-foreground, #2f95ff);
+        background: color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 12%, transparent);
+      }
+      #${SHORTCUT_SETTINGS_ID} [data-codex-shortcut-icon] svg {
+        width: 17px;
+        height: 17px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      #${SHORTCUT_SETTINGS_ID} .codex-shortcut-open-modes {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+      }
+      #${SHORTCUT_SETTINGS_ID} .codex-shortcut-open-modes label {
+        display: flex;
+        height: 34px;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        border: 0.5px solid color-mix(in srgb, currentColor 11%, transparent);
+        border-radius: 9px;
+        background: color-mix(in srgb, Canvas 72%, transparent);
+        cursor: pointer;
+      }
+      #${SHORTCUT_SETTINGS_ID} [data-codex-shortcut-error] {
+        min-height: 16px;
+        color: #e5484d;
+        font-size: 11px;
+      }
+      #${SHORTCUT_SETTINGS_ID} [data-codex-shortcut-save] {
+        height: 36px;
+        border: 0;
+        border-radius: 10px;
+        background: var(--vscode-textLink-foreground, #2f95ff);
+        color: white;
+        font-weight: 650;
+        cursor: pointer;
+      }
+      #${CUSTOM_SHORTCUT_PAGE_ID} {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        display: grid;
+        grid-template-rows: 44px minmax(0, 1fr);
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        background: Canvas;
+        color: CanvasText;
+        pointer-events: auto;
+      }
+      #${CUSTOM_SHORTCUT_PAGE_ID}[hidden] { display: none !important; }
+      #${CUSTOM_SHORTCUT_PAGE_ID} .codex-custom-shortcut-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 12px 0 16px;
+        border-bottom: 0.5px solid color-mix(in srgb, currentColor 12%, transparent);
+        font-size: 13px;
+        font-weight: 620;
+      }
+      #${CUSTOM_SHORTCUT_PAGE_ID} [data-codex-custom-shortcut-close] {
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        border: 0;
+        border-radius: 9px;
+        background: color-mix(in srgb, currentColor 6%, transparent);
+        color: inherit;
+        font-size: 20px;
+        cursor: pointer;
+      }
+      #${CUSTOM_SHORTCUT_FRAME_ID} {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: Canvas;
       }
       [data-codex-sidebar-section-heading-hidden="true"] {
         display: none !important;
@@ -1579,6 +1930,504 @@
     scheduleSync();
   }
 
+  function findTvPageMount() {
+    let frameHost = document.querySelector(".app-shell-main-content-frame");
+    if (!frameHost?.closest?.("[data-app-shell-main-content-layout]")) {
+      frameHost = (() => {
+        const viewport = document.querySelector("[data-app-shell-main-content-layout]");
+        if (!viewport) return null;
+        const viewportRect = viewport.getBoundingClientRect();
+        const headerBottom = document.querySelector("main > header")?.getBoundingClientRect().bottom
+          ?? viewportRect.top;
+        return Array.from(viewport.children).find((candidate) => {
+          const rect = candidate.getBoundingClientRect();
+          return rect.width >= viewportRect.width * 0.8
+            && rect.height >= viewportRect.height * 0.7
+            && rect.top >= headerBottom - 1;
+        }) || null;
+      })();
+    }
+    const viewport = frameHost?.closest?.("[data-app-shell-main-content-layout]");
+    const surface = viewport?.parentElement;
+    if (!frameHost || !viewport || !surface || !surface.closest("main")) return null;
+    return { frameHost, surface };
+  }
+
+  function createTvPage() {
+    const page = document.createElement("section");
+    page.id = TV_PAGE_ID;
+    page.hidden = true;
+    page.setAttribute("aria-label", "TV");
+    const status = document.createElement("div");
+    status.id = TV_STATUS_ID;
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    status.textContent = "正在打开 TV…";
+    page.appendChild(status);
+    tvStatus = status;
+    return page;
+  }
+
+  function muteTvNativeSelection() {
+    if (!tvActive) return;
+    document.querySelectorAll('aside nav[role="navigation"] [aria-current]')
+      .forEach((node) => {
+        if (node.closest(`#${SHORTCUT_GRID_ID}`)) return;
+        if (!tvMutedNativeSelections.has(node)) {
+          tvMutedNativeSelections.set(node, node.getAttribute("aria-current"));
+        }
+        node.removeAttribute("aria-current");
+        node.setAttribute(TV_NATIVE_SELECTED_ATTRIBUTE, "true");
+      });
+  }
+
+  function restoreTvNativeSelection() {
+    tvMutedNativeSelections.forEach((ariaCurrent, node) => {
+      if (!node.isConnected) return;
+      if (ariaCurrent == null) node.removeAttribute("aria-current");
+      else node.setAttribute("aria-current", ariaCurrent);
+      node.removeAttribute(TV_NATIVE_SELECTED_ATTRIBUTE);
+    });
+    tvMutedNativeSelections.clear();
+    document.querySelectorAll(`[${TV_NATIVE_SELECTED_ATTRIBUTE}="true"]`)
+      .forEach((node) => node.removeAttribute(TV_NATIVE_SELECTED_ATTRIBUTE));
+  }
+
+  function restoreTvNativeContent() {
+    document.querySelectorAll(`[${TV_HIDDEN_ATTRIBUTE}="true"]`)
+      .forEach((node) => node.removeAttribute(TV_HIDDEN_ATTRIBUTE));
+    document.querySelectorAll(`[${TV_HOST_ATTRIBUTE}="true"]`)
+      .forEach((node) => node.removeAttribute(TV_HOST_ATTRIBUTE));
+  }
+
+  function mountTvPage() {
+    if (!tvActive) return false;
+    if (!tvPage) tvPage = createTvPage();
+    const mount = findTvPageMount();
+    if (!mount) return false;
+    const { surface } = mount;
+    if (tvPage.parentElement !== surface) {
+      restoreTvNativeContent();
+      surface.appendChild(tvPage);
+    }
+    surface.setAttribute(TV_HOST_ATTRIBUTE, "true");
+    Array.from(surface.children).forEach((child) => {
+      if (child !== tvPage) child.setAttribute(TV_HIDDEN_ATTRIBUTE, "true");
+    });
+    document.querySelectorAll('[data-testid="app-shell-header-context-menu-surface"]')
+      .forEach((header) => Array.from(header.children).forEach((child) => {
+        child.setAttribute(TV_HIDDEN_ATTRIBUTE, "true");
+      }));
+    muteTvNativeSelection();
+    tvPage.hidden = false;
+    document.documentElement.setAttribute("data-codex-tv-open", "true");
+    return true;
+  }
+
+  function syncTvShortcutState() {
+    const button = document.querySelector(
+      `#${SHORTCUT_GRID_ID} [data-codex-sidebar-shortcut-name="TV"]`,
+    );
+    if (!button) return;
+    button.dataset.active = String(tvActive);
+    button.setAttribute("aria-current", tvActive ? "page" : "false");
+    button.setAttribute("aria-label", tvActive ? "TV 已打开" : "打开TV");
+  }
+
+  function showTvLoading() {
+    if (!tvPage) tvPage = createTvPage();
+    tvStatus.hidden = false;
+    tvStatus.textContent = "正在打开 TV…";
+    if (tvFrame) tvFrame.hidden = true;
+  }
+
+  function requestTvHost(action, id) {
+    const binding = window[TV_HOST_BINDING_NAME];
+    const token = window[TV_HOST_TOKEN_GLOBAL];
+    if (typeof binding !== "function" || typeof token !== "string" || !token) {
+      showTvError(id, "TV 宿主服务未就绪，请稍后重试");
+      return false;
+    }
+    try {
+      binding(JSON.stringify({ token, action, id, url: TV_SHORTCUT_URL }));
+      return true;
+    } catch (_) {
+      showTvError(id, "TV 宿主服务调用失败，请稍后重试");
+      return false;
+    }
+  }
+
+  function loadTvFrame(id) {
+    if (!tvActive || id !== tvRequestId || !tvPage) return false;
+    if (!tvFrame) {
+      const frame = document.createElement("iframe");
+      frame.id = TV_FRAME_ID;
+      frame.title = "TV";
+      frame.src = TV_SHORTCUT_URL;
+      frame.dataset.codexTvUrl = TV_SHORTCUT_URL;
+      frame.referrerPolicy = "no-referrer";
+      frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals allow-presentation");
+      frame.setAttribute("allow", "clipboard-read; clipboard-write; fullscreen");
+      frame.hidden = true;
+      frame.addEventListener("load", () => {
+        frame.dataset.loaded = "true";
+        if (!tvActive || id !== tvRequestId) return;
+        tvStatus.hidden = true;
+        frame.hidden = false;
+      });
+      tvFrame = frame;
+      tvPage.appendChild(frame);
+    }
+    if (tvFrame.dataset.loaded === "true") {
+      tvStatus.hidden = true;
+      tvFrame.hidden = false;
+    }
+    return true;
+  }
+
+  function showTvError(id, message) {
+    if (!tvActive || id !== tvRequestId) return;
+    if (!tvPage) tvPage = createTvPage();
+    if (tvFrame) tvFrame.hidden = true;
+    tvStatus.hidden = false;
+    tvStatus.textContent = message || "TV 加载失败，请稍后重试";
+  }
+
+  function openTvPanel() {
+    if (destroyed) return;
+    window.__codexTaskboardInjection__?.close?.(false);
+    if (!tvActive) tvLastFocusedElement = document.activeElement;
+    tvActive = true;
+    tvRequestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+    showTvLoading();
+    if (!mountTvPage()) {
+      showTvError(tvRequestId, "未找到 Codex 主工作区，请稍后重试");
+      return;
+    }
+    syncTvShortcutState();
+    requestTvHost("open", tvRequestId);
+  }
+
+  function closeTvPanel(restoreFocus = true) {
+    if (!tvActive && tvPage?.hidden !== false) return;
+    const closingId = tvRequestId || "close";
+    tvActive = false;
+    tvRequestId = "";
+    if (tvPage) tvPage.hidden = true;
+    restoreTvNativeContent();
+    restoreTvNativeSelection();
+    document.documentElement.removeAttribute("data-codex-tv-open");
+    syncTvShortcutState();
+    requestTvHost("close", closingId);
+    if (restoreFocus) tvLastFocusedElement?.focus?.();
+    tvLastFocusedElement = null;
+  }
+
+  function isTvNavigation(target) {
+    const clickable = target?.closest?.("button,a,[role='button'],[data-app-action-sidebar-thread-id]");
+    if (!clickable || clickable.closest(`#${SHORTCUT_GRID_ID} [data-codex-sidebar-shortcut-name="TV"]`)) return false;
+    if (!clickable.closest("aside nav[role='navigation']")) return false;
+    return !clickable.hasAttribute("data-app-action-sidebar-section-toggle");
+  }
+
+  function handleTvDocumentClick(event) {
+    if (tvActive && isTvNavigation(event.target)) closeTvPanel(false);
+  }
+
+  function handleTvRouteChange() {
+    if (tvActive) closeTvPanel(false);
+  }
+
+  function shortcutItemKey(item) {
+    return item?.custom ? `custom:${item.id}` : `native:${item?.name || ""}`;
+  }
+
+  function validShortcutUrl(value) {
+    try {
+      const url = new URL(String(value || "").trim());
+      if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+      return url.href;
+    } catch {
+      return null;
+    }
+  }
+
+  function normalizedCustomShortcuts() {
+    const seen = new Set();
+    return shortcutSettings.custom.flatMap((raw) => {
+      const id = typeof raw?.id === "string" && raw.id ? raw.id : "";
+      const name = typeof raw?.name === "string" ? raw.name.trim().slice(0, 24) : "";
+      const url = validShortcutUrl(raw?.url);
+      if (!id || !name || !url || seen.has(id)) return [];
+      seen.add(id);
+      return [{
+        id,
+        name,
+        url,
+        icon: Object.hasOwn(SHORTCUT_ICON_PRESETS, raw.icon) ? raw.icon : "link",
+        openMode: raw.openMode === "browser" ? "browser" : "internal",
+        custom: true,
+      }];
+    });
+  }
+
+  function persistShortcutSettings() {
+    shortcutSettings = {
+      hidden: Array.from(new Set(shortcutSettings.hidden.filter((value) => typeof value === "string"))),
+      custom: normalizedCustomShortcuts(),
+    };
+    try { localStorage.setItem(SHORTCUT_SETTINGS_STORAGE_KEY, JSON.stringify(shortcutSettings)); } catch {}
+  }
+
+  function presetShortcutSvg(icon) {
+    const paths = SHORTCUT_ICON_PRESETS[icon] || SHORTCUT_ICON_PRESETS.link;
+    return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
+  }
+
+  function settingsShortcutSvg() {
+    return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z" stroke="currentColor" stroke-width="1.7"/><path d="m19 13.2 1.5 1.2-1.7 2.9-1.8-.7a7.6 7.6 0 0 1-2.1 1.2l-.3 1.9h-3.4l-.3-1.9a7.6 7.6 0 0 1-2.1-1.2l-1.8.7-1.7-2.9 1.5-1.2a7.5 7.5 0 0 1 0-2.4L5.3 9.6 7 6.7l1.8.7a7.6 7.6 0 0 1 2.1-1.2l.3-1.9h3.4l.3 1.9A7.6 7.6 0 0 1 17 7.4l1.8-.7 1.7 2.9-1.5 1.2a7.5 7.5 0 0 1 0 2.4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>';
+  }
+
+  function openCustomShortcutInBrowser(item) {
+    const url = validShortcutUrl(item?.url);
+    if (!url) return false;
+    const link = document.createElement("a");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.hidden = true;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return true;
+  }
+
+  function restoreCustomShortcutNativeContent() {
+    document.querySelectorAll(`[${CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE}="true"]`)
+      .forEach((node) => node.removeAttribute(CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE));
+    document.querySelectorAll(`[${CUSTOM_SHORTCUT_HOST_ATTRIBUTE}="true"]`)
+      .forEach((node) => node.removeAttribute(CUSTOM_SHORTCUT_HOST_ATTRIBUTE));
+  }
+
+  function findCustomShortcutPageMount() {
+    let frameHost = document.querySelector(".app-shell-main-content-frame");
+    if (!frameHost?.closest?.("[data-app-shell-main-content-layout]")) {
+      const viewport = document.querySelector("[data-app-shell-main-content-layout]");
+      if (viewport) {
+        const viewportRect = viewport.getBoundingClientRect();
+        const headerBottom = document.querySelector("main > header")?.getBoundingClientRect().bottom ?? viewportRect.top;
+        frameHost = Array.from(viewport.children).find((candidate) => {
+          const rect = candidate.getBoundingClientRect();
+          return rect.width >= viewportRect.width * 0.8
+            && rect.height >= viewportRect.height * 0.7
+            && rect.top >= headerBottom - 1;
+        }) || null;
+      }
+    }
+    const viewport = frameHost?.closest?.("[data-app-shell-main-content-layout]");
+    const surface = viewport?.parentElement
+      || document.querySelector("main")
+      || document.querySelector('[role="main"]');
+    if (!surface || surface.closest("aside")) return null;
+    return { surface };
+  }
+
+  function createCustomShortcutPage() {
+    const page = document.createElement("section");
+    page.id = CUSTOM_SHORTCUT_PAGE_ID;
+    page.hidden = true;
+    const header = document.createElement("header");
+    header.className = "codex-custom-shortcut-header";
+    const title = document.createElement("span");
+    title.dataset.codexCustomShortcutTitle = "true";
+    const close = document.createElement("button");
+    close.type = "button";
+    close.dataset.codexCustomShortcutClose = "true";
+    close.setAttribute("aria-label", "关闭内置网页");
+    close.textContent = "×";
+    close.onclick = () => closeCustomShortcutPanel();
+    header.append(title, close);
+    page.appendChild(header);
+    return page;
+  }
+
+  function openCustomShortcutPanel(item) {
+    const url = validShortcutUrl(item?.url);
+    if (!url) return false;
+    closeTvPanel(false);
+    const mount = findCustomShortcutPageMount();
+    if (!mount) return false;
+    if (!customShortcutPage) customShortcutPage = createCustomShortcutPage();
+    customShortcutLastFocusedElement = document.activeElement;
+    if (customShortcutPage.parentElement !== mount.surface) {
+      restoreCustomShortcutNativeContent();
+      mount.surface.appendChild(customShortcutPage);
+    }
+    mount.surface.setAttribute(CUSTOM_SHORTCUT_HOST_ATTRIBUTE, "true");
+    Array.from(mount.surface.children).forEach((child) => {
+      if (child !== customShortcutPage) child.setAttribute(CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE, "true");
+    });
+    document.querySelectorAll('[data-testid="app-shell-header-context-menu-surface"]')
+      .forEach((header) => Array.from(header.children).forEach((child) => {
+        child.setAttribute(CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE, "true");
+      }));
+    customShortcutPage.querySelector("[data-codex-custom-shortcut-title]").textContent = item.name;
+    customShortcutFrame?.remove();
+    const frame = document.createElement("iframe");
+    frame.id = CUSTOM_SHORTCUT_FRAME_ID;
+    frame.title = item.name;
+    frame.src = url;
+    frame.referrerPolicy = "no-referrer";
+    frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals allow-presentation");
+    frame.setAttribute("allow", "clipboard-read; clipboard-write; fullscreen");
+    customShortcutFrame = frame;
+    customShortcutPage.appendChild(frame);
+    customShortcutPage.hidden = false;
+    document.documentElement.setAttribute("data-codex-custom-shortcut-open", "true");
+    return true;
+  }
+
+  function closeCustomShortcutPanel(restoreFocus = true) {
+    if (customShortcutPage) customShortcutPage.hidden = true;
+    customShortcutFrame?.remove();
+    customShortcutFrame = null;
+    restoreCustomShortcutNativeContent();
+    document.documentElement.removeAttribute("data-codex-custom-shortcut-open");
+    if (restoreFocus) customShortcutLastFocusedElement?.focus?.();
+    customShortcutLastFocusedElement = null;
+  }
+
+  function iconChoiceButton(icon, selected = false) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.codexShortcutIcon = icon;
+    button.setAttribute("aria-label", `图标 ${icon}`);
+    button.setAttribute("aria-pressed", String(selected));
+    button.innerHTML = presetShortcutSvg(icon);
+    button.onclick = () => {
+      button.parentElement.querySelectorAll("[data-codex-shortcut-icon]")
+        .forEach((candidate) => candidate.setAttribute("aria-pressed", String(candidate === button)));
+    };
+    return button;
+  }
+
+  function renderShortcutVisibilityList(dialog) {
+    const list = dialog.querySelector("[data-codex-shortcut-visibility-list]");
+    const items = shortcutCatalog.filter((item) => item.kind !== "settings");
+    list.replaceChildren(...items.map((item) => {
+      const row = document.createElement("label");
+      row.className = "codex-shortcut-settings-row";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = !shortcutSettings.hidden.includes(shortcutItemKey(item));
+      checkbox.dataset.codexShortcutVisible = shortcutItemKey(item);
+      checkbox.setAttribute("aria-label", `显示${item.name}`);
+      checkbox.onchange = () => {
+        const key = shortcutItemKey(item);
+        shortcutSettings.hidden = checkbox.checked
+          ? shortcutSettings.hidden.filter((value) => value !== key)
+          : [...shortcutSettings.hidden.filter((value) => value !== key), key];
+        persistShortcutSettings();
+        document.getElementById(SHORTCUT_GRID_ID)?.remove();
+        scheduleSync();
+      };
+      const name = document.createElement("span");
+      name.textContent = item.name;
+      row.append(checkbox, name);
+      if (item.custom) {
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.dataset.codexShortcutDelete = item.id;
+        remove.setAttribute("aria-label", `删除${item.name}`);
+        remove.textContent = "删除";
+        remove.onclick = (event) => {
+          event.preventDefault();
+          shortcutSettings.custom = shortcutSettings.custom.filter((candidate) => candidate.id !== item.id);
+          shortcutSettings.hidden = shortcutSettings.hidden.filter((value) => value !== shortcutItemKey(item));
+          persistShortcutSettings();
+          document.getElementById(SHORTCUT_GRID_ID)?.remove();
+          scheduleSync();
+          shortcutCatalog = shortcutCatalog.filter((candidate) => candidate.id !== item.id);
+          renderShortcutVisibilityList(dialog);
+        };
+        row.appendChild(remove);
+      }
+      return row;
+    }));
+  }
+
+  function createShortcutSettingsDialog() {
+    const dialog = document.createElement("dialog");
+    dialog.id = SHORTCUT_SETTINGS_ID;
+    dialog.innerHTML = `
+      <div class="codex-shortcut-settings-shell">
+        <header class="codex-shortcut-settings-header">
+          <h2>快捷入口设置</h2>
+          <button type="button" data-codex-shortcut-settings-close aria-label="关闭设置">×</button>
+        </header>
+        <div class="codex-shortcut-settings-body">
+          <h3>显示与隐藏</h3>
+          <div class="codex-shortcut-settings-list" data-codex-shortcut-visibility-list></div>
+          <form data-codex-shortcut-custom-form>
+            <h3>新建快捷入口</h3>
+            <label class="codex-shortcut-field">名称<input type="text" name="name" maxlength="24" required placeholder="例如：知识卡片"></label>
+            <label class="codex-shortcut-field">链接<input type="url" name="url" required placeholder="https://example.com"></label>
+            <div class="codex-shortcut-field">图标<div class="codex-shortcut-icon-options" data-codex-shortcut-icons></div></div>
+            <div class="codex-shortcut-field">打开方式<div class="codex-shortcut-open-modes">
+              <label><input type="radio" name="openMode" value="internal" checked>内置打开</label>
+              <label><input type="radio" name="openMode" value="browser">浏览器打开</label>
+            </div></div>
+            <div data-codex-shortcut-error role="alert"></div>
+            <button type="submit" data-codex-shortcut-save>新建快捷入口</button>
+          </form>
+        </div>
+      </div>`;
+    const icons = dialog.querySelector("[data-codex-shortcut-icons]");
+    icons.replaceChildren(...Object.keys(SHORTCUT_ICON_PRESETS).map((icon, index) => iconChoiceButton(icon, index === 0)));
+    dialog.querySelector("[data-codex-shortcut-settings-close]").onclick = () => dialog.close();
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    dialog.querySelector("[data-codex-shortcut-custom-form]").onsubmit = (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const name = form.elements.name.value.trim().slice(0, 24);
+      const url = validShortcutUrl(form.elements.url.value);
+      const error = form.querySelector("[data-codex-shortcut-error]");
+      if (!name || !url) {
+        error.textContent = "请填写名称和有效的 http(s) 链接";
+        return;
+      }
+      const icon = form.querySelector('[data-codex-shortcut-icon][aria-pressed="true"]')?.dataset.codexShortcutIcon || "link";
+      const openMode = form.elements.openMode.value === "browser" ? "browser" : "internal";
+      shortcutSettings.custom.push({
+        id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
+        name,
+        url,
+        icon,
+        openMode,
+        custom: true,
+      });
+      persistShortcutSettings();
+      form.reset();
+      form.querySelector('input[name="openMode"][value="internal"]').checked = true;
+      form.querySelectorAll("[data-codex-shortcut-icon]").forEach((button, index) => button.setAttribute("aria-pressed", String(index === 0)));
+      error.textContent = "";
+      document.getElementById(SHORTCUT_GRID_ID)?.remove();
+      dialog.close();
+      scheduleSync();
+    };
+    document.body.appendChild(dialog);
+    return dialog;
+  }
+
+  function openShortcutSettings() {
+    let dialog = document.getElementById(SHORTCUT_SETTINGS_ID);
+    if (!dialog) dialog = createShortcutSettingsDialog();
+    renderShortcutVisibilityList(dialog);
+    if (!dialog.open) dialog.showModal();
+  }
+
   function shortcutLabel(button) {
     return button?.querySelector(".text-fade-truncate")?.textContent?.trim()
       || button?.getAttribute("title")
@@ -1604,17 +2453,44 @@
       .filter((node) => node instanceof HTMLButtonElement && !node.closest(`#${SHORTCUT_GRID_ID}`));
     const quickButton = Array.from(newConversationRow.children)
       .flatMap((node) => node === newConversation ? [] : Array.from(node.querySelectorAll?.("button") || []))[0] || null;
-    const items = [
+    const sourceItems = [
       { name: "新对话", button: newConversation, quickButton },
       ...navigationButtons.map((button) => ({ name: shortcutLabel(button), button, quickButton: null })),
     ].filter((item, index, values) => item.name && values.findIndex((candidate) => candidate.name === item.name) === index);
-    return { header, newConversationRow, navigationGroup, items };
+    const tvItem = {
+      name: "TV",
+      button: null,
+      quickButton: null,
+      url: TV_SHORTCUT_URL,
+    };
+    const pullRequestIndex = sourceItems.findIndex((item) => item.name === "拉取请求");
+    const insertAt = pullRequestIndex >= 0 ? pullRequestIndex + 1 : Math.min(2, sourceItems.length);
+    const builtInItems = [
+      ...sourceItems.slice(0, insertAt),
+      tvItem,
+      ...sourceItems.slice(insertAt),
+    ];
+    const catalogItems = [...builtInItems, ...normalizedCustomShortcuts()];
+    const items = catalogItems.filter((item) => !shortcutSettings.hidden.includes(shortcutItemKey(item)));
+    return { header, newConversationRow, navigationGroup, sourceItems, catalogItems, items };
   }
 
-  function shortcutIcon(source, className = SHORTCUT_ICON_CLASS) {
+  function shortcutIcon(source, className = SHORTCUT_ICON_CLASS, name = "", icon = "") {
     const host = document.createElement("span");
     host.className = className;
     host.setAttribute("aria-hidden", "true");
+    if (name === "设置") {
+      host.innerHTML = settingsShortcutSvg();
+      return host;
+    }
+    if (icon) {
+      host.innerHTML = presetShortcutSvg(icon);
+      return host;
+    }
+    if (name === "TV") {
+      host.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3.5" y="6.5" width="17" height="12.5" rx="2.5" stroke="currentColor" stroke-width="1.7"/><path d="m8.5 3.8 3.5 2.7 3.5-2.7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 11.2v3.2M16 11.2v3.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
+      return host;
+    }
     const image = source?.querySelector("svg, img")?.cloneNode(true);
     if (image) host.appendChild(image);
     return host;
@@ -1628,13 +2504,22 @@
     button.className = SHORTCUT_CARD_CLASS;
     button.dataset.codexSidebarShortcutCard = "true";
     button.dataset.codexSidebarShortcutName = item.name;
-    button.setAttribute("aria-label", item.button.getAttribute("aria-label") || item.name);
+    if (item.url) button.dataset.codexSidebarShortcutUrl = item.url;
+    if (item.kind === "settings") button.dataset.codexSidebarShortcutSettings = "true";
+    if (item.custom) button.dataset.codexSidebarShortcutCustom = item.id;
+    button.setAttribute("aria-label", item.button?.getAttribute("aria-label") || `打开${item.name}`);
     button.title = item.name;
     const label = document.createElement("span");
     label.className = SHORTCUT_LABEL_CLASS;
     label.textContent = item.name;
-    button.append(shortcutIcon(item.button), label);
-    button.onclick = () => item.button.click();
+    button.append(shortcutIcon(item.button, SHORTCUT_ICON_CLASS, item.name, item.icon), label);
+    button.onclick = () => {
+      if (item.kind === "settings") openShortcutSettings();
+      else if (item.custom && item.openMode === "browser") openCustomShortcutInBrowser(item);
+      else if (item.custom) openCustomShortcutPanel(item);
+      else if (item.name === "TV") openTvPanel();
+      else item.button?.click();
+    };
     wrap.appendChild(button);
 
     if (item.quickButton) {
@@ -1657,8 +2542,22 @@
 
   function updateShortcutCard(grid, item) {
     const button = Array.from(grid.querySelectorAll("[data-codex-sidebar-shortcut-card]"))
-      .find((candidate) => candidate.dataset.codexSidebarShortcutName === item.name);
+      .find((candidate) => item.custom
+        ? candidate.dataset.codexSidebarShortcutCustom === item.id
+        : candidate.dataset.codexSidebarShortcutName === item.name);
     if (!button) return;
+    if (!item.button) {
+      button.disabled = false;
+      const tvItemActive = item.name === "TV" && tvActive;
+      button.dataset.active = String(tvItemActive);
+      button.setAttribute("aria-current", tvItemActive ? "page" : "false");
+      button.setAttribute("aria-label", item.kind === "settings"
+        ? "管理快捷入口"
+        : tvItemActive ? "TV 已打开" : `打开${item.name}`);
+      button.closest("[data-codex-sidebar-shortcut-card-wrap]")
+        ?.querySelector(".codex-sidebar-shortcut-status")?.remove();
+      return;
+    }
     button.disabled = item.button.disabled;
     const state = item.button.getAttribute("data-state");
     const active = item.button.getAttribute("aria-current") === "page"
@@ -1691,6 +2590,7 @@
       node.removeAttribute("data-codex-sidebar-shortcut-source-name");
     });
     shortcutSources = new Map();
+    shortcutCatalog = [];
   }
 
   function ensureShortcutGrid() {
@@ -1700,7 +2600,7 @@
     const needsRebuild = grid?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN
       || grid?.parentElement !== sources.header
       || grid?.children.length !== sources.items.length
-      || sources.items.some((item) => shortcutSources.get(item.name) !== item.button);
+      || sources.items.some((item) => shortcutSources.get(shortcutItemKey(item)) !== (item.button || item.id || item.url || item.kind));
     if (needsRebuild) {
       clearShortcutEnhancement();
       grid = document.createElement("div");
@@ -1710,12 +2610,15 @@
       grid.dataset.codexPreviewRuntime = RUNTIME_TOKEN;
       grid.replaceChildren(...sources.items.map(createShortcutCard));
       sources.header.appendChild(grid);
-      shortcutSources = new Map(sources.items.map((item) => [item.name, item.button]));
+      shortcutSources = new Map(sources.items.map((item) => [shortcutItemKey(item), item.button || item.id || item.url || item.kind]));
     }
+    shortcutCatalog = sources.catalogItems;
     sources.newConversationRow.setAttribute("data-codex-sidebar-shortcut-source-hidden", "true");
     sources.navigationGroup.setAttribute("data-codex-sidebar-shortcut-source-group-hidden", "true");
-    for (const item of sources.items) {
+    for (const item of sources.sourceItems) {
       item.button.dataset.codexSidebarShortcutSourceName = item.name;
+    }
+    for (const item of sources.items) {
       updateShortcutCard(grid, item);
     }
   }
@@ -2789,6 +3692,38 @@
     updateViewState();
   }
 
+  function ensureShortcutSettingsButton() {
+    const search = document.querySelector('button[aria-label="搜索"], button[aria-label="Search"]');
+    if (!search) return;
+    const searchSlot = search.parentElement;
+    const host = searchSlot?.parentElement;
+    if (!host) return;
+    let button = document.getElementById(SHORTCUT_SETTINGS_BUTTON_ID);
+    if (button?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN) {
+      button?.remove();
+      button = null;
+    }
+    if (!button) {
+      button = document.createElement("button");
+      button.id = SHORTCUT_SETTINGS_BUTTON_ID;
+      button.type = "button";
+      button.className = search.className;
+      button.dataset.codexSidebarShortcutSettings = "true";
+      button.dataset.codexPreviewRuntime = RUNTIME_TOKEN;
+      button.setAttribute("aria-label", "管理快捷入口");
+      button.title = "快捷入口设置";
+      button.innerHTML = settingsShortcutSvg();
+    }
+    button.onclick = openShortcutSettings;
+    const notification = document.querySelector('button[aria-label="查看活动"], button[aria-label="View activity"], button[aria-label*="通知"], button[aria-label*="Notification"]');
+    let notificationSlot = notification;
+    while (notificationSlot?.parentElement && notificationSlot.parentElement !== host) {
+      notificationSlot = notificationSlot.parentElement;
+    }
+    const before = notificationSlot?.parentElement === host ? notificationSlot : searchSlot;
+    if (button.parentElement !== host || button.nextElementSibling !== before) host.insertBefore(button, before);
+  }
+
   function openRow() {
     const rows = visibleRows();
     return rows.find((row) => row.matches(":hover"))
@@ -2838,7 +3773,10 @@
   function sync() {
     if (destroyed) return;
     ensureShortcutGrid();
+    mountTvPage();
+    syncTvShortcutState();
     ensureViewToggle();
+    ensureShortcutSettingsButton();
     ensureSectionTabs();
     ensureFolderSwitcher();
     ensureHomeProjectShelf();
@@ -2931,6 +3869,9 @@
     observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-state", "aria-expanded"] });
     document.addEventListener("pointerover", scheduleSync, true);
     document.addEventListener("pointerdown", handleStatusDocumentPointerDown, true);
+    document.addEventListener("click", handleTvDocumentClick, true);
+    window.addEventListener("popstate", handleTvRouteChange);
+    window.addEventListener("hashchange", handleTvRouteChange);
     sync();
   }
 
@@ -2940,13 +3881,27 @@
     clearTimeout(syncTimer);
     document.removeEventListener("pointerover", scheduleSync, true);
     document.removeEventListener("pointerdown", handleStatusDocumentPointerDown, true);
+    document.removeEventListener("click", handleTvDocumentClick, true);
+    window.removeEventListener("popstate", handleTvRouteChange);
+    window.removeEventListener("hashchange", handleTvRouteChange);
+    closeTvPanel(false);
     closeStatusMenu();
     document.getElementById(STYLE_ID)?.remove();
     document.getElementById(TOGGLE_ID)?.remove();
     document.getElementById(USAGE_ID)?.remove();
+    document.getElementById(SHORTCUT_SETTINGS_BUTTON_ID)?.remove();
     clearHomeProjectShelf();
     clearShortcutEnhancement();
+    document.getElementById(SHORTCUT_SETTINGS_ID)?.remove();
     clearSectionEnhancement();
+    closeCustomShortcutPanel(false);
+    customShortcutPage?.remove();
+    customShortcutPage = null;
+    customShortcutFrame = null;
+    tvPage?.remove();
+    tvPage = null;
+    tvFrame = null;
+    tvStatus = null;
     document.documentElement.removeAttribute("data-codex-conversation-view");
     document.querySelectorAll(`.${SUMMARY_CLASS}, .${DETAILS_CLASS}, .${CARD_CONTENT_CLASS}`).forEach((node) => node.remove());
     document.querySelectorAll(`.${STATUS_BUTTON_CLASS}`).forEach((node) => node.remove());
@@ -2978,6 +3933,10 @@
     setUsage,
     setHomeProjects,
     getHomeProjectsState,
+    openTv: openTvPanel,
+    closeTv: closeTvPanel,
+    loadTvFrame,
+    showTvError,
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
   else start();
