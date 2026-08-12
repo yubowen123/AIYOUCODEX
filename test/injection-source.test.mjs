@@ -26,16 +26,7 @@ test("injection is idempotent and reversible", () => {
 
 test("renderer receives host-pushed previews without a local HTTP fetch", () => {
   assert.match(source, /setPreviews/);
-  assert.match(source, /setHomeProjects/);
   assert.doesNotMatch(source, /fetch\s*\(/);
-});
-
-test("home project cards are accessible, pinnable, and use Codex internal navigation", () => {
-  assert.match(source, /aria-label", "当前项目"/);
-  assert.match(source, /aria-pressed/);
-  assert.match(source, /codex-conversation-preview:home-projects-state/);
-  assert.match(source, /navigate-to-route/);
-  assert.match(source, /data-codex-home-project-open/);
 });
 
 test("sidebar groups use accessible tabs and preserve native project actions", () => {
@@ -48,18 +39,11 @@ test("sidebar groups use accessible tabs and preserve native project actions", (
   assert.match(source, /ArrowRight/);
 });
 
-test("shortcut grid hides site and plugin while adding an inline TV workspace", () => {
-  assert.match(source, /HIDDEN_SHORTCUT_NAMES = new Set\(\["站点", "插件"\]\)/);
-  assert.match(source, /TV_SHORTCUT_URL = "https:\/\/dz-ailab\.dzkjm\.cn\/canvas\/projects\?category=personal"/);
+test("public shortcut grid excludes non-public native entries", () => {
+  assert.match(source, /HIDDEN_SHORTCUT_NAMES = new Set\(\["站点", "插件", "项目管理"\]\)/);
   assert.match(source, /button\.dataset\.codexSidebarShortcutUrl = item\.url/);
-  assert.doesNotMatch(source, /window\.open\(/);
-  assert.match(source, /window\.__codexTaskboardInjection__\?\.close\?\.\(false\)/);
-  assert.match(source, /function openTvPanel\(\)/);
-  assert.match(source, /function loadTvFrame\(id\)/);
-  assert.match(source, /TV_HOST_BINDING_NAME = "__codexTvHostV1"/);
-  assert.match(source, /frame\.setAttribute\("sandbox", "allow-scripts allow-same-origin/);
-  assert.match(source, /data-codex-tv-open/);
-  assert.match(source, /name === "TV"/);
+  assert.doesNotMatch(source, /TV_SHORTCUT_URL|__codexTvHostV1|data-codex-tv-open/);
+  assert.doesNotMatch(source, /setHomeProjects|HOME_PROJECT_SHELF_ID|data-codex-taskboard-open/);
 });
 
 test("folder create action is bound to the selected folder and restores native markup", () => {

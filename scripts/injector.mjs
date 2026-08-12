@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { readFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,14 +13,10 @@ import {
   needsPreviewAttachment,
 } from "../lib/injector-state.mjs";
 import { createDesktopAppRuntime } from "../lib/desktop-runtime.mjs";
-import { buildHomeProjectShelf, readTaskboardSnapshot } from "../lib/home-projects.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(root, "inject", "conversation-preview.user.js");
 const SCRIPT_ID_GLOBAL = "__CODEX_CONVERSATION_PREVIEW_SCRIPT_IDENTIFIER__";
-const TV_HOST_BINDING_NAME = "__codexTvHostV1";
-const TV_HOST_TOKEN_GLOBAL = "__CODEX_TV_HOST_TOKEN__";
-const TV_URL = "https://dz-ailab.dzkjm.cn/canvas/projects?category=personal";
 
 function parseArgs(argv) {
   const options = { port: 9231, watch: false };
@@ -50,74 +45,13 @@ let stopped = false;
 let attachedTargetId = null;
 let client = null;
 let registeredScriptIdentifier = null;
-let tvHostToken = null;
-let tvHostUnsubscribers = [];
-let tvHostOperations = Promise.resolve();
 const desktopAppRecovery = new DesktopAppRecovery();
 const desktopAppRuntime = createDesktopAppRuntime();
 
-async function disableTvCsp(targetClient = client) {
-  try { await targetClient?.send("Page.setBypassCSP", { enabled: false }); } catch {}
-}
-
 async function closeClient() {
   const closingClient = client;
-  const pendingTvOperations = tvHostOperations;
-  tvHostUnsubscribers.forEach((unsubscribe) => unsubscribe());
-  tvHostUnsubscribers = [];
-  tvHostToken = null;
-  tvHostOperations = Promise.resolve();
-  try { await pendingTvOperations; } catch {}
-  await disableTvCsp(closingClient);
   closingClient?.close();
   if (client === closingClient) client = null;
-}
-
-function reportTvHostError(targetClient, id, error) {
-  const message = error?.message || "TV 加载失败";
-  return targetClient.evaluate(`window.__codexConversationPreviewInjection__?.showTvError?.(${JSON.stringify(id)}, ${JSON.stringify(message)})`)
-    .catch(() => {});
-}
-
-async function handleTvHostBinding(targetClient, expectedToken, params) {
-  if (targetClient !== client || params?.name !== TV_HOST_BINDING_NAME) return;
-  let request;
-  try { request = JSON.parse(params.payload); } catch { return; }
-  if (request?.token !== expectedToken || typeof request?.id !== "string") return;
-
-  if (request.action === "close") {
-    await disableTvCsp(targetClient);
-    return;
-  }
-  if (request.action !== "open" || request.url !== TV_URL) return;
-
-  try {
-    await targetClient.send("Page.setBypassCSP", { enabled: true });
-    const loaded = await targetClient.evaluate(`window.__codexConversationPreviewInjection__?.loadTvFrame?.(${JSON.stringify(request.id)}) === true`);
-    if (!loaded) throw new Error("TV 面板未能挂载到 Codex 主工作区");
-  } catch (error) {
-    await disableTvCsp(targetClient);
-    await reportTvHostError(targetClient, request.id, error);
-  }
-}
-
-async function setupTvHost(targetClient) {
-  tvHostToken = randomUUID();
-  const expectedToken = tvHostToken;
-  tvHostUnsubscribers.push(targetClient.on("Runtime.bindingCalled", (params) => {
-    tvHostOperations = tvHostOperations
-      .then(() => handleTvHostBinding(targetClient, expectedToken, params))
-      .catch(() => {});
-  }));
-  tvHostUnsubscribers.push(targetClient.on("Runtime.executionContextCreated", (params) => {
-    const executionContextId = params?.context?.id;
-    if (!Number.isInteger(executionContextId)) return;
-    void targetClient.send("Runtime.addBinding", {
-      name: TV_HOST_BINDING_NAME,
-      executionContextId,
-    }).catch(() => {});
-  }));
-  await targetClient.send("Runtime.enable");
 }
 
 async function attach() {
@@ -144,7 +78,6 @@ async function attach() {
   if (!client || nextTargetId !== attachedTargetId) {
     await closeClient();
     client = await connectMainCodex(options.port);
-    await setupTvHost(client);
     registeredScriptIdentifier = null;
   }
 
@@ -154,7 +87,7 @@ async function attach() {
     try { await client.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: oldIdentifier }); } catch {}
   }
   const userSource = await readFile(sourcePath, "utf8");
-  const rendererSource = `if (window.top === window) { window[${JSON.stringify(TV_HOST_TOKEN_GLOBAL)}] = ${JSON.stringify(tvHostToken)}; ${userSource}\n}`;
+  const rendererSource = `if (window.top === window) { ${userSource}\n}`;
   const registered = await client.send("Page.addScriptToEvaluateOnNewDocument", { source: rendererSource });
   registeredScriptIdentifier = registered.identifier;
   await client.evaluate(rendererSource);
@@ -166,8 +99,7 @@ async function attach() {
 
 async function pushPreviews() {
   if (!client || !attachedTargetId) return;
-  const [requests, homeProjectState] = await Promise.all([
-    client.evaluate(`(() => {
+  const requests = await client.evaluate(`(() => {
       const seen = new Set();
       const allPanel = document.getElementById('codex-sidebar-all-projects');
       const rows = allPanel
@@ -183,40 +115,18 @@ async function pushPreviews() {
         seen.add(key);
         return [{ key, id, title }];
       });
-    })()`),
-    client.evaluate("window.__codexConversationPreviewInjection__?.getHomeProjectsState?.() || null"),
-  ]);
-  const [rawPreviews, rawUsage, taskboard, searchCatalog] = await Promise.all([
+    })()`);
+  const [rawPreviews, rawUsage, searchCatalog] = await Promise.all([
     repository.readMany(Array.isArray(requests) ? requests : []),
     repository.readUsage(),
-    readTaskboardSnapshot(),
     repository.readSearchCatalog(),
   ]);
   const previews = rawPreviews.map((preview) => presentCardPreview(preview));
   const usage = presentRateLimit(rawUsage, { timeZone: "Asia/Shanghai" });
-  const homeProjects = taskboard.available
-    ? {
-        available: true,
-        message: "",
-        ...buildHomeProjectShelf({
-          projects: taskboard.projects,
-          tasks: taskboard.tasks,
-          state: homeProjectState,
-          syncedAt: new Date().toISOString(),
-        }),
-      }
-    : {
-        available: false,
-        message: taskboard.message,
-        cards: [],
-        activeThreadIds: [],
-        state: homeProjectState,
-      };
   await client.evaluate(`(() => {
     const api = window.__codexConversationPreviewInjection__;
     api?.setPreviews?.(${JSON.stringify(previews)});
     api?.setUsage?.(${JSON.stringify(usage)});
-    api?.setHomeProjects?.(${JSON.stringify(homeProjects)});
     api?.setSearchCatalog?.(${JSON.stringify(searchCatalog)});
   })()`);
 }

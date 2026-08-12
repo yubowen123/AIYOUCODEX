@@ -54,21 +54,13 @@ try {
   assert.equal(baseline.iconChoices, 6);
   assert.deepEqual(baseline.openModes, ["internal", "browser"]);
 
-  const visibility = await client.evaluate(`(() => {
-    const checkbox = document.querySelector('[data-codex-shortcut-visible="native:项目管理"]');
-    if (!checkbox) return null;
-    checkbox.checked = false;
-    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
-    return true;
+  const privateEntriesExcluded = await client.evaluate(`(() => {
+    const names = ['站点', '插件', '项目管理'];
+    return names.every((name) =>
+      !document.querySelector('[data-codex-shortcut-visible="native:' + name + '"]')
+      && !document.querySelector('[data-codex-sidebar-shortcut-name="' + name + '"]'));
   })()`);
-  assert.equal(visibility, true);
-  assert.equal(await waitFor(client, `!document.querySelector('[data-codex-sidebar-shortcut-name="项目管理"]')`), true);
-  await client.evaluate(`(() => {
-    const checkbox = document.querySelector('[data-codex-shortcut-visible="native:项目管理"]');
-    checkbox.checked = true;
-    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
-  })()`);
-  assert.equal(await waitFor(client, `Boolean(document.querySelector('[data-codex-sidebar-shortcut-name="项目管理"]'))`), true);
+  assert.equal(privateEntriesExcluded, true);
 
   async function createShortcut({ name, mode }) {
     await client.evaluate(`(() => {
@@ -127,7 +119,7 @@ try {
     { name: "浏览器入口", icon: "book", openMode: "browser" },
   ]);
 
-  process.stdout.write(`${JSON.stringify({ ...baseline, visibility, internal, browser, reloadVerified: true, screenshotPath }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ ...baseline, privateEntriesExcluded, internal, browser, reloadVerified: true, screenshotPath }, null, 2)}\n`);
 } finally {
   await client.evaluate(original == null
     ? `localStorage.removeItem(${JSON.stringify(STORAGE_KEY)})`

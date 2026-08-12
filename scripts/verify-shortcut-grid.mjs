@@ -57,17 +57,6 @@ try {
       };
     });
 
-    const proxy = grid.querySelector('[data-codex-sidebar-shortcut-name="项目管理"]');
-    const source = document.querySelector('[data-codex-sidebar-shortcut-source-name="项目管理"]');
-    let forwardedClicks = 0;
-    if (proxy && source) {
-      const originalClick = source.click;
-      source.click = () => { forwardedClicks += 1; };
-      try { proxy.click(); } finally { source.click = originalClick; }
-    }
-
-    const tv = grid.querySelector('[data-codex-sidebar-shortcut-name="TV"]');
-
     const overflowClones = [];
     while (grid.children.length < 7 && cards[0]) {
       const clone = cards[0].cloneNode(true);
@@ -95,14 +84,9 @@ try {
           return ["native:站点", "native:插件"];
         }
       })(),
-      hiddenNativeNames: ["站点", "插件"].filter((name) => !metrics.some((card) => card.name === name)),
-      tvConfiguration: {
-        url: tv?.dataset.codexSidebarShortcutUrl || null,
-        ariaLabel: tv?.getAttribute("aria-label") || null,
-      },
+      hiddenNativeNames: ["站点", "插件", "项目管理"].filter((name) => !metrics.some((card) => card.name === name)),
       sourcesHidden: Array.from(document.querySelectorAll("[data-codex-sidebar-shortcut-source-hidden], [data-codex-sidebar-shortcut-source-group-hidden]"))
         .every((node) => getComputedStyle(node).display === "none"),
-      forwardedClicks,
       overflowTop,
       firstRowTop: metrics[0]?.top || 0,
       quickAction: Boolean(grid.querySelector('[data-codex-sidebar-shortcut-quick="true"]')),
@@ -117,12 +101,12 @@ try {
   assert.equal(actual.ariaLabel, "快捷入口");
   assert.equal(actual.columns, 6);
   const canonicalOrder = ["新对话", "拉取请求", "站点", "已安排", "插件", "项目管理"];
-  const configurableOrder = ["新对话", "拉取请求", "TV", "站点", "已安排", "插件", "项目管理"];
-  const expectedVisible = configurableOrder.filter((name) => !actual.hiddenSettingKeys.includes(`native:${name}`));
+  const expectedVisible = canonicalOrder.filter((name) => !["站点", "插件", "项目管理"].includes(name)
+    && !actual.hiddenSettingKeys.includes(`native:${name}`));
   assert.ok(actual.sourceNames.length >= 5, "at least the five stable native shortcuts must be available");
   assert.deepEqual(actual.sourceNames, canonicalOrder.filter((name) => actual.sourceNames.includes(name)));
   assert.deepEqual(actual.visibleNames, expectedVisible);
-  assert.deepEqual(actual.hiddenNativeNames, ["站点", "插件"].filter((name) => actual.hiddenSettingKeys.includes(`native:${name}`)));
+  assert.deepEqual(actual.hiddenNativeNames, ["站点", "插件", "项目管理"]);
   assert.ok(Math.max(...actual.cards.map((card) => card.top)) - Math.min(...actual.cards.map((card) => card.top)) <= 1,
     "shortcut cards must remain visually aligned within one device pixel");
   assert.equal(new Set(actual.cards.map((card) => card.width)).size, 1);
@@ -130,13 +114,6 @@ try {
   assert.ok(actual.cards.every((card) => card.hasImage && card.iconBeforeLabel));
   assert.ok(actual.cards.every((card) => card.ariaLabel));
   assert.equal(actual.sourcesHidden, true);
-  assert.equal(actual.forwardedClicks, expectedVisible.includes("项目管理") ? 1 : 0);
-  if (expectedVisible.includes("TV")) {
-    assert.deepEqual(actual.tvConfiguration, {
-      url: "https://dz-ailab.dzkjm.cn/canvas/projects?category=personal",
-      ariaLabel: "打开TV",
-    });
-  }
   assert.ok(actual.overflowTop > actual.firstRowTop, "the seventh card must wrap to a second row");
   assert.equal(actual.quickAction, expectedVisible.includes("新对话"));
   assert.equal(actual.scheduledStatus, expectedVisible.includes("已安排"));
