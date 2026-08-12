@@ -30,6 +30,16 @@ test("public installer copies a portable runtime and activates it under the curr
     assert.match(result.stdout, /Codex Sidebar Enhancer installed/);
     await access(path.join(installDir, "scripts", "injector.mjs"));
     await access(path.join(installDir, "inject", "conversation-preview.user.js"));
+    const publicRuntime = [
+      await readFile(path.join(installDir, "scripts", "injector.mjs"), "utf8"),
+      await readFile(path.join(installDir, "inject", "conversation-preview.user.js"), "utf8"),
+    ].join("\n");
+    assert.doesNotMatch(publicRuntime, /dz-ailab\.dzkjm\.cn|__codexTvHostV1|TV_SHORTCUT_URL/,
+      "The public installer must not ship the private TV entry or its fixed service URL");
+    assert.doesNotMatch(publicRuntime, /readTaskboardSnapshot|HOME_PROJECT_SHELF_ID|setHomeProjects/,
+      "The public installer must not ship the private project-management integration");
+    assert.match(publicRuntime, /HIDDEN_SHORTCUT_NAMES = new Set\(\["站点", "插件", "项目管理"\]\)/,
+      "The public UI must keep the native project-management entry hidden");
     const plistPath = path.join(testHome, "Library", "LaunchAgents", "com.yubowen.codex-sidebar-enhancer.plist");
     const plist = await readFile(plistPath, "utf8");
     assert.match(plist, new RegExp(installDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));

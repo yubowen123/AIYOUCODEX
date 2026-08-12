@@ -28,16 +28,7 @@
     chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
     code: '<path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"/>',
   };
-  const TV_SHORTCUT_URL = "https://dz-ailab.dzkjm.cn/canvas/projects?category=personal";
-  const TV_PAGE_ID = "codex-tv-page";
-  const TV_FRAME_ID = "codex-tv-frame";
-  const TV_STATUS_ID = "codex-tv-status";
-  const TV_HIDDEN_ATTRIBUTE = "data-codex-tv-native-hidden";
-  const TV_HOST_ATTRIBUTE = "data-codex-tv-page-host";
-  const TV_NATIVE_SELECTED_ATTRIBUTE = "data-codex-tv-native-selected";
-  const TV_HOST_BINDING_NAME = "__codexTvHostV1";
-  const TV_HOST_TOKEN_GLOBAL = "__CODEX_TV_HOST_TOKEN__";
-  const HIDDEN_SHORTCUT_NAMES = new Set(["站点", "插件"]);
+  const HIDDEN_SHORTCUT_NAMES = new Set(["站点", "插件", "项目管理"]);
   const SECTION_TABS_ID = "codex-sidebar-section-tabs";
   const SECTION_TAB_STORAGE_KEY = "codex-conversation-preview:section-tab";
   const SECTION_NAMES = ["置顶", "项目", "最近"];
@@ -46,8 +37,6 @@
   const ALL_PROJECTS_PANEL_ID = "codex-sidebar-all-projects";
   const FOLDER_STORAGE_KEY = "codex-conversation-preview:folder-id";
   const VIEW_STORAGE_KEY = "codex-conversation-preview:view-mode";
-  const HOME_PROJECT_SHELF_ID = "codex-home-project-shelf";
-  const HOME_PROJECT_STATE_KEY = "codex-conversation-preview:home-projects-state";
   const THREAD_STATUS_STORAGE_KEY = "codex-conversation-preview:thread-statuses";
   const STATUS_BUTTON_CLASS = "codex-conversation-status-button";
   const STATUS_MENU_ID = "codex-conversation-status-menu";
@@ -75,13 +64,6 @@
   let customShortcutPage = null;
   let customShortcutFrame = null;
   let customShortcutLastFocusedElement = null;
-  let tvPage = null;
-  let tvFrame = null;
-  let tvStatus = null;
-  let tvActive = false;
-  let tvRequestId = "";
-  let tvLastFocusedElement = null;
-  let tvMutedNativeSelections = new Map();
   let sectionSources = new Map();
   let sectionTogglePending = new Map();
   let folderSources = new Map();
@@ -107,14 +89,6 @@
   let folderSearchRevealKey = "";
   let threadStatuses = {};
   let openStatusButton = null;
-  let homeProjects = {
-    available: true,
-    cards: [],
-    activeThreadIds: [],
-    message: "",
-  };
-  let activeProjectThreadIds = new Set();
-  let homeProjectsState = null;
   try {
     const savedShortcutSettings = JSON.parse(localStorage.getItem(SHORTCUT_SETTINGS_STORAGE_KEY) || "null");
     if (savedShortcutSettings && typeof savedShortcutSettings === "object") {
@@ -134,10 +108,6 @@
   } catch {}
   try { activeFolderId = localStorage.getItem(FOLDER_STORAGE_KEY) || null; } catch {}
   try {
-    const savedHomeProjectsState = JSON.parse(localStorage.getItem(HOME_PROJECT_STATE_KEY) || "null");
-    if (savedHomeProjectsState && typeof savedHomeProjectsState === "object") homeProjectsState = savedHomeProjectsState;
-  } catch {}
-  try {
     const savedThreadStatuses = JSON.parse(localStorage.getItem(THREAD_STATUS_STORAGE_KEY) || "null");
     if (savedThreadStatuses && typeof savedThreadStatuses === "object" && !Array.isArray(savedThreadStatuses)) {
       threadStatuses = savedThreadStatuses;
@@ -149,14 +119,6 @@
     const style = document.createElement("style");
     style.id = STYLE_ID;
     style.textContent = `
-      @property --codex-running-angle {
-        syntax: "<angle>";
-        inherits: false;
-        initial-value: 0deg;
-      }
-      @keyframes codex-running-border-flow {
-        to { --codex-running-angle: 360deg; }
-      }
       ${ROW_SELECTOR}[data-codex-conversation-preview-enhanced="true"] {
         height: auto !important;
         min-height: 48px !important;
@@ -227,35 +189,6 @@
         border-color: color-mix(in srgb, currentColor 17%, transparent) !important;
         background: color-mix(in srgb, var(--color-token-list-hover-background, Canvas) 76%, transparent) !important;
         box-shadow: 0 9px 26px color-mix(in srgb, black 8%, transparent);
-      }
-      html[data-codex-conversation-view="card"] ${ROW_SELECTOR}[data-codex-project-running="true"] {
-        isolation: isolate;
-        border-color: color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 58%, transparent) !important;
-        box-shadow: 0 7px 22px color-mix(in srgb, black 6%, transparent),
-          0 0 0 1px color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 26%, transparent),
-          0 0 15px color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 24%, transparent) !important;
-      }
-      html[data-codex-conversation-view="card"] ${ROW_SELECTOR}[data-codex-project-running="true"]::before,
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-card][data-phase="active"]::before {
-        position: absolute;
-        z-index: 3;
-        inset: -0.5px;
-        padding: 1.5px;
-        border-radius: inherit;
-        background: conic-gradient(from var(--codex-running-angle),
-          transparent 0deg 205deg,
-          color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 20%, transparent) 230deg,
-          #4ba9ff 260deg,
-          #b9e9ff 278deg,
-          #2f95ff 296deg,
-          transparent 330deg 360deg);
-        content: "";
-        pointer-events: none;
-        filter: drop-shadow(0 0 4px color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 62%, transparent));
-        -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-        -webkit-mask-composite: xor;
-        mask-composite: exclude;
-        animation: codex-running-border-flow 2.4s linear infinite;
       }
       html[data-codex-conversation-view="card"] [data-codex-conversation-preview-title="true"] {
         display: none !important;
@@ -461,52 +394,6 @@
       [${CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE}="true"] {
         visibility: hidden !important;
         pointer-events: none !important;
-      }
-      [${TV_HOST_ATTRIBUTE}="true"] {
-        position: relative !important;
-        z-index: 31 !important;
-        pointer-events: none !important;
-      }
-      [${TV_HIDDEN_ATTRIBUTE}="true"] {
-        visibility: hidden !important;
-        pointer-events: none !important;
-      }
-      [${TV_NATIVE_SELECTED_ATTRIBUTE}="true"] {
-        background-color: transparent !important;
-      }
-      #${TV_PAGE_ID} {
-        position: absolute;
-        inset: 0;
-        z-index: 1;
-        min-width: 0;
-        min-height: 0;
-        overflow: hidden;
-        background: Canvas;
-        color: CanvasText;
-        pointer-events: auto;
-      }
-      #${TV_PAGE_ID}[hidden],
-      #${TV_FRAME_ID}[hidden],
-      #${TV_STATUS_ID}[hidden] {
-        display: none !important;
-      }
-      #${TV_FRAME_ID} {
-        display: block;
-        width: 100%;
-        height: 100%;
-        border: 0;
-        background: Canvas;
-      }
-      #${TV_STATUS_ID} {
-        display: grid;
-        width: 100%;
-        height: 100%;
-        place-items: center;
-        padding: 24px;
-        box-sizing: border-box;
-        color: var(--color-token-description-foreground, color-mix(in srgb, CanvasText 62%, transparent));
-        font-size: 13px;
-        text-align: center;
       }
       #${SHORTCUT_GRID_ID} {
         display: grid !important;
@@ -1308,254 +1195,6 @@
       #${TOGGLE_ID}[aria-checked="true"] .${SWITCH_THUMB_CLASS} {
         transform: translateX(24px);
       }
-      [data-codex-home-suggestions-hidden="true"] {
-        display: none !important;
-      }
-      #${HOME_PROJECT_SHELF_ID} {
-        display: flex;
-        width: 100%;
-        min-width: 0;
-        flex-direction: column;
-        gap: 8px;
-        box-sizing: border-box;
-        color: var(--color-token-text-primary, var(--color-token-foreground, currentColor));
-      }
-      #${HOME_PROJECT_SHELF_ID} .codex-home-project-header {
-        display: flex;
-        min-width: 0;
-        height: 24px;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-      }
-      #${HOME_PROJECT_SHELF_ID} .codex-home-project-heading {
-        display: inline-flex;
-        min-width: 0;
-        align-items: center;
-        gap: 7px;
-        margin: 0;
-        font-size: 13px;
-        font-weight: 650;
-        line-height: 20px;
-      }
-      #${HOME_PROJECT_SHELF_ID} .codex-home-project-heading::before {
-        width: 7px;
-        height: 7px;
-        flex: 0 0 7px;
-        border-radius: 50%;
-        background: var(--vscode-textLink-foreground, #2f95ff);
-        box-shadow: 0 0 0 4px color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 10%, transparent);
-        content: "";
-      }
-      #${HOME_PROJECT_SHELF_ID} .codex-home-project-count {
-        color: var(--color-token-description-foreground, color-mix(in srgb, currentColor 56%, transparent));
-        font-size: 11px;
-        line-height: 18px;
-        white-space: nowrap;
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-grid] {
-        display: grid;
-        min-width: 0;
-        max-height: 174px;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        align-items: stretch;
-        gap: 8px;
-        overflow-x: hidden;
-        overflow-y: auto;
-        padding: 1px;
-        scrollbar-gutter: stable;
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-card] {
-        position: relative;
-        min-width: 0;
-        height: 82px;
-        overflow: hidden;
-        border: 0.5px solid color-mix(in srgb, currentColor 11%, transparent);
-        border-radius: 13px;
-        background: color-mix(in srgb, var(--color-token-main-surface-secondary, Canvas) 72%, transparent);
-        box-shadow: inset 0 1px 0 color-mix(in srgb, white 22%, transparent), 0 4px 13px color-mix(in srgb, black 5%, transparent);
-        backdrop-filter: blur(14px) saturate(112%);
-        -webkit-backdrop-filter: blur(14px) saturate(112%);
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-card][data-phase="active"] {
-        isolation: isolate;
-        border-color: color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 58%, transparent);
-        box-shadow: inset 0 1px 0 color-mix(in srgb, white 22%, transparent),
-          0 0 0 1px color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 24%, transparent),
-          0 0 14px color-mix(in srgb, var(--vscode-textLink-foreground, #2f95ff) 22%, transparent);
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-open] {
-        display: grid;
-        width: 100%;
-        height: 100%;
-        min-width: 0;
-        grid-template-columns: 34px minmax(0, 1fr);
-        grid-template-rows: 20px 18px 18px;
-        align-content: center;
-        column-gap: 9px;
-        box-sizing: border-box;
-        padding: 9px 34px 9px 10px;
-        overflow: hidden;
-        border: 0;
-        border-radius: inherit;
-        background: transparent;
-        color: inherit;
-        font: inherit;
-        text-align: left;
-        cursor: pointer;
-        transition: background-color 150ms ease, transform 150ms ease;
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-open]:hover {
-        background: color-mix(in srgb, var(--color-token-list-hover-background, Canvas) 82%, transparent);
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-open]:active {
-        transform: scale(0.995);
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-open]:focus-visible,
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-pin]:focus-visible {
-        outline: 2px solid var(--color-token-accent-foreground, Highlight);
-        outline-offset: -3px;
-      }
-      #${HOME_PROJECT_SHELF_ID} .codex-home-project-avatar {
-        display: inline-flex;
-        grid-row: 1 / 4;
-        width: 34px;
-        height: 34px;
-        align-self: center;
-        align-items: center;
-        justify-content: center;
-        overflow: hidden;
-        border-radius: 10px;
-        background: color-mix(in srgb, currentColor 88%, Canvas);
-        color: var(--color-token-main-surface-primary, Canvas);
-        font-size: 13px;
-        font-weight: 680;
-        line-height: 1;
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-name],
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-task] {
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-name] {
-        padding-right: 4px;
-        font-size: 13px;
-        font-weight: 640;
-        line-height: 20px;
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-task] {
-        color: var(--color-token-description-foreground, color-mix(in srgb, currentColor 63%, transparent));
-        font-size: 11px;
-        line-height: 18px;
-      }
-      #${HOME_PROJECT_SHELF_ID} .codex-home-project-meta {
-        display: flex;
-        min-width: 0;
-        align-items: center;
-        gap: 6px;
-        overflow: hidden;
-        font-size: 10px;
-        line-height: 18px;
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-status] {
-        display: inline-flex;
-        flex: 0 0 auto;
-        align-items: center;
-        gap: 4px;
-        color: var(--color-token-description-foreground, color-mix(in srgb, currentColor 62%, transparent));
-        white-space: nowrap;
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-status]::before {
-        width: 5px;
-        height: 5px;
-        border-radius: 50%;
-        background: currentColor;
-        content: "";
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-phase="active"] [data-codex-home-project-status] {
-        color: var(--vscode-textLink-foreground, #2f95ff);
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-phase="completed"] [data-codex-home-project-status] {
-        color: #b7791f;
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-phase="pinned"] [data-codex-home-project-status] {
-        color: #7c5ce0;
-      }
-      #${HOME_PROJECT_SHELF_ID} .codex-home-project-active-count {
-        min-width: 0;
-        overflow: hidden;
-        color: var(--color-token-description-foreground, color-mix(in srgb, currentColor 52%, transparent));
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-pin] {
-        display: inline-flex;
-        position: absolute;
-        z-index: 2;
-        top: 7px;
-        right: 7px;
-        width: 25px;
-        height: 25px;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-        border: 0;
-        border-radius: 8px;
-        background: transparent;
-        color: var(--color-token-description-foreground, color-mix(in srgb, currentColor 55%, transparent));
-        cursor: pointer;
-        transition: color 150ms ease, background-color 150ms ease, transform 150ms ease;
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-pin]:hover {
-        background: color-mix(in srgb, currentColor 7%, transparent);
-        color: var(--color-token-text-primary, currentColor);
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-pin][aria-pressed="true"] {
-        background: color-mix(in srgb, #7c5ce0 13%, transparent);
-        color: #7c5ce0;
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-pin]:active {
-        transform: scale(0.94);
-      }
-      #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-pin] svg {
-        width: 15px;
-        height: 15px;
-      }
-      #${HOME_PROJECT_SHELF_ID}[data-available="false"] {
-        width: fit-content;
-        max-width: 100%;
-        padding: 7px 10px;
-        border: 0.5px solid color-mix(in srgb, currentColor 10%, transparent);
-        border-radius: 10px;
-        background: color-mix(in srgb, var(--color-token-main-surface-secondary, Canvas) 62%, transparent);
-        color: var(--color-token-description-foreground, color-mix(in srgb, currentColor 58%, transparent));
-        font-size: 11px;
-        line-height: 18px;
-      }
-      @media (max-width: 1050px) {
-        #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-grid] {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        #${TOGGLE_ID},
-        #${TOGGLE_ID} .${SWITCH_THUMB_CLASS},
-        #${USAGE_ID} .${USAGE_FILL_CLASS},
-        #${SHORTCUT_GRID_ID} .${SHORTCUT_CARD_CLASS},
-        #${SECTION_TABS_ID} [role="tab"],
-        #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-tag],
-        #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-expand] svg,
-        #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-open],
-        #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-pin] {
-          transition-duration: 0.01ms !important;
-        }
-        html[data-codex-conversation-view="card"] ${ROW_SELECTOR}[data-codex-project-running="true"]::before,
-        #${HOME_PROJECT_SHELF_ID} [data-codex-home-project-card][data-phase="active"]::before {
-          animation: none !important;
-        }
-      }
       [role="tooltip"][data-codex-conversation-preview-tooltip="true"] {
         width: min(30rem, calc(100vw - 16px)) !important;
         max-width: min(30rem, calc(100vw - 16px)) !important;
@@ -1653,15 +1292,6 @@
       const folderPanel = row.closest("[data-codex-sidebar-folder-panel]");
       return !folderPanel?.hidden;
     });
-  }
-
-  function updateProjectRunningState(row) {
-    const threadId = normalizedThreadId(row.getAttribute("data-app-action-sidebar-thread-id"));
-    if (threadId && activeProjectThreadIds.has(threadId)) {
-      row.dataset.codexProjectRunning = "true";
-    } else {
-      row.removeAttribute("data-codex-project-running");
-    }
   }
 
   const STATUS_OPTIONS = [
@@ -1930,211 +1560,6 @@
     scheduleSync();
   }
 
-  function findTvPageMount() {
-    let frameHost = document.querySelector(".app-shell-main-content-frame");
-    if (!frameHost?.closest?.("[data-app-shell-main-content-layout]")) {
-      frameHost = (() => {
-        const viewport = document.querySelector("[data-app-shell-main-content-layout]");
-        if (!viewport) return null;
-        const viewportRect = viewport.getBoundingClientRect();
-        return Array.from(viewport.children).find((candidate) => {
-          const rect = candidate.getBoundingClientRect();
-          return rect.width >= viewportRect.width * 0.8
-            && rect.height >= viewportRect.height * 0.7;
-        }) || null;
-      })();
-    }
-    const viewport = frameHost?.closest?.("[data-app-shell-main-content-layout]");
-    const surface = viewport?.parentElement;
-    if (!frameHost || !viewport || !surface || !surface.closest("main")) return null;
-    return { frameHost, surface };
-  }
-
-  function createTvPage() {
-    const page = document.createElement("section");
-    page.id = TV_PAGE_ID;
-    page.hidden = true;
-    page.setAttribute("aria-label", "TV");
-    const status = document.createElement("div");
-    status.id = TV_STATUS_ID;
-    status.setAttribute("role", "status");
-    status.setAttribute("aria-live", "polite");
-    status.textContent = "正在打开 TV…";
-    page.appendChild(status);
-    tvStatus = status;
-    return page;
-  }
-
-  function muteTvNativeSelection() {
-    if (!tvActive) return;
-    document.querySelectorAll('aside nav[role="navigation"] [aria-current]')
-      .forEach((node) => {
-        if (node.closest(`#${SHORTCUT_GRID_ID}`)) return;
-        if (!tvMutedNativeSelections.has(node)) {
-          tvMutedNativeSelections.set(node, node.getAttribute("aria-current"));
-        }
-        node.removeAttribute("aria-current");
-        node.setAttribute(TV_NATIVE_SELECTED_ATTRIBUTE, "true");
-      });
-  }
-
-  function restoreTvNativeSelection() {
-    tvMutedNativeSelections.forEach((ariaCurrent, node) => {
-      if (!node.isConnected) return;
-      if (ariaCurrent == null) node.removeAttribute("aria-current");
-      else node.setAttribute("aria-current", ariaCurrent);
-      node.removeAttribute(TV_NATIVE_SELECTED_ATTRIBUTE);
-    });
-    tvMutedNativeSelections.clear();
-    document.querySelectorAll(`[${TV_NATIVE_SELECTED_ATTRIBUTE}="true"]`)
-      .forEach((node) => node.removeAttribute(TV_NATIVE_SELECTED_ATTRIBUTE));
-  }
-
-  function restoreTvNativeContent() {
-    document.querySelectorAll(`[${TV_HIDDEN_ATTRIBUTE}="true"]`)
-      .forEach((node) => node.removeAttribute(TV_HIDDEN_ATTRIBUTE));
-    document.querySelectorAll(`[${TV_HOST_ATTRIBUTE}="true"]`)
-      .forEach((node) => node.removeAttribute(TV_HOST_ATTRIBUTE));
-  }
-
-  function mountTvPage() {
-    if (!tvActive) return false;
-    if (!tvPage) tvPage = createTvPage();
-    const mount = findTvPageMount();
-    if (!mount) return false;
-    const { surface } = mount;
-    if (tvPage.parentElement !== surface) {
-      restoreTvNativeContent();
-      surface.appendChild(tvPage);
-    }
-    surface.setAttribute(TV_HOST_ATTRIBUTE, "true");
-    Array.from(surface.children).forEach((child) => {
-      if (child !== tvPage) child.setAttribute(TV_HIDDEN_ATTRIBUTE, "true");
-    });
-    document.querySelectorAll('[data-testid="app-shell-header-context-menu-surface"]')
-      .forEach((header) => Array.from(header.children).forEach((child) => {
-        child.setAttribute(TV_HIDDEN_ATTRIBUTE, "true");
-      }));
-    muteTvNativeSelection();
-    tvPage.hidden = false;
-    document.documentElement.setAttribute("data-codex-tv-open", "true");
-    return true;
-  }
-
-  function syncTvShortcutState() {
-    const button = document.querySelector(
-      `#${SHORTCUT_GRID_ID} [data-codex-sidebar-shortcut-name="TV"]`,
-    );
-    if (!button) return;
-    button.dataset.active = String(tvActive);
-    button.setAttribute("aria-current", tvActive ? "page" : "false");
-    button.setAttribute("aria-label", tvActive ? "TV 已打开" : "打开TV");
-  }
-
-  function showTvLoading() {
-    if (!tvPage) tvPage = createTvPage();
-    tvStatus.hidden = false;
-    tvStatus.textContent = "正在打开 TV…";
-    if (tvFrame) tvFrame.hidden = true;
-  }
-
-  function requestTvHost(action, id) {
-    const binding = window[TV_HOST_BINDING_NAME];
-    const token = window[TV_HOST_TOKEN_GLOBAL];
-    if (typeof binding !== "function" || typeof token !== "string" || !token) {
-      showTvError(id, "TV 宿主服务未就绪，请稍后重试");
-      return false;
-    }
-    try {
-      binding(JSON.stringify({ token, action, id, url: TV_SHORTCUT_URL }));
-      return true;
-    } catch (_) {
-      showTvError(id, "TV 宿主服务调用失败，请稍后重试");
-      return false;
-    }
-  }
-
-  function loadTvFrame(id) {
-    if (!tvActive || id !== tvRequestId || !tvPage) return false;
-    if (!tvFrame) {
-      const frame = document.createElement("iframe");
-      frame.id = TV_FRAME_ID;
-      frame.title = "TV";
-      frame.src = TV_SHORTCUT_URL;
-      frame.dataset.codexTvUrl = TV_SHORTCUT_URL;
-      frame.referrerPolicy = "no-referrer";
-      frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals allow-presentation");
-      frame.setAttribute("allow", "clipboard-read; clipboard-write; fullscreen");
-      frame.hidden = true;
-      frame.addEventListener("load", () => {
-        frame.dataset.loaded = "true";
-        if (!tvActive || id !== tvRequestId) return;
-        tvStatus.hidden = true;
-        frame.hidden = false;
-      });
-      tvFrame = frame;
-      tvPage.appendChild(frame);
-    }
-    if (tvFrame.dataset.loaded === "true") {
-      tvStatus.hidden = true;
-      tvFrame.hidden = false;
-    }
-    return true;
-  }
-
-  function showTvError(id, message) {
-    if (!tvActive || id !== tvRequestId) return;
-    if (!tvPage) tvPage = createTvPage();
-    if (tvFrame) tvFrame.hidden = true;
-    tvStatus.hidden = false;
-    tvStatus.textContent = message || "TV 加载失败，请稍后重试";
-  }
-
-  function openTvPanel() {
-    if (destroyed) return;
-    window.__codexTaskboardInjection__?.close?.(false);
-    if (!tvActive) tvLastFocusedElement = document.activeElement;
-    tvActive = true;
-    tvRequestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
-    showTvLoading();
-    if (!mountTvPage()) {
-      showTvError(tvRequestId, "未找到 Codex 主工作区，请稍后重试");
-      return;
-    }
-    syncTvShortcutState();
-    requestTvHost("open", tvRequestId);
-  }
-
-  function closeTvPanel(restoreFocus = true) {
-    if (!tvActive && tvPage?.hidden !== false) return;
-    const closingId = tvRequestId || "close";
-    tvActive = false;
-    tvRequestId = "";
-    if (tvPage) tvPage.hidden = true;
-    restoreTvNativeContent();
-    restoreTvNativeSelection();
-    document.documentElement.removeAttribute("data-codex-tv-open");
-    syncTvShortcutState();
-    requestTvHost("close", closingId);
-    if (restoreFocus) tvLastFocusedElement?.focus?.();
-    tvLastFocusedElement = null;
-  }
-
-  function isTvNavigation(target) {
-    const clickable = target?.closest?.("button,a,[role='button'],[data-app-action-sidebar-thread-id]");
-    if (!clickable || clickable.closest(`#${SHORTCUT_GRID_ID} [data-codex-sidebar-shortcut-name="TV"]`)) return false;
-    if (!clickable.closest("aside nav[role='navigation']")) return false;
-    return !clickable.hasAttribute("data-app-action-sidebar-section-toggle");
-  }
-
-  function handleTvDocumentClick(event) {
-    if (tvActive && isTvNavigation(event.target)) closeTvPanel(false);
-  }
-
-  function handleTvRouteChange() {
-    if (tvActive) closeTvPanel(false);
-  }
-
   function shortcutItemKey(item) {
     return item?.custom ? `custom:${item.id}` : `native:${item?.name || ""}`;
   }
@@ -2249,7 +1674,6 @@
   function openCustomShortcutPanel(item) {
     const url = validShortcutUrl(item?.url);
     if (!url) return false;
-    closeTvPanel(false);
     const mount = findCustomShortcutPageMount();
     if (!mount) return false;
     if (!customShortcutPage) customShortcutPage = createCustomShortcutPage();
@@ -2452,19 +1876,7 @@
       { name: "新对话", button: newConversation, quickButton },
       ...navigationButtons.map((button) => ({ name: shortcutLabel(button), button, quickButton: null })),
     ].filter((item, index, values) => item.name && values.findIndex((candidate) => candidate.name === item.name) === index);
-    const tvItem = {
-      name: "TV",
-      button: null,
-      quickButton: null,
-      url: TV_SHORTCUT_URL,
-    };
-    const pullRequestIndex = sourceItems.findIndex((item) => item.name === "拉取请求");
-    const insertAt = pullRequestIndex >= 0 ? pullRequestIndex + 1 : Math.min(2, sourceItems.length);
-    const builtInItems = [
-      ...sourceItems.slice(0, insertAt),
-      tvItem,
-      ...sourceItems.slice(insertAt),
-    ];
+    const builtInItems = sourceItems.filter((item) => !HIDDEN_SHORTCUT_NAMES.has(item.name));
     const catalogItems = [...builtInItems, ...normalizedCustomShortcuts()];
     const items = catalogItems.filter((item) => !shortcutSettings.hidden.includes(shortcutItemKey(item)));
     return { header, newConversationRow, navigationGroup, sourceItems, catalogItems, items };
@@ -2480,10 +1892,6 @@
     }
     if (icon) {
       host.innerHTML = presetShortcutSvg(icon);
-      return host;
-    }
-    if (name === "TV") {
-      host.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3.5" y="6.5" width="17" height="12.5" rx="2.5" stroke="currentColor" stroke-width="1.7"/><path d="m8.5 3.8 3.5 2.7 3.5-2.7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 11.2v3.2M16 11.2v3.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
       return host;
     }
     const image = source?.querySelector("svg, img")?.cloneNode(true);
@@ -2512,7 +1920,6 @@
       if (item.kind === "settings") openShortcutSettings();
       else if (item.custom && item.openMode === "browser") openCustomShortcutInBrowser(item);
       else if (item.custom) openCustomShortcutPanel(item);
-      else if (item.name === "TV") openTvPanel();
       else item.button?.click();
     };
     wrap.appendChild(button);
@@ -2543,12 +1950,9 @@
     if (!button) return;
     if (!item.button) {
       button.disabled = false;
-      const tvItemActive = item.name === "TV" && tvActive;
-      button.dataset.active = String(tvItemActive);
-      button.setAttribute("aria-current", tvItemActive ? "page" : "false");
-      button.setAttribute("aria-label", item.kind === "settings"
-        ? "管理快捷入口"
-        : tvItemActive ? "TV 已打开" : `打开${item.name}`);
+      button.dataset.active = "false";
+      button.setAttribute("aria-current", "false");
+      button.setAttribute("aria-label", item.kind === "settings" ? "管理快捷入口" : `打开${item.name}`);
       button.closest("[data-codex-sidebar-shortcut-card-wrap]")
         ?.querySelector(".codex-sidebar-shortcut-status")?.remove();
       return;
@@ -3080,8 +2484,15 @@
     host.hidden = false;
   }
 
+  function conversationRoute(rawThreadId) {
+    const threadId = String(rawThreadId || "").trim().replace(/^(?:local|cloud):/i, "");
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(threadId)
+      ? `/local/${threadId}`
+      : null;
+  }
+
   function openAllProject(entry) {
-    const route = homeProjectRoute(entry?.threadId);
+    const route = conversationRoute(entry?.threadId);
     if (route) window.postMessage({ type: "navigate-to-route", path: route }, "*");
   }
 
@@ -3409,212 +2820,6 @@
     updateFolderSwitcherState(sources.items);
   }
 
-  function persistHomeProjectsState() {
-    try {
-      if (homeProjectsState && typeof homeProjectsState === "object") {
-        localStorage.setItem(HOME_PROJECT_STATE_KEY, JSON.stringify(homeProjectsState));
-      }
-    } catch {}
-  }
-
-  function homeProjectRoute(rawThreadId) {
-    const threadId = String(rawThreadId || "").trim().replace(/^(?:local|cloud):/i, "");
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(threadId)
-      ? `/local/${threadId}`
-      : null;
-  }
-
-  function updateViewedCompletion(card) {
-    if (!card?.projectId || !card?.completionToken) return;
-    if (!homeProjectsState || typeof homeProjectsState !== "object") homeProjectsState = {};
-    if (!homeProjectsState.seenCompletionByProject || typeof homeProjectsState.seenCompletionByProject !== "object") {
-      homeProjectsState.seenCompletionByProject = {};
-    }
-    homeProjectsState.seenCompletionByProject[card.projectId] = card.completionToken;
-    persistHomeProjectsState();
-  }
-
-  function openHomeProject(card) {
-    const route = homeProjectRoute(card?.threadId);
-    if (!route) return;
-    updateViewedCompletion(card);
-    window.postMessage({ type: "navigate-to-route", path: route }, "*");
-  }
-
-  function togglePinnedHomeProject(projectId) {
-    if (!projectId) return;
-    if (!homeProjectsState || typeof homeProjectsState !== "object") homeProjectsState = {};
-    const pinned = new Set(Array.isArray(homeProjectsState.pinnedProjectIds)
-      ? homeProjectsState.pinnedProjectIds.filter((id) => typeof id === "string")
-      : []);
-    const willPin = !pinned.has(projectId);
-    if (willPin) pinned.add(projectId);
-    else pinned.delete(projectId);
-    homeProjectsState.pinnedProjectIds = [...pinned].sort();
-    persistHomeProjectsState();
-
-    homeProjects.cards = homeProjects.cards.flatMap((card) => {
-      if (card.projectId !== projectId) return [card];
-      if (willPin) {
-        return [{
-          ...card,
-          pinned: true,
-          phase: card.phase === "active" ? "active" : "pinned",
-          statusLabel: card.phase === "active" ? "执行中" : "已钉住",
-        }];
-      }
-      if (card.phase === "active") return [{ ...card, pinned: false }];
-      if (card.completionToken) {
-        return [{ ...card, pinned: false, phase: "completed", statusLabel: "待查看" }];
-      }
-      return [];
-    });
-    document.getElementById(HOME_PROJECT_SHELF_ID)?.removeAttribute("data-signature");
-    sync();
-  }
-
-  function createHomeProjectCard(card) {
-    const root = document.createElement("div");
-    root.dataset.codexHomeProjectCard = "true";
-    root.dataset.codexHomeProjectId = card.projectId;
-    root.dataset.phase = card.phase;
-
-    const open = document.createElement("button");
-    open.type = "button";
-    open.dataset.codexHomeProjectOpen = "true";
-    open.setAttribute("aria-label", `打开“${card.projectName}”项目的关联对话`);
-    open.title = card.taskTitle;
-    open.onclick = () => openHomeProject(card);
-
-    const avatar = document.createElement("span");
-    avatar.className = "codex-home-project-avatar";
-    avatar.setAttribute("aria-hidden", "true");
-    avatar.textContent = Array.from(String(card.projectName || "项目").trim())[0] || "项";
-
-    const name = document.createElement("span");
-    name.dataset.codexHomeProjectName = "true";
-    name.textContent = card.projectName;
-
-    const task = document.createElement("span");
-    task.dataset.codexHomeProjectTask = "true";
-    task.textContent = card.taskTitle;
-
-    const meta = document.createElement("span");
-    meta.className = "codex-home-project-meta";
-    const status = document.createElement("span");
-    status.dataset.codexHomeProjectStatus = "true";
-    status.textContent = card.statusLabel;
-    const count = document.createElement("span");
-    count.className = "codex-home-project-active-count";
-    count.textContent = card.activeTaskCount > 1
-      ? `${card.activeTaskCount} 个任务正在执行`
-      : card.phase === "completed"
-        ? "完成后待查看"
-        : card.phase === "pinned"
-          ? "固定显示"
-          : card.taskIdentifier || "打开关联对话";
-    meta.append(status, count);
-    open.append(avatar, name, task, meta);
-
-    const pin = document.createElement("button");
-    pin.type = "button";
-    pin.dataset.codexHomeProjectPin = "true";
-    pin.setAttribute("aria-pressed", String(card.pinned));
-    const pinLabel = card.pinned ? `取消钉住“${card.projectName}”项目` : `钉住“${card.projectName}”项目`;
-    pin.setAttribute("aria-label", pinLabel);
-    pin.title = pinLabel;
-    pin.innerHTML = '<svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M7.1 3.5h5.8l-.7 4.1 2.3 2.3v1.2H5.5V9.9l2.3-2.3-.7-4.1Z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/><path d="M10 11.1v5.4" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>';
-    pin.onclick = (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      togglePinnedHomeProject(card.projectId);
-    };
-
-    root.append(open, pin);
-    return root;
-  }
-
-  function clearHomeProjectShelf() {
-    document.getElementById(HOME_PROJECT_SHELF_ID)?.remove();
-    document.querySelectorAll("[data-codex-home-suggestions-hidden]").forEach((node) => {
-      node.removeAttribute("data-codex-home-suggestions-hidden");
-    });
-  }
-
-  function ensureHomeProjectShelf() {
-    const composer = document.querySelector('[data-composer-placement="home"]');
-    const homeIcon = document.querySelector('[data-testid="home-icon"]');
-    const suggestions = document.querySelector('[class*="group/home-suggestions"]');
-    const host = suggestions?.parentElement;
-    if (!composer || !homeIcon || !suggestions || !host) {
-      clearHomeProjectShelf();
-      return;
-    }
-
-    const cards = Array.isArray(homeProjects.cards) ? homeProjects.cards : [];
-    if (homeProjects.available !== false && !cards.length) {
-      clearHomeProjectShelf();
-      return;
-    }
-
-    let shelf = document.getElementById(HOME_PROJECT_SHELF_ID);
-    if (shelf?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN || shelf?.parentElement !== host) {
-      shelf?.remove();
-      shelf = document.createElement("section");
-      shelf.id = HOME_PROJECT_SHELF_ID;
-      shelf.dataset.codexPreviewRuntime = RUNTIME_TOKEN;
-      host.insertBefore(shelf, suggestions);
-    } else if (shelf.nextElementSibling !== suggestions) {
-      host.insertBefore(shelf, suggestions);
-    }
-
-    if (homeProjects.available === false) {
-      suggestions.removeAttribute("data-codex-home-suggestions-hidden");
-      shelf.dataset.available = "false";
-      shelf.setAttribute("role", "status");
-      shelf.setAttribute("aria-live", "polite");
-      shelf.removeAttribute("aria-label");
-      const signature = `unavailable:${homeProjects.message || ""}`;
-      if (shelf.dataset.signature !== signature) {
-        shelf.dataset.signature = signature;
-        shelf.textContent = homeProjects.message || "项目动态暂不可用";
-      }
-      return;
-    }
-
-    suggestions.dataset.codexHomeSuggestionsHidden = "true";
-    shelf.dataset.available = "true";
-    shelf.setAttribute("role", "region");
-    shelf.setAttribute("aria-label", "当前项目");
-    shelf.removeAttribute("aria-live");
-    const signature = JSON.stringify(cards.map((card) => [
-      card.projectId,
-      card.taskId,
-      card.taskTitle,
-      card.phase,
-      card.statusLabel,
-      card.activeTaskCount,
-      card.pinned,
-      card.completionToken,
-    ]));
-    if (shelf.dataset.signature === signature) return;
-    shelf.dataset.signature = signature;
-
-    const header = document.createElement("div");
-    header.className = "codex-home-project-header";
-    const heading = document.createElement("h2");
-    heading.className = "codex-home-project-heading";
-    heading.textContent = "当前项目";
-    const count = document.createElement("span");
-    count.className = "codex-home-project-count";
-    count.textContent = `${cards.length} 个项目`;
-    header.append(heading, count);
-    const grid = document.createElement("div");
-    grid.dataset.codexHomeProjectGrid = "true";
-    grid.append(...cards.map(createHomeProjectCard));
-    shelf.replaceChildren(header, grid);
-  }
-
   function updateUsageState() {
     const status = document.getElementById(USAGE_ID);
     if (!status) return;
@@ -3768,13 +2973,10 @@
   function sync() {
     if (destroyed) return;
     ensureShortcutGrid();
-    mountTvPage();
-    syncTvShortcutState();
     ensureViewToggle();
     ensureShortcutSettingsButton();
     ensureSectionTabs();
     ensureFolderSwitcher();
-    ensureHomeProjectShelf();
     const rows = visibleRows();
     const anchor = !layoutAnchored
       ? rows.find((row) => row.getAttribute("aria-current") === "page")
@@ -3785,7 +2987,6 @@
         })
       : null;
     for (const row of rows) {
-      updateProjectRunningState(row);
       applySummary(row, previewForRow(row));
     }
     sortRecentRowsByLastCommunication();
@@ -3829,26 +3030,6 @@
     sync();
   }
 
-  function setHomeProjects(value) {
-    const source = value && typeof value === "object" ? value : {};
-    homeProjects = {
-      available: source.available !== false,
-      cards: Array.isArray(source.cards) ? source.cards : [],
-      activeThreadIds: Array.isArray(source.activeThreadIds) ? source.activeThreadIds : [],
-      message: typeof source.message === "string" ? source.message : "",
-    };
-    activeProjectThreadIds = new Set(homeProjects.activeThreadIds.map(normalizedThreadId).filter(Boolean));
-    if (source.state && typeof source.state === "object") {
-      homeProjectsState = source.state;
-      persistHomeProjectsState();
-    }
-    sync();
-  }
-
-  function getHomeProjectsState() {
-    return homeProjectsState;
-  }
-
   function scheduleSync() {
     if (destroyed || syncTimer) return;
     syncTimer = setTimeout(() => {
@@ -3864,9 +3045,6 @@
     observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-state", "aria-expanded"] });
     document.addEventListener("pointerover", scheduleSync, true);
     document.addEventListener("pointerdown", handleStatusDocumentPointerDown, true);
-    document.addEventListener("click", handleTvDocumentClick, true);
-    window.addEventListener("popstate", handleTvRouteChange);
-    window.addEventListener("hashchange", handleTvRouteChange);
     sync();
   }
 
@@ -3876,16 +3054,11 @@
     clearTimeout(syncTimer);
     document.removeEventListener("pointerover", scheduleSync, true);
     document.removeEventListener("pointerdown", handleStatusDocumentPointerDown, true);
-    document.removeEventListener("click", handleTvDocumentClick, true);
-    window.removeEventListener("popstate", handleTvRouteChange);
-    window.removeEventListener("hashchange", handleTvRouteChange);
-    closeTvPanel(false);
     closeStatusMenu();
     document.getElementById(STYLE_ID)?.remove();
     document.getElementById(TOGGLE_ID)?.remove();
     document.getElementById(USAGE_ID)?.remove();
     document.getElementById(SHORTCUT_SETTINGS_BUTTON_ID)?.remove();
-    clearHomeProjectShelf();
     clearShortcutEnhancement();
     document.getElementById(SHORTCUT_SETTINGS_ID)?.remove();
     clearSectionEnhancement();
@@ -3893,10 +3066,6 @@
     customShortcutPage?.remove();
     customShortcutPage = null;
     customShortcutFrame = null;
-    tvPage?.remove();
-    tvPage = null;
-    tvFrame = null;
-    tvStatus = null;
     document.documentElement.removeAttribute("data-codex-conversation-view");
     document.querySelectorAll(`.${SUMMARY_CLASS}, .${DETAILS_CLASS}, .${CARD_CONTENT_CLASS}`).forEach((node) => node.remove());
     document.querySelectorAll(`.${STATUS_BUTTON_CLASS}`).forEach((node) => node.remove());
@@ -3915,9 +3084,6 @@
     document.querySelectorAll('[data-codex-sidebar-search-match="true"]').forEach((node) => {
       node.removeAttribute("data-codex-sidebar-search-match");
     });
-    document.querySelectorAll('[data-codex-project-running="true"]').forEach((node) => {
-      node.removeAttribute("data-codex-project-running");
-    });
   }
 
   window[SENTINEL] = {
@@ -3926,12 +3092,6 @@
     setPreviews,
     setSearchCatalog,
     setUsage,
-    setHomeProjects,
-    getHomeProjectsState,
-    openTv: openTvPanel,
-    closeTv: closeTvPanel,
-    loadTvFrame,
-    showTvError,
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
   else start();

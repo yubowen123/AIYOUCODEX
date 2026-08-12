@@ -71,13 +71,10 @@ macOS 终端：
 - 文件夹标签首位提供“全部”：汇总完整项目会话索引，并按最近一次请求或沟通时间跨文件夹排序。
 - 搜索框可模糊搜索文件夹名和项目名，命中后直接展示对应文件夹。
 - 搜索栏右侧的新建按钮始终绑定当前选中的文件夹；点击后进入该文件夹的项目创建页，“全部”视图不提供无归属新建入口。
-- 顶部快捷入口改为图标卡片：隐藏“站点”和“插件”，新增“TV”；点击后像“项目管理”一样直接在 Codex 主工作区展开 DramaTV 个人项目页，不创建浏览器标签；其他原生入口保持原行为。
+- 顶部快捷入口改为图标卡片；公共版不展示“站点”、“插件”和“项目管理”等非通用入口。
 - 顶部搜索与活动按钮之间提供快捷入口设置：可显示或隐藏入口，也可用默认图标、名称、链接和“内置 / 浏览器”打开方式创建自定义入口；配置跨重启保留。
 - 顶部展示 Codex 自身记录的真实剩余比例和重置时间，不自行估算额度。
 - 每张对话卡片可用红、橙、绿三色标注“紧急且重要 / 紧急或重要 / 不紧急”，状态按对话保存。
-- Taskboard 中处于执行中的项目卡片显示流动蓝色边框光晕；系统启用“减弱动态效果”时保留静态蓝色提示。
-- “新对话”首页集中展示 Taskboard 中正在执行的项目；点击卡片直接进入关联对话。
-- 项目执行完成后继续显示为“待查看”，首次点击后收起；钉住的项目跨状态、跨重启持续展示。
 
 ## 系统要求
 
@@ -94,7 +91,6 @@ macOS 终端：
 - 不修改 `/Applications/ChatGPT.app`、`/Applications/Codex.app`、`app.asar` 或对话数据；
 - 不开启对外 HTTP 服务，不上传对话、额度或标签；
 - CDP 只使用回环地址 `127.0.0.1:9231`；
-- TV 只嵌入固定的 `https://dz-ailab.dzkjm.cn/canvas/projects?category=personal`，使用受限 iframe；仅在 TV 面板打开期间由本地宿主放行嵌入所需的内容安全策略，关闭或切换页面后立即恢复；
 - 安装内容完全位于当前用户目录，可通过对应平台的卸载脚本完整移除；Windows 不创建管理员级服务或系统级注册表项。
 
 ## 更新与排查
@@ -142,15 +138,12 @@ $env:CODEX_SIDEBAR_SOURCE_DIR = (Get-Location).Path
 
 ```bash
 node scripts/verify-shortcut-grid.mjs
-node scripts/verify-shortcut-card-clicks.mjs
 node scripts/verify-shortcut-settings-click.mjs
-node scripts/verify-tv-panel.mjs
 node scripts/verify-section-tabs.mjs
 node scripts/verify-folder-switcher.mjs
 node scripts/verify-card-view.mjs
 node scripts/verify-card-status.mjs
 node scripts/verify-reload-persistence.mjs
-node scripts/verify-home-projects.mjs
 ```
 
 ## License
