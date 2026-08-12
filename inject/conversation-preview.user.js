@@ -31,11 +31,17 @@
   const HIDDEN_SHORTCUT_NAMES = new Set(["站点", "插件", "项目管理"]);
   const SECTION_TABS_ID = "codex-sidebar-section-tabs";
   const SECTION_TAB_STORAGE_KEY = "codex-conversation-preview:section-tab";
-  const SECTION_NAMES = ["置顶", "项目", "最近"];
+  const NATIVE_SECTION_NAMES = ["置顶", "项目", "最近"];
+  const SECTION_NAMES = [...NATIVE_SECTION_NAMES, "中断"];
+  const RECENT_LIST_ID = "codex-sidebar-global-recent-list";
+  const RECENT_VISIBLE_LIMIT = 30;
+  const INTERRUPTED_PANEL_ID = "codex-sidebar-interrupted-panel";
+  const INTERRUPTED_LIST_ID = "codex-sidebar-interrupted-list";
   const FOLDER_SWITCHER_ID = "codex-sidebar-folder-switcher";
   const ALL_FOLDER_ID = "__all__";
   const ALL_PROJECTS_PANEL_ID = "codex-sidebar-all-projects";
   const FOLDER_STORAGE_KEY = "codex-conversation-preview:folder-id";
+  const PINNED_THREAD_TIMES_STORAGE_KEY = "codex-conversation-preview:pinned-thread-times";
   const VIEW_STORAGE_KEY = "codex-conversation-preview:view-mode";
   const THREAD_STATUS_STORAGE_KEY = "codex-conversation-preview:thread-statuses";
   const STATUS_BUTTON_CLASS = "codex-conversation-status-button";
@@ -85,6 +91,12 @@
   let searchCatalog = [];
   let searchCatalogByProject = new Map();
   let searchCatalogByThread = new Map();
+  let recentCatalog = [];
+  let recentCatalogByThread = new Map();
+  let interruptedCatalog = [];
+  let interruptedCatalogByThread = new Map();
+  let pinnedThreadIds = new Set();
+  let pinnedThreadTimes = {};
   let folderSearchExpansionPending = null;
   let folderSearchRevealKey = "";
   let threadStatuses = {};
@@ -107,6 +119,13 @@
     if (SECTION_NAMES.includes(savedSectionTab)) activeSectionTab = savedSectionTab;
   } catch {}
   try { activeFolderId = localStorage.getItem(FOLDER_STORAGE_KEY) || null; } catch {}
+  try {
+    const savedPinnedThreadTimes = JSON.parse(localStorage.getItem(PINNED_THREAD_TIMES_STORAGE_KEY) || "null");
+    if (savedPinnedThreadTimes && typeof savedPinnedThreadTimes === "object" && !Array.isArray(savedPinnedThreadTimes)) {
+      pinnedThreadTimes = savedPinnedThreadTimes;
+      pinnedThreadIds = new Set(Object.keys(savedPinnedThreadTimes));
+    }
+  } catch {}
   try {
     const savedThreadStatuses = JSON.parse(localStorage.getItem(THREAD_STATUS_STORAGE_KEY) || "null");
     if (savedThreadStatuses && typeof savedThreadStatuses === "object" && !Array.isArray(savedThreadStatuses)) {
@@ -159,6 +178,9 @@
         grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
         align-items: stretch;
         gap: 10px 8px !important;
+      }
+      html[data-codex-conversation-view="card"] [data-codex-sidebar-pinned-project-list]:not(:last-child) {
+        margin-bottom: 10px;
       }
       html[data-codex-conversation-view="card"] [data-codex-conversation-card-grid="true"] > [data-codex-conversation-card-item="true"],
       html[data-codex-conversation-view="card"] [data-codex-conversation-card-grid="true"] > [data-codex-conversation-card-item="true"] > *,
@@ -295,9 +317,13 @@
         height: 14px;
         border: 2px solid color-mix(in srgb, white 72%, transparent);
         border-radius: 50%;
+        background: #b5b7ba;
+        box-shadow: 0 0 0 2px color-mix(in srgb, #8f9296 22%, transparent);
+        content: "";
+      }
+      .${STATUS_BUTTON_CLASS}[data-status="urgent-important"]::before {
         background: #ef4755;
         box-shadow: 0 0 0 2px color-mix(in srgb, #ef4755 22%, transparent);
-        content: "";
       }
       .${STATUS_BUTTON_CLASS}[data-status="urgent-or-important"]::before {
         background: #f28a16;
@@ -307,6 +333,7 @@
         background: #2fa56b;
         box-shadow: 0 0 0 2px color-mix(in srgb, #2fa56b 22%, transparent);
       }
+      .${STATUS_BUTTON_CLASS}[data-status="unmarked"]::before,
       .${STATUS_BUTTON_CLASS}[data-status="clear"]::before {
         border-color: color-mix(in srgb, white 58%, transparent);
         background: #b5b7ba;
@@ -777,9 +804,10 @@
       #${SECTION_TABS_ID} [role="tablist"] {
         display: grid;
         min-width: 0;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         align-items: center;
         gap: 3px;
+        overflow: hidden;
       }
       #${SECTION_TABS_ID} [role="tab"] {
         display: inline-flex;
@@ -788,7 +816,7 @@
         align-items: center;
         justify-content: center;
         box-sizing: border-box;
-        padding: 0 8px;
+        padding: 0 4px;
         overflow: hidden;
         border: 0;
         border-radius: 8px;
@@ -1032,6 +1060,13 @@
       #${ALL_PROJECTS_PANEL_ID} [data-codex-sidebar-all-project-list] {
         min-width: 0;
       }
+      [data-codex-sidebar-recent-native-hidden="true"] {
+        display: none !important;
+      }
+      #${RECENT_LIST_ID},
+      #${INTERRUPTED_LIST_ID} {
+        min-width: 0;
+      }
       #${FOLDER_SWITCHER_ID} .codex-sidebar-folder-meta {
         display: flex;
         min-width: 0;
@@ -1257,9 +1292,10 @@
   }
 
   function catalogPreviewForRow(row) {
-    const entry = searchCatalogByThread.get(normalizedThreadId(
-      row.getAttribute("data-app-action-sidebar-thread-id"),
-    ));
+    const threadId = normalizedThreadId(row.getAttribute("data-app-action-sidebar-thread-id"));
+    const entry = searchCatalogByThread.get(threadId)
+      || recentCatalogByThread.get(threadId)
+      || interruptedCatalogByThread.get(threadId);
     if (!entry) return null;
     const title = entry.title || row.getAttribute("data-app-action-sidebar-thread-title") || "未命名对话";
     const subject = title
@@ -1275,17 +1311,25 @@
       recentInput: "",
       recentOutput: "",
       lastCommunication: formatCatalogCommunication(entry.updatedAt),
-      tags: [subject, entry.projectName || "未分类项目", "最近请求"],
+      tags: [subject, entry.projectName || "未分类项目", entry.interruptionLabel || "最近请求"],
     };
   }
 
   function previewForRow(row) {
-    return previews.get(rowKey(row)) || catalogPreviewForRow(row);
+    const preview = previews.get(rowKey(row)) || catalogPreviewForRow(row);
+    if (!preview || !row.hasAttribute("data-codex-sidebar-interrupted-row")) return preview;
+    const entry = interruptedCatalogByThread.get(normalizedThreadId(row.getAttribute("data-app-action-sidebar-thread-id")));
+    if (!entry?.interruptionLabel) return preview;
+    const tags = Array.isArray(preview.tags) ? preview.tags.slice(0, 2) : [];
+    return { ...preview, tags: [...tags, entry.interruptionLabel].slice(-3) };
   }
 
   function visibleRows() {
     return Array.from(document.querySelectorAll(ROW_SELECTOR)).filter((row) => {
       if (!row.isConnected) return false;
+      const sectionPanel = row.closest("[data-codex-sidebar-section-panel]");
+      if (sectionPanel?.hidden) return false;
+      if (row.closest('[data-codex-sidebar-recent-native-hidden="true"]')) return false;
       if (row.hasAttribute("data-codex-sidebar-all-project-row")) {
         return Boolean(row.closest(`#${ALL_PROJECTS_PANEL_ID}`));
       }
@@ -1300,19 +1344,20 @@
     { value: "not-urgent", label: "不紧急", color: "#2fa56b" },
     { value: "clear", label: "清除标注", color: "#b5b7ba" },
   ];
+  const UNMARKED_STATUS = { value: "unmarked", label: "未标记", color: "#b5b7ba" };
 
   function threadStatusKey(row) {
     return row.getAttribute("data-app-action-sidebar-thread-id") || rowKey(row);
   }
 
   function threadStatus(key) {
-    return STATUS_OPTIONS.some((option) => option.value === threadStatuses[key])
+    return STATUS_OPTIONS.some((option) => option.value !== "clear" && option.value === threadStatuses[key])
       ? threadStatuses[key]
-      : "urgent-important";
+      : UNMARKED_STATUS.value;
   }
 
   function statusOption(value) {
-    return STATUS_OPTIONS.find((option) => option.value === value) || STATUS_OPTIONS[0];
+    return STATUS_OPTIONS.find((option) => option.value === value) || UNMARKED_STATUS;
   }
 
   function persistThreadStatuses() {
@@ -1349,10 +1394,11 @@
   }
 
   function chooseThreadStatus(key, value) {
-    threadStatuses[key] = statusOption(value).value;
+    if (value === "clear") delete threadStatuses[key];
+    else threadStatuses[key] = statusOption(value).value;
     persistThreadStatuses();
     document.querySelectorAll(`.${STATUS_BUTTON_CLASS}`).forEach((button) => {
-      if (button.dataset.threadStatusKey === key) updateStatusButton(button, threadStatuses[key]);
+      if (button.dataset.threadStatusKey === key) updateStatusButton(button, threadStatus(key));
     });
     closeStatusMenu();
   }
@@ -1419,7 +1465,7 @@
     openStatusButton = button;
     button.setAttribute("aria-expanded", "true");
     positionStatusMenu(menu, button);
-    requestAnimationFrame(() => menu.querySelector('[aria-checked="true"]')?.focus());
+    requestAnimationFrame(() => (menu.querySelector('[aria-checked="true"]') || menu.querySelector("button"))?.focus());
   }
 
   function ensureCardStatusButton(row) {
@@ -2053,7 +2099,7 @@
   }
 
   function nativeSectionSources() {
-    const items = SECTION_NAMES.map(nativeSectionSource);
+    const items = NATIVE_SECTION_NAMES.map(nativeSectionSource);
     if (items.some((item) => !item)) return null;
     const common = commonAncestor(items.map((item) => item.section));
     if (!common) return null;
@@ -2066,7 +2112,7 @@
   }
 
   function sectionIdPart(name) {
-    return name === "置顶" ? "pinned" : name === "项目" ? "projects" : "recent";
+    return name === "置顶" ? "pinned" : name === "项目" ? "projects" : name === "最近" ? "recent" : "interrupted";
   }
 
   function setNativeSectionExpanded(item, desired) {
@@ -2096,8 +2142,11 @@
       item.section.setAttribute("role", "tabpanel");
       item.section.setAttribute("aria-labelledby", `codex-sidebar-section-tab-${part}`);
       item.section.dataset.codexSidebarSectionPanel = item.name;
-      item.heading.dataset.codexSidebarSectionHeadingHidden = "true";
-      if (syncNative) setNativeSectionExpanded(item, selected);
+      if (item.heading) item.heading.dataset.codexSidebarSectionHeadingHidden = "true";
+      if (syncNative && !item.virtual) {
+        const keepMountedForVirtualTab = activeSectionTab === "中断" && item.name === "最近";
+        setNativeSectionExpanded(item, selected || keepMountedForVirtualTab);
+      }
     }
     const actions = bar.querySelector("[data-codex-sidebar-project-actions]");
     if (actions) actions.hidden = activeSectionTab !== "项目";
@@ -2171,6 +2220,11 @@
   function clearSectionEnhancement() {
     clearFolderEnhancement();
     restoreProjectActions();
+    document.getElementById(RECENT_LIST_ID)?.remove();
+    document.getElementById(INTERRUPTED_PANEL_ID)?.remove();
+    document.querySelectorAll('[data-codex-sidebar-recent-native-hidden="true"]').forEach((node) => {
+      node.removeAttribute("data-codex-sidebar-recent-native-hidden");
+    });
     document.getElementById(SECTION_TABS_ID)?.remove();
     document.querySelectorAll("[data-codex-sidebar-section-heading-hidden]").forEach((heading) => {
       heading.removeAttribute("data-codex-sidebar-section-heading-hidden");
@@ -2200,12 +2254,26 @@
     const needsRebuild = bar?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN
       || bar?.parentElement !== sources.common
       || sources.items.some((item) => sectionSources.get(item.name)?.section !== item.section)
-      || sectionSources.get("项目")?.actions !== projectActions;
+      || sectionSources.get("项目")?.actions !== projectActions
+      || !sectionSources.get("中断")?.section?.isConnected;
     if (needsRebuild) {
       clearSectionEnhancement();
       bar = createSectionTabs();
       sources.common.insertBefore(bar, sources.common.firstChild);
       sectionSources = new Map(sources.items.map((item) => [item.name, item]));
+      const interruptedPanel = document.createElement("section");
+      interruptedPanel.id = INTERRUPTED_PANEL_ID;
+      interruptedPanel.dataset.codexPreviewRuntime = RUNTIME_TOKEN;
+      sources.common.insertBefore(interruptedPanel, bar.nextSibling);
+      sectionSources.set("中断", {
+        name: "中断",
+        virtual: true,
+        button: null,
+        heading: null,
+        section: interruptedPanel,
+        panelHost: interruptedPanel,
+        actions: null,
+      });
     }
     const project = sources.items.find((item) => item.name === "项目");
     const actionsHost = bar.querySelector("[data-codex-sidebar-project-actions]");
@@ -2217,33 +2285,124 @@
       });
       actionsHost.appendChild(project.actions);
     }
-    updateSectionTabState(sources.items);
+    updateSectionTabState(SECTION_NAMES.map((name) => sectionSources.get(name)).filter(Boolean));
   }
 
-  function sortRecentRowsByLastCommunication() {
-    const recentSection = sectionSources.get("最近")?.section;
-    if (!recentSection?.isConnected) return;
+  function ensureGlobalRecentRows() {
+    const recent = sectionSources.get("最近");
+    const container = recent?.heading?.parentElement;
+    if (!recent?.section?.isConnected || !container) return;
+    const entries = recentCatalog.slice(0, RECENT_VISIBLE_LIMIT);
+    let list = document.getElementById(RECENT_LIST_ID);
+    if (!entries.length) {
+      list?.remove();
+      container.querySelectorAll('[data-codex-sidebar-recent-native-hidden="true"]').forEach((node) => {
+        node.removeAttribute("data-codex-sidebar-recent-native-hidden");
+      });
+      return;
+    }
+    for (const child of container.children) {
+      if (child !== recent.heading && child !== list) child.dataset.codexSidebarRecentNativeHidden = "true";
+    }
+    if (!list || list.parentElement !== container) {
+      list?.remove();
+      list = document.createElement("div");
+      list.id = RECENT_LIST_ID;
+      list.setAttribute("role", "list");
+      list.setAttribute("aria-label", "全部对话，按最近使用排序");
+      list.dataset.codexPreviewRuntime = RUNTIME_TOKEN;
+      list.className = "flex flex-col";
+      container.appendChild(list);
+    }
+    const signature = entries.map((entry) => `${entry.threadId}:${entry.updatedAt || ""}:${entry.title}`).join("\n");
+    const currentOrder = Array.from(list.querySelectorAll("[data-codex-sidebar-recent-row]"))
+      .map((row) => normalizedThreadId(row.getAttribute("data-app-action-sidebar-thread-id")))
+      .join("\n");
+    const expectedOrder = entries.map((entry) => normalizedThreadId(entry.threadId)).join("\n");
+    if (list.dataset.signature !== signature || currentOrder !== expectedOrder) {
+      list.dataset.signature = signature;
+      list.replaceChildren(...entries.map((entry) => createCatalogThreadRow(entry, "recent")));
+    }
+  }
+
+  function ensureInterruptedRows() {
+    const panel = sectionSources.get("中断")?.section;
+    if (!panel?.isConnected) return;
+    let list = document.getElementById(INTERRUPTED_LIST_ID);
+    if (!list) {
+      list = document.createElement("div");
+      list.id = INTERRUPTED_LIST_ID;
+      list.setAttribute("role", "list");
+      list.setAttribute("aria-label", "已中断对话，按中断时间排序");
+      list.className = "flex flex-col";
+      panel.appendChild(list);
+    }
+    const entries = interruptedCatalog.slice(0, RECENT_VISIBLE_LIMIT);
+    const signature = entries.map((entry) => `${entry.threadId}:${entry.updatedAt || ""}:${entry.interruptionKind || ""}`).join("\n");
+    if (list.dataset.signature === signature) return;
+    list.dataset.signature = signature;
+    if (entries.length) {
+      list.replaceChildren(...entries.map((entry) => createCatalogThreadRow(entry, "interrupted")));
+    } else {
+      const empty = document.createElement("div");
+      empty.dataset.codexSidebarInterruptedEmpty = "true";
+      empty.className = "px-3 py-8 text-center text-sm text-token-text-secondary";
+      empty.textContent = "暂无中断的对话";
+      list.replaceChildren(empty);
+    }
+  }
+
+  function pinnedThreadStorageKey(value) {
+    const id = normalizedThreadId(value);
+    return id ? `local:${id}` : "";
+  }
+
+  function persistPinnedThreadTimes() {
+    try { localStorage.setItem(PINNED_THREAD_TIMES_STORAGE_KEY, JSON.stringify(pinnedThreadTimes)); } catch {}
+  }
+
+  function pinnedAtForThread(value) {
+    const key = pinnedThreadStorageKey(value);
+    return Number(pinnedThreadTimes[key] || pinnedThreadTimes[normalizedThreadId(value)] || 0);
+  }
+
+  function sortNativePinnedRows() {
+    const pinnedSection = sectionSources.get("置顶")?.section;
+    if (!pinnedSection?.isConnected) return;
     const rowsByList = new Map();
-    for (const row of recentSection.querySelectorAll(ROW_SELECTOR)) {
+    for (const row of pinnedSection.querySelectorAll(`${ROW_SELECTOR}:not([data-codex-sidebar-pinned-project-row])`)) {
       const listItem = row.closest('[role="listitem"]');
       const list = listItem?.parentElement;
       if (!listItem || list?.getAttribute("role") !== "list") continue;
       const entries = rowsByList.get(list) || [];
-      entries.push({
-        item: listItem,
-        key: rowKey(row),
-        updatedAt: Date.parse(previews.get(rowKey(row))?.updatedAt || ""),
-      });
+      entries.push({ item: listItem, pinnedAt: pinnedAtForThread(row.getAttribute("data-app-action-sidebar-thread-id")) });
       rowsByList.set(list, entries);
     }
     for (const [list, entries] of rowsByList) {
-      if (entries.length < 2 || entries.some((entry) => !Number.isFinite(entry.updatedAt))) continue;
-      const sorted = [...entries].sort((left, right) => right.updatedAt - left.updatedAt);
-      const currentSignature = entries.map((entry) => entry.key).join("\n");
-      const sortedSignature = sorted.map((entry) => entry.key).join("\n");
-      if (currentSignature === sortedSignature) continue;
+      const sorted = [...entries].sort((left, right) => right.pinnedAt - left.pinnedAt);
+      if (entries.every((entry, index) => entry.item === sorted[index].item)) continue;
       for (const entry of sorted) list.appendChild(entry.item);
     }
+  }
+
+  function handlePinDocumentClick(event) {
+    const button = event.target?.closest?.("button[aria-label]");
+    const action = button?.getAttribute("aria-label");
+    if (action !== "置顶聊天" && action !== "取消置顶聊天") return;
+    const row = button.closest(ROW_SELECTOR);
+    const id = normalizedThreadId(row?.getAttribute("data-app-action-sidebar-thread-id"));
+    if (!id) return;
+    const key = pinnedThreadStorageKey(id);
+    if (action === "置顶聊天") {
+      pinnedThreadIds.add(id);
+      pinnedThreadTimes[key] = Date.now();
+    } else {
+      pinnedThreadIds.delete(id);
+      delete pinnedThreadTimes[key];
+      delete pinnedThreadTimes[id];
+    }
+    persistPinnedThreadTimes();
+    scheduleSync();
   }
 
   function folderLastUsed(folder) {
@@ -2388,7 +2547,7 @@
     if (!matches.length) return;
     const matchingIds = new Set(matches.map((entry) => normalizedThreadId(entry.threadId)));
     const matchingTitles = new Set(matches.map((entry) => entry.title));
-    const rows = Array.from(item.folder.querySelectorAll(ROW_SELECTOR));
+    const rows = Array.from(item.panelHost.querySelectorAll(ROW_SELECTOR));
     const match = rows.find((row) => matchingIds.has(normalizedThreadId(
       row.getAttribute("data-app-action-sidebar-thread-id"),
     ))) || rows.find((row) => matchingTitles.has(
@@ -2496,8 +2655,8 @@
     if (route) window.postMessage({ type: "navigate-to-route", path: route }, "*");
   }
 
-  function createAllProjectRow(entry) {
-    const sourceRow = document.querySelector(`${ROW_SELECTOR}:not([data-codex-sidebar-all-project-row])`);
+  function createCatalogThreadRow(entry, kind = "all") {
+    const sourceRow = document.querySelector(`${ROW_SELECTOR}:not([data-codex-sidebar-all-project-row]):not([data-codex-sidebar-pinned-project-row])`);
     const sourceItem = sourceRow?.closest('[role="listitem"]');
     const sourceTitleHost = sourceRow?.querySelector('[data-thread-title-trigger="true"]');
     const sourceTitle = sourceRow?.querySelector('[data-thread-title="true"]');
@@ -2512,10 +2671,22 @@
     row.dataset.appActionSidebarThreadRow = "";
     row.dataset.appActionSidebarThreadId = `local:${entry.threadId}`;
     row.dataset.appActionSidebarThreadTitle = entry.title;
-    row.dataset.codexSidebarAllProjectRow = "true";
-    row.dataset.codexSidebarAllProjectId = entry.projectId;
-    row.dataset.codexSidebarAllProjectUpdatedAt = entry.updatedAt || "";
-    row.setAttribute("aria-label", `${entry.title}，${entry.projectName}`);
+    if (kind === "pinned") {
+      row.dataset.codexSidebarPinnedProjectRow = "true";
+      row.dataset.codexSidebarPinnedAt = String(entry.pinnedAt || 0);
+    } else if (kind === "recent") {
+      row.dataset.codexSidebarRecentRow = "true";
+      row.dataset.codexSidebarRecentUpdatedAt = entry.updatedAt || "";
+    } else if (kind === "interrupted") {
+      row.dataset.codexSidebarInterruptedRow = "true";
+      row.dataset.codexSidebarInterruptedKind = entry.interruptionKind || "passive";
+      row.dataset.codexSidebarInterruptedUpdatedAt = entry.updatedAt || "";
+    } else {
+      row.dataset.codexSidebarAllProjectRow = "true";
+      row.dataset.codexSidebarAllProjectId = entry.projectId;
+      row.dataset.codexSidebarAllProjectUpdatedAt = entry.updatedAt || "";
+    }
+    row.setAttribute("aria-label", entry.projectName ? `${entry.title}，${entry.projectName}` : entry.title);
     row.onclick = () => openAllProject(entry);
     row.onkeydown = (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
@@ -2533,6 +2704,53 @@
     row.appendChild(titleHost);
     item.appendChild(row);
     return item;
+  }
+
+  function createAllProjectRow(entry) {
+    return createCatalogThreadRow(entry, "all");
+  }
+
+  function nativeFolderThreadList(item) {
+    const nativeRow = item.folder.querySelector(`${ROW_SELECTOR}:not([data-codex-sidebar-pinned-project-row])`);
+    const nativeItem = nativeRow?.closest('[role="listitem"]');
+    return nativeItem?.parentElement?.getAttribute("role") === "list"
+      ? nativeItem.parentElement
+      : Array.from(item.folder.querySelectorAll('[role="list"]'))
+        .find((list) => !list.hasAttribute("data-codex-sidebar-pinned-project-list")) || null;
+  }
+
+  function ensurePinnedProjectRows(item) {
+    const entries = (item.catalogEntries || [])
+      .filter((entry) => pinnedThreadIds.has(normalizedThreadId(entry.threadId)))
+      .map((entry) => ({
+        ...entry,
+        pinnedAt: pinnedAtForThread(entry.threadId),
+      }))
+      .sort((left, right) => right.pinnedAt - left.pinnedAt
+        || Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
+    let list = item.panelHost.querySelector(":scope > [data-codex-sidebar-pinned-project-list]");
+    if (!entries.length) {
+      list?.remove();
+      return;
+    }
+    const nativeList = nativeFolderThreadList(item);
+    const listHost = item.panelHost;
+    if (!listHost) return;
+    if (!list) {
+      list = document.createElement("div");
+      list.setAttribute("role", "list");
+      list.setAttribute("aria-label", `${item.label}中的置顶项目`);
+      list.dataset.codexSidebarPinnedProjectList = "true";
+      list.className = nativeList.className || "flex flex-col";
+      listHost.insertBefore(list, listHost.firstChild);
+    } else if (list.parentElement !== listHost) {
+      listHost.insertBefore(list, listHost.firstChild);
+    }
+    const signature = entries.map((entry) => `${entry.threadId}:${entry.pinnedAt}:${entry.title}`).join("\n");
+    if (list.dataset.signature !== signature) {
+      list.dataset.signature = signature;
+      list.replaceChildren(...entries.map((entry) => createCatalogThreadRow(entry, "pinned")));
+    }
   }
 
   function ensureAllProjectsPanel(root, entries) {
@@ -2727,6 +2945,7 @@
       // This completes recent-use sorting and project-title search even when
       // Codex originally rendered a populated folder in its collapsed state.
       setNativeFolderExpanded(item);
+      ensurePinnedProjectRows(item);
     }
 
     const entries = allProjectEntries();
@@ -2777,6 +2996,7 @@
     restoreFolderActions();
     document.getElementById(FOLDER_SWITCHER_ID)?.remove();
     document.getElementById(ALL_PROJECTS_PANEL_ID)?.remove();
+    document.querySelectorAll("[data-codex-sidebar-pinned-project-list]").forEach((list) => list.remove());
     document.querySelectorAll("[data-codex-sidebar-folder-heading-hidden]").forEach((row) => {
       row.removeAttribute("data-codex-sidebar-folder-heading-hidden");
     });
@@ -2989,7 +3209,9 @@
     for (const row of rows) {
       applySummary(row, previewForRow(row));
     }
-    sortRecentRowsByLastCommunication();
+    ensureGlobalRecentRows();
+    ensureInterruptedRows();
+    sortNativePinnedRows();
     if (anchor) {
       anchor.scrollIntoView({ block: viewMode === "card" ? "center" : "nearest" });
       layoutAnchored = true;
@@ -3019,6 +3241,52 @@
     sync();
   }
 
+  function setRecentCatalog(items) {
+    const newestByThread = new Map();
+    for (const entry of Array.isArray(items) ? items : []) {
+      const threadId = normalizedThreadId(entry?.threadId);
+      const time = Date.parse(entry?.updatedAt || "");
+      if (!threadId || typeof entry?.title !== "string" || !Number.isFinite(time)) continue;
+      const current = newestByThread.get(threadId);
+      if (!current || time > current.time) newestByThread.set(threadId, { ...entry, threadId, time });
+    }
+    recentCatalog = Array.from(newestByThread.values())
+      .sort((left, right) => right.time - left.time)
+      .map(({ time, ...entry }) => entry);
+    recentCatalogByThread = new Map(recentCatalog.map((entry) => [normalizedThreadId(entry.threadId), entry]));
+    sync();
+  }
+
+  function setInterruptedCatalog(items) {
+    interruptedCatalog = (Array.isArray(items) ? items : [])
+      .filter((entry) => normalizedThreadId(entry?.threadId) && typeof entry?.title === "string")
+      .sort((left, right) => Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
+    interruptedCatalogByThread = new Map(interruptedCatalog.map((entry) => [normalizedThreadId(entry.threadId), entry]));
+    sync();
+  }
+
+  function setPinnedThreads(items) {
+    const next = new Set((Array.isArray(items) ? items : []).map(normalizedThreadId).filter(Boolean));
+    let changed = false;
+    let fallback = -1;
+    for (const id of next) {
+      const key = pinnedThreadStorageKey(id);
+      if (!Object.hasOwn(pinnedThreadTimes, key) && !Object.hasOwn(pinnedThreadTimes, id)) {
+        pinnedThreadTimes[key] = fallback;
+        fallback -= 1;
+        changed = true;
+      }
+    }
+    for (const key of Object.keys(pinnedThreadTimes)) {
+      if (next.has(normalizedThreadId(key))) continue;
+      delete pinnedThreadTimes[key];
+      changed = true;
+    }
+    pinnedThreadIds = next;
+    if (changed) persistPinnedThreadTimes();
+    sync();
+  }
+
   function setUsage(value) {
     usage = value && typeof value === "object" ? value : {
       available: false,
@@ -3045,6 +3313,7 @@
     observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-state", "aria-expanded"] });
     document.addEventListener("pointerover", scheduleSync, true);
     document.addEventListener("pointerdown", handleStatusDocumentPointerDown, true);
+    document.addEventListener("click", handlePinDocumentClick, true);
     sync();
   }
 
@@ -3054,6 +3323,7 @@
     clearTimeout(syncTimer);
     document.removeEventListener("pointerover", scheduleSync, true);
     document.removeEventListener("pointerdown", handleStatusDocumentPointerDown, true);
+    document.removeEventListener("click", handlePinDocumentClick, true);
     closeStatusMenu();
     document.getElementById(STYLE_ID)?.remove();
     document.getElementById(TOGGLE_ID)?.remove();
@@ -3091,6 +3361,9 @@
     refresh: sync,
     setPreviews,
     setSearchCatalog,
+    setRecentCatalog,
+    setInterruptedCatalog,
+    setPinnedThreads,
     setUsage,
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });

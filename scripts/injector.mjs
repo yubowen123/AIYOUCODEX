@@ -99,7 +99,8 @@ async function attach() {
 
 async function pushPreviews() {
   if (!client || !attachedTargetId) return;
-  const requests = await client.evaluate(`(() => {
+  const [requests, recentCatalog, pinnedThreadIds] = await Promise.all([
+    client.evaluate(`(() => {
       const seen = new Set();
       const allPanel = document.getElementById('codex-sidebar-all-projects');
       const rows = allPanel
@@ -115,11 +116,30 @@ async function pushPreviews() {
         seen.add(key);
         return [{ key, id, title }];
       });
-    })()`);
-  const [rawPreviews, rawUsage, searchCatalog] = await Promise.all([
-    repository.readMany(Array.isArray(requests) ? requests : []),
+    })()`),
+    repository.readRecentCatalog(),
+    repository.readPinnedThreadIds(),
+  ]);
+  const interruptedCatalog = await repository.readInterruptedCatalog({
+    activeThreadIds: [],
+  });
+  const recentRequests = recentCatalog.slice(0, 30).map((entry) => ({
+    key: `local:${entry.threadId}\n${entry.title}`,
+    id: `local:${entry.threadId}`,
+    title: entry.title,
+  }));
+  const interruptedRequests = interruptedCatalog.slice(0, 30).map((entry) => ({
+    key: `local:${entry.threadId}\n${entry.title}`,
+    id: `local:${entry.threadId}`,
+    title: entry.title,
+  }));
+  const previewRequests = Array.from(new Map(
+    [...recentRequests, ...interruptedRequests, ...(Array.isArray(requests) ? requests : [])].map((request) => [request.key, request]),
+  ).values());
+  const searchCatalog = recentCatalog.filter((entry) => entry.projectId && entry.projectName);
+  const [rawPreviews, rawUsage] = await Promise.all([
+    repository.readMany(previewRequests),
     repository.readUsage(),
-    repository.readSearchCatalog(),
   ]);
   const previews = rawPreviews.map((preview) => presentCardPreview(preview));
   const usage = presentRateLimit(rawUsage, { timeZone: "Asia/Shanghai" });
@@ -128,6 +148,9 @@ async function pushPreviews() {
     api?.setPreviews?.(${JSON.stringify(previews)});
     api?.setUsage?.(${JSON.stringify(usage)});
     api?.setSearchCatalog?.(${JSON.stringify(searchCatalog)});
+    api?.setRecentCatalog?.(${JSON.stringify(recentCatalog)});
+    api?.setInterruptedCatalog?.(${JSON.stringify(interruptedCatalog)});
+    api?.setPinnedThreads?.(${JSON.stringify(pinnedThreadIds)});
   })()`);
 }
 
