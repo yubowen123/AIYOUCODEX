@@ -106,47 +106,48 @@ try {
   assert.equal(await waitFor(client, `Boolean(${rowWithActionExpression(targets[0].id, "取消置顶聊天")})
     && Boolean(${rowWithActionExpression(targets[1].id, "取消置顶聊天")})`), true,
     "Both native conversations must remain available in the Pinned tab");
+
   await client.evaluate(`document.querySelector('[data-codex-sidebar-section-tab="项目"]')?.click()`);
   await waitFor(client, `Boolean(document.querySelector('[data-codex-sidebar-folder-tag="${fixture.folderId}"]'))`);
   await client.evaluate(`document.querySelector('[data-codex-sidebar-folder-tag="${fixture.folderId}"]')?.click()`);
-
   assert.equal(await waitFor(client, `(() => {
-    const panel = document.querySelector('[data-codex-sidebar-folder-panel-id="${fixture.folderId}"]');
-    return Array.from(panel?.querySelectorAll('[data-codex-sidebar-pinned-project-row]') || []).length === 2;
-  })()`, 8_000), true,
-  "Pinned conversations must remain visible as project-folder cards");
+    const ids = ${JSON.stringify(targets.map((target) => target.id))};
+    return !Array.from(document.querySelectorAll('[data-codex-sidebar-folder-panel] [data-app-action-sidebar-thread-row]'))
+      .some((row) => ids.includes(row.getAttribute('data-app-action-sidebar-thread-id'))
+        && row.getClientRects().length > 0);
+  })()`), true, "Pinned conversations must not remain visible in Project");
 
-  const projectState = await client.evaluate(`(() => {
-    const panel = document.querySelector('[data-codex-sidebar-folder-panel-id="${fixture.folderId}"]');
-    const rows = Array.from(panel?.querySelectorAll('[data-app-action-sidebar-thread-row]') || []);
-    return {
-      pinnedIds: Array.from(panel?.querySelectorAll('[data-codex-sidebar-pinned-project-row]') || [])
-        .map((row) => row.getAttribute('data-app-action-sidebar-thread-id')),
-      allIds: rows.map((row) => row.getAttribute('data-app-action-sidebar-thread-id')),
-      storedTimes: JSON.parse(localStorage.getItem(${JSON.stringify(PINNED_STORAGE_KEY)}) || '{}'),
-    };
-  })()`);
-  assert.deepEqual(projectState.pinnedIds, [targets[1].id, targets[0].id],
-    "A newly pinned project must be placed before earlier pinned projects");
-  assert.equal(new Set(projectState.allIds).size, projectState.allIds.length,
-    "The project folder must not contain duplicate cards");
+  await client.evaluate(`document.querySelector('[data-codex-sidebar-folder-tag="__all__"]')?.click()`);
+  assert.equal(await waitFor(client, `(() => {
+    const ids = ${JSON.stringify(targets.map((target) => target.id))};
+    return !Array.from(document.querySelectorAll('[data-codex-sidebar-all-project-row]'))
+      .some((row) => ids.includes(row.getAttribute('data-app-action-sidebar-thread-id')));
+  })()`), true, "Pinned conversations must not appear in All projects");
+
+  await client.evaluate(`document.querySelector('[data-codex-sidebar-section-tab="最近"]')?.click()`);
+  assert.equal(await waitFor(client, `(() => {
+    const ids = ${JSON.stringify(targets.map((target) => target.id))};
+    return !Array.from(document.querySelectorAll('[data-codex-sidebar-recent-row]'))
+      .some((row) => ids.includes(row.getAttribute('data-app-action-sidebar-thread-id')));
+  })()`), true, "Pinned conversations must not appear in Recent");
+
+  const projectState = await client.evaluate(`({
+    storedTimes: JSON.parse(localStorage.getItem(${JSON.stringify(PINNED_STORAGE_KEY)}) || '{}'),
+  })`);
   assert.ok(projectState.storedTimes[targets[1].id] > projectState.storedTimes[targets[0].id],
     "Pin action timestamps must preserve newest-first ordering across reloads");
 
   await client.send("Page.reload", { ignoreCache: true });
   assert.equal(await waitFor(client, `(() => {
-    const tag = document.querySelector('[data-codex-sidebar-folder-tag="${fixture.folderId}"]');
-    if (tag?.getAttribute('aria-pressed') !== 'true') tag?.click();
-    const panel = document.querySelector('[data-codex-sidebar-folder-panel-id="${fixture.folderId}"]');
-    return Array.from(panel?.querySelectorAll('[data-codex-sidebar-pinned-project-row]') || [])
-      .map((row) => row.getAttribute('data-app-action-sidebar-thread-id')).join('|')
-      === ${JSON.stringify(`${targets[1].id}|${targets[0].id}`)};
-  })()`, 25_000), true, "Pinned project order must survive a Codex renderer reload");
+    document.querySelector('[data-codex-sidebar-section-tab="置顶"]')?.click();
+    return Boolean(${rowWithActionExpression(targets[0].id, "取消置顶聊天")})
+      && Boolean(${rowWithActionExpression(targets[1].id, "取消置顶聊天")});
+  })()`, 25_000), true, "Pinned-only placement must survive a Codex renderer reload");
 
   process.stdout.write(`${JSON.stringify({
     folder: fixture.folderLabel,
     pinnedOrder: [targets[1].title, targets[0].title],
-    projectFolderMirrorVerified: true,
+    pinnedTabOnlyVerified: true,
     newestFirstVerified: true,
     reloadPersistenceVerified: true,
   }, null, 2)}\n`);

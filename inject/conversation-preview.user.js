@@ -20,6 +20,13 @@
   const CUSTOM_SHORTCUT_FRAME_ID = "codex-custom-shortcut-frame";
   const CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE = "data-codex-custom-shortcut-hidden";
   const CUSTOM_SHORTCUT_HOST_ATTRIBUTE = "data-codex-custom-shortcut-host";
+  const ASSET_CONSOLE_PAGE_ID = "codex-asset-console-page";
+  const ASSET_CONSOLE_FRAME_ID = "codex-asset-console-frame";
+  const SKILL_ORGANIZER_ID = "codex-skill-organizer";
+  const SKILL_FAVORITES_KEY = "codex-workspace-enhancer:skill-favorites-v1";
+  const SKILL_OPEN_REQUEST_STORAGE_KEY = "codex-workspace-enhancer:skill-open-request-v1";
+  const SKILL_OPEN_REQUEST_TTL_MS = 15_000;
+  const SKILL_NATIVE_SECTION_ATTR = "data-codex-skill-native-section";
   const SHORTCUT_ICON_PRESETS = {
     link: '<path d="M10.2 13.8 13.8 10.2M8.1 15.9l-1.4 1.4a3.5 3.5 0 0 1-5-5l3-3a3.5 3.5 0 0 1 5 0M15.9 8.1l1.4-1.4a3.5 3.5 0 0 1 5 5l-3 3a3.5 3.5 0 0 1-5 0"/>',
     book: '<path d="M4 4.5h5.5A2.5 2.5 0 0 1 12 7v13a3 3 0 0 0-3-3H4zM20 4.5h-5.5A2.5 2.5 0 0 0 12 7v13a3 3 0 0 1 3-3h5z"/>',
@@ -27,8 +34,10 @@
     play: '<rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="m10 9 5 3-5 3z"/>',
     chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
     code: '<path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"/>',
+    skills: '<path d="M5 5.5h6M5 9h9M5 12.5h5M16.5 4v8M13 8h7M6 17.5h12M8.5 15v5M15.5 15v5"/>',
+    assets: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 4V2M17 4V2M3 9h18M8 13h3v3H8zM14 13h3v3h-3z"/>',
   };
-  const HIDDEN_SHORTCUT_NAMES = new Set(["站点", "插件", "项目管理"]);
+  const HIDDEN_SHORTCUT_NAMES = new Set();
   const SECTION_TABS_ID = "codex-sidebar-section-tabs";
   const SECTION_TAB_STORAGE_KEY = "codex-conversation-preview:section-tab";
   const NATIVE_SECTION_NAMES = ["置顶", "项目", "最近"];
@@ -44,6 +53,7 @@
   const PINNED_THREAD_TIMES_STORAGE_KEY = "codex-conversation-preview:pinned-thread-times";
   const VIEW_STORAGE_KEY = "codex-conversation-preview:view-mode";
   const THREAD_STATUS_STORAGE_KEY = "codex-conversation-preview:thread-statuses";
+  const NATIVE_ANCHOR_GRACE_MS = 1_800;
   const STATUS_BUTTON_CLASS = "codex-conversation-status-button";
   const STATUS_MENU_ID = "codex-conversation-status-menu";
   const SUMMARY_CLASS = "codex-conversation-core-summary";
@@ -60,20 +70,41 @@
   let destroyed = false;
   let observer = null;
   let syncTimer = null;
+  let anchorRetryTimer = null;
   let previews = new Map();
   let shortcutSources = new Map();
   let shortcutCatalog = [];
   let shortcutSettings = {
+    schemaVersion: 4,
     hidden: Array.from(HIDDEN_SHORTCUT_NAMES, (name) => `native:${name}`),
     custom: [],
   };
   let customShortcutPage = null;
   let customShortcutFrame = null;
   let customShortcutLastFocusedElement = null;
+  let assetConsole = { available: false, label: "资产控制台", mode: "embedded" };
+  let assetConsolePage = null;
+  let assetConsoleFrame = null;
+  let assetConsoleReturnFocus = null;
+  let skillOrganizerSource = null;
+  let skillOrganizerCatalog = [];
+  let skillOrganizerCatalogSignature = "";
+  let skillOrganizerFilter = "常用";
+  let skillOrganizerQuery = "";
+  let skillOrganizerNativeVisible = false;
+  let skillOrganizerFavorites = null;
+  let skillOrganizerRenderFrame = null;
+  let skillOrganizerRenderGeneration = 0;
+  let skillOrganizerOpening = false;
+  let skillOrganizerOpenGeneration = 0;
+  let skillOrganizerOpenObserver = null;
+  let skillOrganizerOpenTimer = null;
   let sectionSources = new Map();
   let sectionTogglePending = new Map();
+  let sectionSourcesMissingSince = 0;
   let folderSources = new Map();
   let folderTogglePending = new Map();
+  let folderSourcesMissingSince = 0;
   let usage = {
     available: false,
     text: "剩余量 --",
@@ -97,6 +128,7 @@
   let interruptedCatalogByThread = new Map();
   let pinnedThreadIds = new Set();
   let pinnedThreadTimes = {};
+  let activeProjectThreadIds = new Set();
   let folderSearchExpansionPending = null;
   let folderSearchRevealKey = "";
   let threadStatuses = {};
@@ -110,7 +142,19 @@
       const custom = Array.isArray(savedShortcutSettings.custom)
         ? savedShortcutSettings.custom.filter((item) => item && typeof item === "object")
         : [];
-      shortcutSettings = { hidden, custom };
+      shortcutSettings = {
+        schemaVersion: 4,
+        // v1-v3 shipped with native entries hidden by default. Restore every
+        // built-in once so an update cannot look incomplete; later v4 choices
+        // remain user-controlled and persistent.
+        hidden: savedShortcutSettings.schemaVersion === 4
+          ? hidden
+          : hidden.filter((value) => !value.startsWith("native:")),
+        custom,
+      };
+      if (savedShortcutSettings.schemaVersion !== 4) {
+        localStorage.setItem(SHORTCUT_SETTINGS_STORAGE_KEY, JSON.stringify(shortcutSettings));
+      }
     }
   } catch {}
   try { viewMode = localStorage.getItem(VIEW_STORAGE_KEY) === "card" ? "card" : "list"; } catch {}
@@ -138,6 +182,14 @@
     const style = document.createElement("style");
     style.id = STYLE_ID;
     style.textContent = `
+      @property --codex-running-angle {
+        syntax: "<angle>";
+        inherits: false;
+        initial-value: 0deg;
+      }
+      @keyframes codex-running-border-flow {
+        to { --codex-running-angle: 360deg; }
+      }
       ${ROW_SELECTOR}[data-codex-conversation-preview-enhanced="true"] {
         height: auto !important;
         min-height: 48px !important;
@@ -179,8 +231,8 @@
         align-items: stretch;
         gap: 10px 8px !important;
       }
-      html[data-codex-conversation-view="card"] [data-codex-sidebar-pinned-project-list]:not(:last-child) {
-        margin-bottom: 10px;
+      [data-codex-sidebar-pinned-outside-hidden="true"] {
+        display: none !important;
       }
       html[data-codex-conversation-view="card"] [data-codex-conversation-card-grid="true"] > [data-codex-conversation-card-item="true"],
       html[data-codex-conversation-view="card"] [data-codex-conversation-card-grid="true"] > [data-codex-conversation-card-item="true"] > *,
@@ -211,6 +263,34 @@
         border-color: color-mix(in srgb, currentColor 17%, transparent) !important;
         background: color-mix(in srgb, var(--color-token-list-hover-background, Canvas) 76%, transparent) !important;
         box-shadow: 0 9px 26px color-mix(in srgb, black 8%, transparent);
+      }
+      html[data-codex-conversation-view="card"] ${ROW_SELECTOR}[data-codex-project-running="true"] {
+        isolation: isolate;
+        border-color: color-mix(in srgb, #2f95ff 58%, transparent) !important;
+        box-shadow: 0 7px 22px color-mix(in srgb, black 6%, transparent),
+          0 0 0 1px color-mix(in srgb, #2f95ff 26%, transparent),
+          0 0 15px color-mix(in srgb, #2f95ff 24%, transparent) !important;
+      }
+      html[data-codex-conversation-view="card"] ${ROW_SELECTOR}[data-codex-project-running="true"]::before {
+        position: absolute;
+        z-index: 3;
+        inset: -0.5px;
+        padding: 1.5px;
+        border-radius: inherit;
+        background: conic-gradient(from var(--codex-running-angle),
+          transparent 0deg 205deg,
+          color-mix(in srgb, #2f95ff 20%, transparent) 230deg,
+          #4ba9ff 260deg,
+          #b9e9ff 278deg,
+          #2f95ff 296deg,
+          transparent 330deg 360deg);
+        content: "";
+        pointer-events: none;
+        filter: drop-shadow(0 0 4px color-mix(in srgb, #2f95ff 62%, transparent));
+        -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+        animation: codex-running-border-flow 2.4s linear infinite;
       }
       html[data-codex-conversation-view="card"] [data-codex-conversation-preview-title="true"] {
         display: none !important;
@@ -287,6 +367,12 @@
         text-align: center;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html[data-codex-conversation-view="card"] ${ROW_SELECTOR}[data-codex-project-running="true"]::before {
+          animation: none;
+          background: #2f95ff;
+        }
       }
       .${STATUS_BUTTON_CLASS} {
         display: none;
@@ -1259,6 +1345,159 @@
         font-size: 12px;
         line-height: 18px;
       }
+      #${ASSET_CONSOLE_PAGE_ID} {
+        position: absolute;
+        inset: 0;
+        z-index: 30;
+        display: grid;
+        grid-template-rows: 50px minmax(0, 1fr);
+        overflow: hidden;
+        background: var(--color-token-bg-primary, #fff);
+        pointer-events: auto;
+      }
+      #${ASSET_CONSOLE_PAGE_ID}[hidden] { display: none !important; }
+      #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 16px;
+        border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+      }
+      #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-title { font-size: 15px; font-weight: 650; }
+      #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-local {
+        padding: 3px 8px;
+        border-radius: 999px;
+        color: #22764a;
+        background: color-mix(in srgb, #2fa56b 13%, transparent);
+        font-size: 11px;
+      }
+      #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-spacer { flex: 1; }
+      #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-close,
+      #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-retry {
+        border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+        border-radius: 9px;
+        background: color-mix(in srgb, currentColor 4%, transparent);
+        color: inherit;
+        cursor: pointer;
+      }
+      #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-close { width: 32px; height: 32px; font-size: 20px; }
+      #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-body { position: relative; min-height: 0; }
+      #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-state {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        justify-items: center;
+        gap: 12px;
+        color: color-mix(in srgb, currentColor 65%, transparent);
+      }
+      #${ASSET_CONSOLE_PAGE_ID}[data-state="ready"] .codex-asset-console-state { display: none; }
+      #${ASSET_CONSOLE_PAGE_ID}[data-state="loading"] .codex-asset-console-retry { display: none; }
+      #${ASSET_CONSOLE_FRAME_ID} { width: 100%; height: 100%; border: 0; background: #fff; }
+      [${SKILL_NATIVE_SECTION_ATTR}="hidden"] { display: none !important; }
+      #${SKILL_ORGANIZER_ID} {
+        display: grid;
+        gap: 14px;
+        margin: 0 0 18px;
+        padding: 18px;
+        border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+        border-radius: 18px;
+        background: color-mix(in srgb, var(--color-token-bg-primary, #fff) 92%, transparent);
+        box-shadow: 0 12px 30px color-mix(in srgb, #24364b 8%, transparent);
+      }
+      #${SKILL_ORGANIZER_ID} .codex-skill-organizer-head,
+      #${SKILL_ORGANIZER_ID} .codex-skill-result-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      #${SKILL_ORGANIZER_ID} h2 { margin: 0; font-size: 18px; }
+      #${SKILL_ORGANIZER_ID} p { margin: 3px 0 0; color: color-mix(in srgb, currentColor 58%, transparent); font-size: 12px; }
+      #${SKILL_ORGANIZER_ID} button { color: inherit; font: inherit; }
+      #${SKILL_ORGANIZER_ID} .codex-skill-native-toggle {
+        padding: 7px 11px;
+        border: 1px solid color-mix(in srgb, currentColor 13%, transparent);
+        border-radius: 9px;
+        background: transparent;
+        cursor: pointer;
+      }
+      #${SKILL_ORGANIZER_ID} .codex-skill-search {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 11px;
+        border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+        border-radius: 11px;
+      }
+      #${SKILL_ORGANIZER_ID} .codex-skill-search input {
+        width: 100%;
+        height: 38px;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: inherit;
+      }
+      #${SKILL_ORGANIZER_ID} .codex-skill-filter-list { display: flex; flex-wrap: wrap; gap: 7px; }
+      #${SKILL_ORGANIZER_ID} .codex-skill-filter {
+        padding: 6px 10px;
+        border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+        border-radius: 999px;
+        background: transparent;
+        cursor: pointer;
+      }
+      #${SKILL_ORGANIZER_ID} .codex-skill-filter[aria-pressed="true"] {
+        border-color: color-mix(in srgb, #2f80ed 48%, transparent);
+        background: color-mix(in srgb, #2f80ed 11%, transparent);
+        color: #1767c0;
+      }
+      #${SKILL_ORGANIZER_ID} .codex-skill-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 9px;
+      }
+      #${SKILL_ORGANIZER_ID} .codex-skill-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 32px;
+        align-items: center;
+        gap: 8px;
+        min-height: 80px;
+        padding: 10px 11px;
+        border: 1px solid color-mix(in srgb, currentColor 11%, transparent);
+        border-radius: 12px;
+        background: color-mix(in srgb, currentColor 2.5%, transparent);
+        cursor: pointer;
+      }
+      #${SKILL_ORGANIZER_ID} .codex-skill-row:hover { border-color: color-mix(in srgb, #2f80ed 35%, transparent); }
+      #${SKILL_ORGANIZER_ID} .codex-skill-name {
+        display: block;
+        min-width: 0;
+        overflow: hidden;
+        font-size: 13px;
+        font-weight: 650;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #${SKILL_ORGANIZER_ID} .codex-skill-description {
+        display: -webkit-box;
+        min-width: 0;
+        min-height: 32px;
+        max-height: 32px;
+        overflow: hidden;
+        margin-top: 3px;
+        color: color-mix(in srgb, currentColor 56%, transparent);
+        font-size: 11px;
+        line-height: 16px;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+      }
+      #${SKILL_ORGANIZER_ID} .codex-skill-favorite {
+        width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; font-size: 18px;
+      }
+      #${SKILL_ORGANIZER_ID} .codex-skill-favorite[aria-pressed="true"] { color: #d89400; background: #fff5d5; }
+      #${SKILL_ORGANIZER_ID} .codex-skill-empty { grid-column: 1 / -1; padding: 30px; text-align: center; color: color-mix(in srgb, currentColor 58%, transparent); }
       .${DETAILS_CLASS} .codex-conversation-preview-text {
         display: -webkit-box;
         min-width: 0;
@@ -1499,6 +1738,9 @@
     const titleHost = row.querySelector("[data-thread-title-trigger=\"true\"]");
     if (!titleHost) return;
     row.setAttribute("data-codex-conversation-preview-enhanced", "true");
+    const threadId = normalizedThreadId(row.getAttribute("data-app-action-sidebar-thread-id"));
+    if (activeProjectThreadIds.has(threadId)) row.setAttribute("data-codex-project-running", "true");
+    else row.removeAttribute("data-codex-project-running");
     if (preview && !preview.catalogOnly && preview.updatedAt) {
       row.setAttribute("data-codex-conversation-preview-loaded", "true");
     } else {
@@ -1607,6 +1849,7 @@
   }
 
   function shortcutItemKey(item) {
+    if (item?.kind === "enhancement") return `enhancement:${item.id}`;
     return item?.custom ? `custom:${item.id}` : `native:${item?.name || ""}`;
   }
 
@@ -1641,6 +1884,7 @@
 
   function persistShortcutSettings() {
     shortcutSettings = {
+      schemaVersion: 4,
       hidden: Array.from(new Set(shortcutSettings.hidden.filter((value) => typeof value === "string"))),
       custom: normalizedCustomShortcuts(),
     };
@@ -1760,6 +2004,474 @@
     document.documentElement.removeAttribute("data-codex-custom-shortcut-open");
     if (restoreFocus) customShortcutLastFocusedElement?.focus?.();
     customShortcutLastFocusedElement = null;
+  }
+
+  function currentCodexTaskContext() {
+    const active = document.querySelector('[data-app-action-sidebar-thread-active="true"], [data-app-action-sidebar-thread-selected="true"], [data-app-action-sidebar-thread-row][aria-current="page"]');
+    return {
+      threadId: normalizedThreadId(active?.getAttribute("data-app-action-sidebar-thread-id") || ""),
+      threadTitle: active?.getAttribute("data-app-action-sidebar-thread-title") || "",
+    };
+  }
+
+  function notifyAssetConsole(action) {
+    const binding = globalThis.codexSidebarOpenAssetConsole;
+    if (typeof binding !== "function") return false;
+    try {
+      binding(JSON.stringify({ action, ...currentCodexTaskContext() }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function createAssetConsolePage() {
+    const page = document.createElement("section");
+    page.id = ASSET_CONSOLE_PAGE_ID;
+    page.hidden = true;
+    page.setAttribute("role", "dialog");
+    page.setAttribute("aria-label", "资产控制台");
+    page.innerHTML = `
+      <header class="codex-asset-console-header">
+        <span class="codex-asset-console-title">资产控制台</span>
+        <span class="codex-asset-console-local">本机直连</span>
+        <span class="codex-asset-console-spacer"></span>
+        <button type="button" class="codex-asset-console-close" aria-label="关闭资产控制台">×</button>
+      </header>
+      <div class="codex-asset-console-body">
+        <div class="codex-asset-console-state" role="status">
+          <span class="codex-asset-console-message">正在连接本机资产库…</span>
+          <button type="button" class="codex-asset-console-retry">重新连接</button>
+        </div>
+      </div>`;
+    page.querySelector(".codex-asset-console-close").onclick = () => closeAssetConsolePanel();
+    page.querySelector(".codex-asset-console-retry").onclick = () => {
+      page.dataset.state = "loading";
+      page.querySelector(".codex-asset-console-message").textContent = "正在连接本机资产库…";
+      notifyAssetConsole("open");
+    };
+    return page;
+  }
+
+  function openAssetConsolePanel() {
+    closeCustomShortcutPanel(false);
+    const mount = findCustomShortcutPageMount();
+    if (!mount) return false;
+    if (!assetConsolePage) assetConsolePage = createAssetConsolePage();
+    assetConsoleReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (assetConsolePage.parentElement !== mount.surface) {
+      restoreCustomShortcutNativeContent();
+      mount.surface.appendChild(assetConsolePage);
+    }
+    mount.surface.setAttribute(CUSTOM_SHORTCUT_HOST_ATTRIBUTE, "true");
+    Array.from(mount.surface.children).forEach((child) => {
+      if (child !== assetConsolePage) child.setAttribute(CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE, "true");
+    });
+    assetConsolePage.hidden = false;
+    assetConsolePage.dataset.state = "loading";
+    assetConsolePage.querySelector(".codex-asset-console-message").textContent = assetConsole.available
+      ? "正在连接本机资产库…"
+      : "资产控制台服务正在准备，请稍后重试";
+    document.documentElement.setAttribute("data-codex-asset-console-open", "true");
+    if (!notifyAssetConsole("open")) {
+      assetConsolePage.dataset.state = "error";
+      assetConsolePage.querySelector(".codex-asset-console-message").textContent = "本机连接尚未就绪";
+    }
+    scheduleSync();
+    return true;
+  }
+
+  function closeAssetConsolePanel({ notify = true, restoreFocus = true } = {}) {
+    if (assetConsolePage) assetConsolePage.hidden = true;
+    assetConsoleFrame?.remove();
+    assetConsoleFrame = null;
+    restoreCustomShortcutNativeContent();
+    document.documentElement.removeAttribute("data-codex-asset-console-open");
+    if (notify) notifyAssetConsole("close");
+    if (restoreFocus) assetConsoleReturnFocus?.focus?.();
+    assetConsoleReturnFocus = null;
+    scheduleSync();
+  }
+
+  function setAssetConsolePanel(value) {
+    const state = value && typeof value === "object" ? value : {};
+    if (!assetConsolePage || assetConsolePage.hidden) return;
+    if (state.state !== "ready" || typeof state.url !== "string" || !state.url) {
+      assetConsoleFrame?.remove();
+      assetConsoleFrame = null;
+      assetConsolePage.dataset.state = "error";
+      assetConsolePage.querySelector(".codex-asset-console-message").textContent = state.message || "资产控制台暂时无法加载";
+      return;
+    }
+    const body = assetConsolePage.querySelector(".codex-asset-console-body");
+    assetConsoleFrame?.remove();
+    const frame = document.createElement("iframe");
+    frame.id = ASSET_CONSOLE_FRAME_ID;
+    frame.title = "资产控制台";
+    frame.src = state.url;
+    frame.setAttribute("allow", "clipboard-read; clipboard-write; autoplay");
+    frame.onload = () => { if (assetConsolePage) assetConsolePage.dataset.state = "ready"; };
+    assetConsoleFrame = frame;
+    body.appendChild(frame);
+    assetConsolePage.dataset.state = "ready";
+  }
+
+  function currentComposer() {
+    return Array.from(document.querySelectorAll('[contenteditable="true"]')).find((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 80 && rect.height > 20 && !node.closest(`#${ASSET_CONSOLE_PAGE_ID}`);
+    }) || null;
+  }
+
+  function addAssetReferencesToComposer(assetPaths) {
+    const composer = currentComposer();
+    if (!composer || !assetPaths?.length) return false;
+    const text = `${composer.textContent?.trim() ? "\n" : ""}${assetPaths.map((assetPath) => `参考资产：${assetPath}`).join("\n")}`;
+    composer.focus();
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(composer);
+    range.collapse(false);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    let inserted = false;
+    try { inserted = document.execCommand("insertText", false, text); } catch {}
+    if (!inserted) {
+      range.insertNode(document.createTextNode(text));
+      range.collapse(false);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }
+    composer.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    return true;
+  }
+
+  function isAbsoluteAssetPath(value) {
+    const assetPath = typeof value === "string" ? value.trim() : "";
+    return assetPath.startsWith("/")
+      || /^[A-Za-z]:[\\/][^\0\r\n]*$/.test(assetPath)
+      || /^[\\/]{2}[^\\/\0\r\n]+[\\/][^\\/\0\r\n]+(?:[\\/][^\0\r\n]*)?$/.test(assetPath);
+  }
+
+  function handleAssetConsoleMessage(event) {
+    if (event.origin !== "https://web-sandbox.oaiusercontent.com" || event.source !== assetConsoleFrame?.contentWindow) return;
+    const message = event.data;
+    if (!message || message.source !== "asset-console") return;
+    if (message.action === "return-to-codex") {
+      closeAssetConsolePanel();
+      requestAnimationFrame(() => currentComposer()?.focus());
+      return;
+    }
+    const single = message.action === "use-in-codex";
+    const multiple = message.action === "use-many-in-codex";
+    if (!single && !multiple) return;
+    const assetPaths = single
+      ? [typeof message.path === "string" ? message.path.trim() : ""]
+      : Array.isArray(message.paths) ? message.paths.map((assetPath) => typeof assetPath === "string" ? assetPath.trim() : "") : [];
+    const valid = assetPaths.length > 0
+      && assetPaths.length <= 8
+      && assetPaths.every((assetPath) => assetPath.length < 4096 && isAbsoluteAssetPath(assetPath));
+    const added = valid && addAssetReferencesToComposer(assetPaths);
+    try {
+      assetConsoleFrame.contentWindow.postMessage({
+        source: "codex-sidebar-enhancer",
+        action: added ? (multiple ? "assets-added" : "asset-added") : "asset-add-failed",
+        count: added ? assetPaths.length : 0,
+      }, event.origin);
+    } catch {}
+  }
+
+  const SKILL_FILTERS = ["常用", "视频创作", "导演镜头", "画面风格", "资产工作台", "写作研究", "工具管理", "全部"];
+
+  function loadSkillFavorites(catalog) {
+    if (skillOrganizerFavorites) return skillOrganizerFavorites;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(SKILL_FAVORITES_KEY) || "null");
+      if (Array.isArray(parsed)) return (skillOrganizerFavorites = new Set(parsed.filter((name) => typeof name === "string")));
+    } catch {}
+    const preferred = catalog.filter((entry) => /视频|导演|镜头|资产|工作台|提示词|知识|写作|skill/i.test(`${entry.title} ${entry.description}`));
+    skillOrganizerFavorites = new Set((preferred.length ? preferred : catalog).slice(0, 10).map((entry) => entry.title));
+    try { localStorage.setItem(SKILL_FAVORITES_KEY, JSON.stringify([...skillOrganizerFavorites])); } catch {}
+    return skillOrganizerFavorites;
+  }
+
+  function skillEntryFromCard(card) {
+    const titleNode = card.querySelector(".font-medium")
+      || Array.from(card.querySelectorAll("div")).find((node) => node.classList.contains("truncate"));
+    const title = titleNode?.textContent?.trim() || "";
+    if (!title) return null;
+    const descriptionNode = card.querySelector(".text-token-text-secondary.text-sm")
+      || Array.from(card.querySelectorAll("div")).find((node) => node !== titleNode && node.classList.contains("line-clamp-1"));
+    return { title, description: descriptionNode?.textContent?.trim() || "打开查看 Skill 详情", card };
+  }
+
+  function skillMatchesCategory(entry, category) {
+    const text = `${entry.title} ${entry.description}`;
+    if (category === "全部") return true;
+    if (category === "常用") return skillOrganizerFavorites?.has(entry.title) === true;
+    if (category === "视频创作") return /视频|影像|seedance|即梦|minimax|剪辑|节奏|音乐|音效|mv|生成/i.test(text);
+    if (category === "导演镜头") return /导演|镜头|分镜|动作|摄影|表演|角色|转场|vfx|特效/i.test(text);
+    if (category === "画面风格") return /风格|美学|视觉|画面|图像|灯光|材质|构图|色彩|写实/i.test(text);
+    if (category === "资产工作台") return /资产|素材|工作台|归档|账本|管线|codex|知识卡|下载|清理/i.test(text);
+    if (category === "写作研究") return /写作|研究|知识|文章|公众号|小红书|脚本|语义|阅读|剧本/i.test(text);
+    return /工具|管理|浏览器|网页|数据|表格|文档|安装|审计|测试|调试|skill|codex|plugin/i.test(text);
+  }
+
+  function clearSkillOrganizer() {
+    skillOrganizerRenderGeneration += 1;
+    if (skillOrganizerRenderFrame !== null) cancelAnimationFrame(skillOrganizerRenderFrame);
+    skillOrganizerRenderFrame = null;
+    document.getElementById(SKILL_ORGANIZER_ID)?.remove();
+    document.querySelectorAll(`[${SKILL_NATIVE_SECTION_ATTR}]`).forEach((node) => node.removeAttribute(SKILL_NATIVE_SECTION_ATTR));
+    skillOrganizerSource = null;
+    skillOrganizerCatalog = [];
+    skillOrganizerCatalogSignature = "";
+    skillOrganizerFilter = "常用";
+    skillOrganizerQuery = "";
+    skillOrganizerNativeVisible = false;
+  }
+
+  function syncSkillOrganizerFilterSelection(shell, selected = skillOrganizerFilter) {
+    shell?.querySelectorAll("[data-codex-skill-filter]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.codexSkillFilter === selected));
+    });
+  }
+
+  function scheduleSkillOrganizerRender() {
+    const generation = ++skillOrganizerRenderGeneration;
+    if (skillOrganizerRenderFrame !== null) cancelAnimationFrame(skillOrganizerRenderFrame);
+    skillOrganizerRenderFrame = requestAnimationFrame(() => {
+      skillOrganizerRenderFrame = requestAnimationFrame(() => {
+        skillOrganizerRenderFrame = null;
+        if (generation !== skillOrganizerRenderGeneration) return;
+        renderSkillOrganizer();
+      });
+    });
+  }
+
+  function selectSkillOrganizerFilter(label) {
+    if (!SKILL_FILTERS.includes(label) || skillOrganizerFilter === label) return;
+    skillOrganizerFilter = label;
+    const shell = document.getElementById(SKILL_ORGANIZER_ID);
+    if (!shell) return;
+    syncSkillOrganizerFilterSelection(shell, label);
+    shell.setAttribute("aria-busy", "true");
+    scheduleSkillOrganizerRender();
+  }
+
+  function renderSkillOrganizer() {
+    const shell = document.getElementById(SKILL_ORGANIZER_ID);
+    if (!shell || !skillOrganizerSource?.isConnected) return;
+    loadSkillFavorites(skillOrganizerCatalog);
+    skillOrganizerSource.setAttribute(SKILL_NATIVE_SECTION_ATTR, skillOrganizerNativeVisible ? "visible" : "hidden");
+    shell.querySelector(".codex-skill-native-toggle").textContent = skillOrganizerNativeVisible ? "返回分组" : "完整列表";
+    const filters = shell.querySelector(".codex-skill-filter-list");
+    if (!filters.childElementCount) {
+      filters.append(...SKILL_FILTERS.map((label) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "codex-skill-filter";
+        button.dataset.codexSkillFilter = label;
+        button.textContent = label;
+        button.onpointerdown = (event) => {
+          if (event.button === 0) selectSkillOrganizerFilter(label);
+        };
+        button.onclick = () => selectSkillOrganizerFilter(label);
+        return button;
+      }));
+    }
+    syncSkillOrganizerFilterSelection(shell);
+    const terms = skillOrganizerQuery.toLocaleLowerCase("zh-CN").split(/\s+/).filter(Boolean);
+    const visible = skillOrganizerCatalog.filter((entry) => {
+      const text = `${entry.title} ${entry.description}`.toLocaleLowerCase("zh-CN");
+      return terms.every((term) => text.includes(term)) && skillMatchesCategory(entry, skillOrganizerFilter);
+    });
+    shell.querySelector(".codex-skill-result-count").textContent = `${visible.length} / ${skillOrganizerCatalog.length}`;
+    const grid = shell.querySelector(".codex-skill-grid");
+    if (!visible.length) {
+      const empty = document.createElement("div");
+      empty.className = "codex-skill-empty";
+      empty.textContent = "没有找到匹配的 Skill";
+      grid.replaceChildren(empty);
+      shell.removeAttribute("aria-busy");
+      return;
+    }
+    grid.replaceChildren(...visible.map((entry) => {
+      const row = document.createElement("div");
+      row.className = "codex-skill-row";
+      row.setAttribute("role", "button");
+      row.tabIndex = 0;
+      const copy = document.createElement("span");
+      copy.innerHTML = '<span class="codex-skill-name"></span><span class="codex-skill-description"></span>';
+      copy.querySelector(".codex-skill-name").textContent = entry.title;
+      copy.querySelector(".codex-skill-description").textContent = entry.description;
+      const favorite = document.createElement("button");
+      favorite.type = "button";
+      favorite.className = "codex-skill-favorite";
+      favorite.setAttribute("aria-pressed", String(skillOrganizerFavorites.has(entry.title)));
+      favorite.setAttribute("aria-label", `${skillOrganizerFavorites.has(entry.title) ? "取消常用" : "加入常用"}：${entry.title}`);
+      favorite.textContent = "★";
+      favorite.onclick = (event) => {
+        event.stopPropagation();
+        if (skillOrganizerFavorites.has(entry.title)) skillOrganizerFavorites.delete(entry.title);
+        else skillOrganizerFavorites.add(entry.title);
+        try { localStorage.setItem(SKILL_FAVORITES_KEY, JSON.stringify([...skillOrganizerFavorites])); } catch {}
+        renderSkillOrganizer();
+      };
+      const open = () => entry.card?.isConnected && entry.card.click();
+      row.onclick = open;
+      row.onkeydown = (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } };
+      row.append(copy, favorite);
+      return row;
+    }));
+    shell.removeAttribute("aria-busy");
+  }
+
+  function ensureSkillOrganizer() {
+    const section = document.querySelector("section#skills-installed");
+    if (!section) {
+      if (skillOrganizerSource) clearSkillOrganizer();
+      return;
+    }
+    skillOrganizerSource = section;
+    const expand = Array.from(section.querySelectorAll('button[aria-expanded="false"]')).find((button) => /另有|查看|展开/.test(button.textContent || ""));
+    if (expand) { expand.click(); return; }
+    const catalog = Array.from(section.querySelectorAll('div[role="button"][tabindex="0"]'))
+      .map(skillEntryFromCard)
+      .filter(Boolean)
+      .sort((a, b) => a.title.localeCompare(b.title, "zh-CN"));
+    if (!catalog.length) return;
+    const catalogSignature = catalog.map((entry) => `${entry.title}\u0000${entry.description}`).join("\u0001");
+    const catalogChanged = catalogSignature !== skillOrganizerCatalogSignature;
+    if (catalogChanged) {
+      skillOrganizerCatalog = catalog;
+      skillOrganizerCatalogSignature = catalogSignature;
+    } else {
+      const currentCards = new Map(catalog.map((entry) => [entry.title, entry.card]));
+      skillOrganizerCatalog.forEach((entry) => { entry.card = currentCards.get(entry.title) || entry.card; });
+    }
+    let shell = document.getElementById(SKILL_ORGANIZER_ID);
+    let shellCreated = false;
+    if (!shell || shell.nextElementSibling !== section) {
+      shell?.remove();
+      shell = document.createElement("section");
+      shellCreated = true;
+      shell.id = SKILL_ORGANIZER_ID;
+      shell.innerHTML = `
+        <div class="codex-skill-organizer-head"><div><h2>Skills 分组</h2><p>按工作环节整理已安装 Skill，并保留原生详情。</p></div><button type="button" class="codex-skill-native-toggle">完整列表</button></div>
+        <label class="codex-skill-search"><input type="search" placeholder="搜索名称或用途" aria-label="搜索已安装 Skill"></label>
+        <div class="codex-skill-filter-list" role="group" aria-label="Skills 分组"></div>
+        <div class="codex-skill-result-head"><strong>已安装 Skills</strong><span class="codex-skill-result-count"></span></div>
+        <div class="codex-skill-grid"></div>`;
+      shell.querySelector("input").oninput = (event) => { skillOrganizerQuery = event.target.value.trim(); renderSkillOrganizer(); };
+      shell.querySelector(".codex-skill-native-toggle").onclick = () => { skillOrganizerNativeVisible = !skillOrganizerNativeVisible; renderSkillOrganizer(); };
+      section.parentElement?.insertBefore(shell, section);
+    }
+    if (shellCreated || catalogChanged) renderSkillOrganizer();
+    finishSkillsGroupingOpen();
+  }
+
+  function updateSkillsGroupingShortcutState() {
+    const button = Array.from(document.querySelectorAll("[data-codex-sidebar-shortcut-card]"))
+      .find((candidate) => candidate.dataset.codexSidebarShortcutName === "Skills 分组");
+    if (!button) return;
+    const active = skillOrganizerOpening || Boolean(document.getElementById(SKILL_ORGANIZER_ID));
+    button.dataset.active = String(active);
+    button.setAttribute("aria-current", String(active));
+    const label = button.querySelector(`.${SHORTCUT_LABEL_CLASS}`);
+    if (skillOrganizerOpening) {
+      button.setAttribute("aria-busy", "true");
+      button.setAttribute("aria-label", "正在打开 Skills 分组");
+      if (label) label.textContent = "正在打开…";
+    } else {
+      button.removeAttribute("aria-busy");
+      button.setAttribute("aria-label", "打开Skills 分组");
+      if (label) label.textContent = "Skills 分组";
+    }
+  }
+
+  function finishSkillsGroupingOpen() {
+    skillOrganizerOpening = false;
+    skillOrganizerOpenObserver?.disconnect();
+    skillOrganizerOpenObserver = null;
+    if (skillOrganizerOpenTimer !== null) clearTimeout(skillOrganizerOpenTimer);
+    skillOrganizerOpenTimer = null;
+    try { localStorage.removeItem(SKILL_OPEN_REQUEST_STORAGE_KEY); } catch {}
+    updateSkillsGroupingShortcutState();
+  }
+
+  function openSkillsGrouping() {
+    closeAssetConsolePanel({ notify: true, restoreFocus: false });
+    try {
+      const requestedAt = Number(localStorage.getItem(SKILL_OPEN_REQUEST_STORAGE_KEY));
+      if (!Number.isFinite(requestedAt) || Date.now() - requestedAt > SKILL_OPEN_REQUEST_TTL_MS) {
+        localStorage.setItem(SKILL_OPEN_REQUEST_STORAGE_KEY, String(Date.now()));
+      }
+    } catch {}
+    const generation = ++skillOrganizerOpenGeneration;
+    skillOrganizerOpening = true;
+    updateSkillsGroupingShortcutState();
+    const startedAt = Date.now();
+    let lastClickedPlugins = null;
+    let lastPluginsClickAt = 0;
+    let lastClickedSkills = null;
+    let lastSkillsClickAt = 0;
+    const activateSkills = () => {
+      if (generation !== skillOrganizerOpenGeneration) return true;
+      if (document.getElementById(SKILL_ORGANIZER_ID)) {
+        finishSkillsGroupingOpen();
+        return true;
+      }
+      const tabs = Array.from(document.querySelectorAll('button[aria-pressed]')).filter((button) =>
+        !button.closest(`#${SHORTCUT_GRID_ID}`) && button.getClientRects().length > 0,
+      );
+      const skills = tabs.find((button) => button.textContent?.trim() === "技能");
+      if (!skills) {
+        const currentPlugins = findNativeShortcutButton("插件");
+        if (currentPlugins
+          && (currentPlugins !== lastClickedPlugins || Date.now() - lastPluginsClickAt >= 160)) {
+          currentPlugins.click();
+          lastClickedPlugins = currentPlugins;
+          lastPluginsClickAt = Date.now();
+        }
+        return false;
+      }
+      if (skills.getAttribute("aria-pressed") !== "true"
+        && (skills !== lastClickedSkills || Date.now() - lastSkillsClickAt >= 160)) {
+        skills.click();
+        lastClickedSkills = skills;
+        lastSkillsClickAt = Date.now();
+      }
+      scheduleSync();
+      return skills.getAttribute("aria-pressed") === "true";
+    };
+    activateSkills();
+    skillOrganizerOpenObserver?.disconnect();
+    skillOrganizerOpenObserver = new MutationObserver(activateSkills);
+    skillOrganizerOpenObserver.observe(document.documentElement, { childList: true, subtree: true });
+    const retryActivation = () => {
+      if (generation !== skillOrganizerOpenGeneration || document.getElementById(SKILL_ORGANIZER_ID)) return;
+      activateSkills();
+      if (Date.now() - startedAt < 12_000) {
+        skillOrganizerOpenTimer = setTimeout(retryActivation, 40);
+      } else {
+        finishSkillsGroupingOpen();
+      }
+    };
+    if (skillOrganizerOpenTimer !== null) clearTimeout(skillOrganizerOpenTimer);
+    skillOrganizerOpenTimer = setTimeout(retryActivation, 0);
+  }
+
+  function resumeSkillsGroupingOpenRequest() {
+    if (skillOrganizerOpening || document.getElementById(SKILL_ORGANIZER_ID)) return;
+    let requestedAt = 0;
+    try { requestedAt = Number(localStorage.getItem(SKILL_OPEN_REQUEST_STORAGE_KEY)); } catch {}
+    if (!Number.isFinite(requestedAt) || requestedAt <= 0) return;
+    if (Date.now() - requestedAt > SKILL_OPEN_REQUEST_TTL_MS) {
+      try { localStorage.removeItem(SKILL_OPEN_REQUEST_STORAGE_KEY); } catch {}
+      return;
+    }
+    openSkillsGrouping();
   }
 
   function iconChoiceButton(icon, selected = false) {
@@ -1923,7 +2635,11 @@
       ...navigationButtons.map((button) => ({ name: shortcutLabel(button), button, quickButton: null })),
     ].filter((item, index, values) => item.name && values.findIndex((candidate) => candidate.name === item.name) === index);
     const builtInItems = sourceItems.filter((item) => !HIDDEN_SHORTCUT_NAMES.has(item.name));
-    const catalogItems = [...builtInItems, ...normalizedCustomShortcuts()];
+    const enhancementItems = [
+      { id: "skills-grouping", name: "Skills 分组", kind: "enhancement", icon: "skills", activate: openSkillsGrouping },
+      { id: "asset-console", name: "资产控制台", kind: "enhancement", icon: "assets", activate: openAssetConsolePanel },
+    ];
+    const catalogItems = [...builtInItems, ...enhancementItems, ...normalizedCustomShortcuts()];
     const items = catalogItems.filter((item) => !shortcutSettings.hidden.includes(shortcutItemKey(item)));
     return { header, newConversationRow, navigationGroup, sourceItems, catalogItems, items };
   }
@@ -1964,9 +2680,10 @@
     button.append(shortcutIcon(item.button, SHORTCUT_ICON_CLASS, item.name, item.icon), label);
     button.onclick = () => {
       if (item.kind === "settings") openShortcutSettings();
+      else if (item.kind === "enhancement") item.activate?.();
       else if (item.custom && item.openMode === "browser") openCustomShortcutInBrowser(item);
       else if (item.custom) openCustomShortcutPanel(item);
-      else item.button?.click();
+      else findNativeShortcutButton(item.name)?.click();
     };
     wrap.appendChild(button);
 
@@ -1981,7 +2698,8 @@
       quick.onclick = (event) => {
         event.preventDefault();
         event.stopPropagation();
-        item.quickButton.click();
+        nativeShortcutSources()?.sourceItems
+          .find((candidate) => candidate.name === item.name)?.quickButton?.click();
       };
       wrap.appendChild(quick);
     }
@@ -1996,11 +2714,19 @@
     if (!button) return;
     if (!item.button) {
       button.disabled = false;
-      button.dataset.active = "false";
-      button.setAttribute("aria-current", "false");
+      const active = item.id === "asset-console"
+        ? Boolean(assetConsolePage && !assetConsolePage.hidden)
+        : item.id === "skills-grouping"
+          ? skillOrganizerOpening || Boolean(document.getElementById(SKILL_ORGANIZER_ID))
+          : false;
+      button.dataset.active = String(active);
+      button.setAttribute("aria-current", String(active));
+      if (item.id === "skills-grouping" && skillOrganizerOpening) button.setAttribute("aria-busy", "true");
+      else button.removeAttribute("aria-busy");
       button.setAttribute("aria-label", item.kind === "settings" ? "管理快捷入口" : `打开${item.name}`);
       button.closest("[data-codex-sidebar-shortcut-card-wrap]")
         ?.querySelector(".codex-sidebar-shortcut-status")?.remove();
+      if (item.id === "skills-grouping") updateSkillsGroupingShortcutState();
       return;
     }
     button.disabled = item.button.disabled;
@@ -2040,7 +2766,10 @@
 
   function ensureShortcutGrid() {
     const sources = nativeShortcutSources();
-    if (!sources || sources.items.length < 2) return;
+    if (!sources || sources.items.length < 2) {
+      if (document.getElementById(SHORTCUT_GRID_ID)) clearShortcutEnhancement();
+      return;
+    }
     let grid = document.getElementById(SHORTCUT_GRID_ID);
     const needsRebuild = grid?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN
       || grid?.parentElement !== sources.header
@@ -2115,6 +2844,10 @@
     return name === "置顶" ? "pinned" : name === "项目" ? "projects" : name === "最近" ? "recent" : "interrupted";
   }
 
+  function sectionPanelId(name) {
+    return name === "中断" ? INTERRUPTED_PANEL_ID : `codex-sidebar-section-panel-${sectionIdPart(name)}`;
+  }
+
   function setNativeSectionExpanded(item, desired) {
     const expanded = item.button.getAttribute("aria-expanded") === "true";
     if (expanded === desired) {
@@ -2138,7 +2871,7 @@
       if (tab) tab.tabIndex = selected ? 0 : -1;
       item.panelHost.hidden = !selected;
       item.section.hidden = !selected;
-      item.section.id = `codex-sidebar-section-panel-${part}`;
+      item.section.id = sectionPanelId(item.name);
       item.section.setAttribute("role", "tabpanel");
       item.section.setAttribute("aria-labelledby", `codex-sidebar-section-tab-${part}`);
       item.section.dataset.codexSidebarSectionPanel = item.name;
@@ -2190,7 +2923,7 @@
       tab.type = "button";
       tab.id = `codex-sidebar-section-tab-${part}`;
       tab.setAttribute("role", "tab");
-      tab.setAttribute("aria-controls", `codex-sidebar-section-panel-${part}`);
+      tab.setAttribute("aria-controls", sectionPanelId(name));
       tab.dataset.codexSidebarSectionTab = name;
       tab.textContent = name;
       tab.onclick = () => selectSectionTab(name);
@@ -2221,7 +2954,9 @@
     clearFolderEnhancement();
     restoreProjectActions();
     document.getElementById(RECENT_LIST_ID)?.remove();
-    document.getElementById(INTERRUPTED_PANEL_ID)?.remove();
+    document.querySelectorAll(`#${INTERRUPTED_PANEL_ID}, [data-codex-sidebar-section-panel="中断"]`).forEach((panel) => {
+      panel.remove();
+    });
     document.querySelectorAll('[data-codex-sidebar-recent-native-hidden="true"]').forEach((node) => {
       node.removeAttribute("data-codex-sidebar-recent-native-hidden");
     });
@@ -2241,11 +2976,23 @@
     }
     sectionSources = new Map();
     sectionTogglePending = new Map();
+    sectionSourcesMissingSince = 0;
   }
 
   function ensureSectionTabs() {
     const sources = nativeSectionSources();
-    if (!sources) return;
+    if (!sources) {
+      if (document.getElementById(SECTION_TABS_ID)) {
+        sectionSourcesMissingSince ||= Date.now();
+        if (Date.now() - sectionSourcesMissingSince < NATIVE_ANCHOR_GRACE_MS) {
+          scheduleAnchorRetry();
+          return;
+        }
+        clearSectionEnhancement();
+      }
+      return;
+    }
+    sectionSourcesMissingSince = 0;
     if (!activeSectionTab) {
       activeSectionTab = sources.items.find((item) => item.button.getAttribute("aria-expanded") === "true")?.name || "项目";
     }
@@ -2292,7 +3039,9 @@
     const recent = sectionSources.get("最近");
     const container = recent?.heading?.parentElement;
     if (!recent?.section?.isConnected || !container) return;
-    const entries = recentCatalog.slice(0, RECENT_VISIBLE_LIMIT);
+    const entries = recentCatalog
+      .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId)))
+      .slice(0, RECENT_VISIBLE_LIMIT);
     let list = document.getElementById(RECENT_LIST_ID);
     if (!entries.length) {
       list?.remove();
@@ -2337,7 +3086,9 @@
       list.className = "flex flex-col";
       panel.appendChild(list);
     }
-    const entries = interruptedCatalog.slice(0, RECENT_VISIBLE_LIMIT);
+    const entries = interruptedCatalog
+      .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId)))
+      .slice(0, RECENT_VISIBLE_LIMIT);
     const signature = entries.map((entry) => `${entry.threadId}:${entry.updatedAt || ""}:${entry.interruptionKind || ""}`).join("\n");
     if (list.dataset.signature === signature) return;
     list.dataset.signature = signature;
@@ -2432,9 +3183,13 @@
         ),
       );
       const threadTitles = Array.from(folder.querySelectorAll(ROW_SELECTOR))
+        .filter((thread) => !pinnedThreadIds.has(normalizedThreadId(
+          thread.getAttribute("data-app-action-sidebar-thread-id"),
+        )))
         .map((thread) => thread.getAttribute("data-app-action-sidebar-thread-title") || "")
         .filter(Boolean);
-      const catalogEntries = searchCatalogByProject.get(id) || [];
+      const catalogEntries = (searchCatalogByProject.get(id) || [])
+        .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId)));
       const catalogTitles = catalogEntries.map((entry) => entry.title);
       const catalogLastUsed = catalogEntries.reduce((latest, entry) => {
         const time = Date.parse(entry.updatedAt || "");
@@ -2510,6 +3265,7 @@
 
   function allProjectEntries() {
     return searchCatalog
+      .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId)))
       .map((entry, sourceIndex) => ({
         ...entry,
         sourceIndex,
@@ -2710,49 +3466,6 @@
     return createCatalogThreadRow(entry, "all");
   }
 
-  function nativeFolderThreadList(item) {
-    const nativeRow = item.folder.querySelector(`${ROW_SELECTOR}:not([data-codex-sidebar-pinned-project-row])`);
-    const nativeItem = nativeRow?.closest('[role="listitem"]');
-    return nativeItem?.parentElement?.getAttribute("role") === "list"
-      ? nativeItem.parentElement
-      : Array.from(item.folder.querySelectorAll('[role="list"]'))
-        .find((list) => !list.hasAttribute("data-codex-sidebar-pinned-project-list")) || null;
-  }
-
-  function ensurePinnedProjectRows(item) {
-    const entries = (item.catalogEntries || [])
-      .filter((entry) => pinnedThreadIds.has(normalizedThreadId(entry.threadId)))
-      .map((entry) => ({
-        ...entry,
-        pinnedAt: pinnedAtForThread(entry.threadId),
-      }))
-      .sort((left, right) => right.pinnedAt - left.pinnedAt
-        || Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
-    let list = item.panelHost.querySelector(":scope > [data-codex-sidebar-pinned-project-list]");
-    if (!entries.length) {
-      list?.remove();
-      return;
-    }
-    const nativeList = nativeFolderThreadList(item);
-    const listHost = item.panelHost;
-    if (!listHost) return;
-    if (!list) {
-      list = document.createElement("div");
-      list.setAttribute("role", "list");
-      list.setAttribute("aria-label", `${item.label}中的置顶项目`);
-      list.dataset.codexSidebarPinnedProjectList = "true";
-      list.className = nativeList.className || "flex flex-col";
-      listHost.insertBefore(list, listHost.firstChild);
-    } else if (list.parentElement !== listHost) {
-      listHost.insertBefore(list, listHost.firstChild);
-    }
-    const signature = entries.map((entry) => `${entry.threadId}:${entry.pinnedAt}:${entry.title}`).join("\n");
-    if (list.dataset.signature !== signature) {
-      list.dataset.signature = signature;
-      list.replaceChildren(...entries.map((entry) => createCatalogThreadRow(entry, "pinned")));
-    }
-  }
-
   function ensureAllProjectsPanel(root, entries) {
     let panel = document.getElementById(ALL_PROJECTS_PANEL_ID);
     if (panel?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN || panel?.parentElement !== root.parentElement) {
@@ -2940,12 +3653,19 @@
       item.folder.id = `codex-sidebar-folder-panel-${item.id}`;
       item.folder.setAttribute("aria-labelledby", `codex-sidebar-folder-tag-${item.id}`);
       item.row.dataset.codexSidebarFolderHeadingHidden = "true";
+      for (const row of item.folder.querySelectorAll(ROW_SELECTOR)) {
+        const pinned = pinnedThreadIds.has(normalizedThreadId(
+          row.getAttribute("data-app-action-sidebar-thread-id"),
+        ));
+        const listItem = row.closest('[role="listitem"]') || row;
+        if (pinned) listItem.dataset.codexSidebarPinnedOutsideHidden = "true";
+        else listItem.removeAttribute("data-codex-sidebar-pinned-outside-hidden");
+      }
       // Request every native folder behind the single visible panel. Non-empty
       // folders mount their threads, while empty folders safely remain closed.
       // This completes recent-use sorting and project-title search even when
       // Codex originally rendered a populated folder in its collapsed state.
       setNativeFolderExpanded(item);
-      ensurePinnedProjectRows(item);
     }
 
     const entries = allProjectEntries();
@@ -2996,7 +3716,9 @@
     restoreFolderActions();
     document.getElementById(FOLDER_SWITCHER_ID)?.remove();
     document.getElementById(ALL_PROJECTS_PANEL_ID)?.remove();
-    document.querySelectorAll("[data-codex-sidebar-pinned-project-list]").forEach((list) => list.remove());
+    document.querySelectorAll('[data-codex-sidebar-pinned-outside-hidden="true"]').forEach((node) => {
+      node.removeAttribute("data-codex-sidebar-pinned-outside-hidden");
+    });
     document.querySelectorAll("[data-codex-sidebar-folder-heading-hidden]").forEach((row) => {
       row.removeAttribute("data-codex-sidebar-folder-heading-hidden");
     });
@@ -3011,13 +3733,25 @@
     }
     folderSources = new Map();
     folderTogglePending = new Map();
+    folderSourcesMissingSince = 0;
   }
 
   function ensureFolderSwitcher() {
     const project = sectionSources.get("项目");
     const sources = nativeFolderSources();
     const host = project?.heading?.parentElement;
-    if (!project || !sources || !host) return;
+    if (!project || !sources || !host) {
+      if (document.getElementById(FOLDER_SWITCHER_ID)) {
+        folderSourcesMissingSince ||= Date.now();
+        if (Date.now() - folderSourcesMissingSince < NATIVE_ANCHOR_GRACE_MS) {
+          scheduleAnchorRetry();
+          return;
+        }
+        clearFolderEnhancement();
+      }
+      return;
+    }
+    folderSourcesMissingSince = 0;
     if (requestCompleteNativeFolderList(sources)) return;
     let root = document.getElementById(FOLDER_SWITCHER_ID);
     const signature = sources.items.map((item) => item.id).join("\n");
@@ -3193,6 +3927,8 @@
   function sync() {
     if (destroyed) return;
     ensureShortcutGrid();
+    ensureSkillOrganizer();
+    resumeSkillsGroupingOpenRequest();
     ensureViewToggle();
     ensureShortcutSettingsButton();
     ensureSectionTabs();
@@ -3287,6 +4023,11 @@
     sync();
   }
 
+  function setActiveProjectThreads(items) {
+    activeProjectThreadIds = new Set((Array.isArray(items) ? items : []).map(normalizedThreadId).filter(Boolean));
+    sync();
+  }
+
   function setUsage(value) {
     usage = value && typeof value === "object" ? value : {
       available: false,
@@ -3298,12 +4039,37 @@
     sync();
   }
 
+  function setAssetConsole(value) {
+    const source = value && typeof value === "object" ? value : {};
+    assetConsole = {
+      available: source.available === true,
+      label: typeof source.label === "string" && source.label.trim() ? source.label.trim() : "资产控制台",
+      mode: source.mode === "embedded" ? "embedded" : "external",
+    };
+    scheduleSync();
+  }
+
+  function handleWorkspaceEnhancementKeydown(event) {
+    if (event.key === "Escape" && assetConsolePage && !assetConsolePage.hidden) {
+      event.preventDefault();
+      closeAssetConsolePanel();
+    }
+  }
+
   function scheduleSync() {
     if (destroyed || syncTimer) return;
     syncTimer = setTimeout(() => {
       syncTimer = null;
       sync();
     }, 80);
+  }
+
+  function scheduleAnchorRetry() {
+    if (destroyed || anchorRetryTimer) return;
+    anchorRetryTimer = setTimeout(() => {
+      anchorRetryTimer = null;
+      scheduleSync();
+    }, NATIVE_ANCHOR_GRACE_MS + 40);
   }
 
   function start() {
@@ -3314,16 +4080,26 @@
     document.addEventListener("pointerover", scheduleSync, true);
     document.addEventListener("pointerdown", handleStatusDocumentPointerDown, true);
     document.addEventListener("click", handlePinDocumentClick, true);
+    document.addEventListener("keydown", handleWorkspaceEnhancementKeydown, true);
+    window.addEventListener("message", handleAssetConsoleMessage);
     sync();
   }
 
   function destroy() {
     destroyed = true;
+    skillOrganizerOpenGeneration += 1;
+    skillOrganizerOpenObserver?.disconnect();
+    skillOrganizerOpenObserver = null;
+    clearTimeout(skillOrganizerOpenTimer);
+    skillOrganizerOpenTimer = null;
     observer?.disconnect();
     clearTimeout(syncTimer);
+    clearTimeout(anchorRetryTimer);
     document.removeEventListener("pointerover", scheduleSync, true);
     document.removeEventListener("pointerdown", handleStatusDocumentPointerDown, true);
     document.removeEventListener("click", handlePinDocumentClick, true);
+    document.removeEventListener("keydown", handleWorkspaceEnhancementKeydown, true);
+    window.removeEventListener("message", handleAssetConsoleMessage);
     closeStatusMenu();
     document.getElementById(STYLE_ID)?.remove();
     document.getElementById(TOGGLE_ID)?.remove();
@@ -3333,6 +4109,11 @@
     document.getElementById(SHORTCUT_SETTINGS_ID)?.remove();
     clearSectionEnhancement();
     closeCustomShortcutPanel(false);
+    closeAssetConsolePanel({ notify: true, restoreFocus: false });
+    assetConsolePage?.remove();
+    assetConsolePage = null;
+    assetConsoleFrame = null;
+    clearSkillOrganizer();
     customShortcutPage?.remove();
     customShortcutPage = null;
     customShortcutFrame = null;
@@ -3341,6 +4122,7 @@
     document.querySelectorAll(`.${STATUS_BUTTON_CLASS}`).forEach((node) => node.remove());
     document.querySelectorAll('[data-codex-conversation-preview-enhanced="true"]').forEach((row) => {
       row.removeAttribute("data-codex-conversation-preview-enhanced");
+      row.removeAttribute("data-codex-project-running");
     });
     document.querySelectorAll('[data-codex-conversation-preview-title="true"]').forEach((node) => {
       node.removeAttribute("data-codex-conversation-preview-title");
@@ -3364,7 +4146,10 @@
     setRecentCatalog,
     setInterruptedCatalog,
     setPinnedThreads,
+    setActiveProjectThreads,
     setUsage,
+    setAssetConsole,
+    setAssetConsolePanel,
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
   else start();

@@ -39,11 +39,37 @@ test("sidebar groups use accessible tabs and preserve native project actions", (
   assert.match(source, /ArrowRight/);
 });
 
-test("public shortcut grid excludes non-public native entries", () => {
-  assert.match(source, /HIDDEN_SHORTCUT_NAMES = new Set\(\["站点", "插件", "项目管理"\]\)/);
+test("public shortcut grid exposes bundled project management but excludes private entries", () => {
+  assert.match(source, /HIDDEN_SHORTCUT_NAMES = new Set\(\)/);
+  assert.match(source, /else findNativeShortcutButton\(item\.name\)\?\.click\(\)/,
+    "native shortcut cards must resolve the current source button after another injector replaces it");
+  assert.match(source, /schemaVersion: 4/);
+  assert.match(source, /hidden\.filter\(\(value\) => !value\.startsWith\("native:"\)\)/);
+  assert.match(source, /savedShortcutSettings\.schemaVersion !== 4[\s\S]*localStorage\.setItem\(SHORTCUT_SETTINGS_STORAGE_KEY/);
   assert.match(source, /button\.dataset\.codexSidebarShortcutUrl = item\.url/);
   assert.doesNotMatch(source, /TV_SHORTCUT_URL|__codexTvHostV1|data-codex-tv-open/);
-  assert.doesNotMatch(source, /setHomeProjects|HOME_PROJECT_SHELF_ID|data-codex-taskboard-open/);
+  assert.doesNotMatch(source, /TV_SHORTCUT_URL|__codexTvHostV1|data-codex-tv-open/);
+});
+
+test("section enhancement fails closed when Codex native anchors are incomplete", () => {
+  assert.match(source, /NATIVE_ANCHOR_GRACE_MS = 1_800/);
+  assert.match(source, /sectionSourcesMissingSince[\s\S]*scheduleAnchorRetry\(\)[\s\S]*clearSectionEnhancement\(\)/);
+  assert.match(source, /folderSourcesMissingSince[\s\S]*scheduleAnchorRetry\(\)[\s\S]*clearFolderEnhancement\(\)/);
+});
+
+test("running Taskboard threads receive a reduced-motion-safe blue border glow", () => {
+  assert.match(source, /data-codex-project-running/);
+  assert.match(source, /codex-running-border-flow/);
+  assert.match(source, /setActiveProjectThreads/);
+  assert.match(source, /prefers-reduced-motion:\s*reduce/);
+});
+
+test("pinned conversations are exclusive to the pinned tab", () => {
+  assert.match(source, /data-codex-sidebar-pinned-outside-hidden/);
+  assert.match(source, /recentCatalog[\s\S]*filter\(\(entry\) => !pinnedThreadIds\.has/);
+  assert.match(source, /interruptedCatalog[\s\S]*filter\(\(entry\) => !pinnedThreadIds\.has/);
+  assert.match(source, /return searchCatalog[\s\S]*filter\(\(entry\) => !pinnedThreadIds\.has/);
+  assert.doesNotMatch(source, /function ensurePinnedProjectRows/);
 });
 
 test("folder create action is bound to the selected folder and restores native markup", () => {

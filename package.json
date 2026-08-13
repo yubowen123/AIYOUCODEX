@@ -1,7 +1,7 @@
 {
   "name": "codex-sidebar-enhancer",
-  "version": "1.0.0",
-  "description": "A local, reversible sidebar enhancement for the Codex desktop experience on macOS and Windows.",
+  "version": "1.2.0",
+  "description": "A local, reversible Codex sidebar enhancement with a bundled project Taskboard for macOS and Windows.",
   "license": "MIT",
   "homepage": "https://github.com/yubowen123/codex-sidebar-enhancer#readme",
   "repository": {
@@ -16,13 +16,16 @@
     "productivity"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.5"
   },
   "type": "module",
   "scripts": {
     "inspect": "node scripts/inspect-sidebar.mjs",
-    "test": "node --test",
+    "test": "node --test test/*.test.mjs",
+    "test:taskboard": "node --test test/vendor-taskboard.test.mjs",
+    "doctor": "node scripts/doctor.mjs",
     "inject": "node scripts/injector.mjs --port 9231 --watch",
+    "runtime": "node scripts/runtime.mjs --port 9231 --watch",
     "verify:install": "node --test test/install-config.test.mjs test/public-install.test.mjs test/windows-public-install.test.mjs"
   },
   "devDependencies": {

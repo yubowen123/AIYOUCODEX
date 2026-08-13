@@ -17,7 +17,10 @@ async function waitFor(client, expression, timeoutMs = 12_000) {
 }
 
 const repository = new PreviewRepository();
-const expectedEntries = (await repository.readRecentCatalog()).slice(0, RECENT_VISIBLE_LIMIT);
+const pinnedThreadIds = new Set(await repository.readPinnedThreadIds());
+const expectedEntries = (await repository.readRecentCatalog())
+  .filter((entry) => !pinnedThreadIds.has(entry.threadId))
+  .slice(0, RECENT_VISIBLE_LIMIT);
 const expectedIds = expectedEntries.map((entry) => entry.threadId);
 assert.ok(expectedIds.length > 1, "Global recent catalog must contain multiple conversations");
 

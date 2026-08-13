@@ -79,12 +79,12 @@ try {
       visibleNames: metrics.map((card) => card.name),
       hiddenSettingKeys: (() => {
         try {
-          return JSON.parse(localStorage.getItem("codex-conversation-preview:shortcut-settings") || "null")?.hidden || ["native:站点", "native:插件"];
+          return JSON.parse(localStorage.getItem("codex-conversation-preview:shortcut-settings") || "null")?.hidden || [];
         } catch {
-          return ["native:站点", "native:插件"];
+          return [];
         }
       })(),
-      hiddenNativeNames: ["站点", "插件", "项目管理"].filter((name) => !metrics.some((card) => card.name === name)),
+      hiddenNativeNames: ["拉取请求", "站点", "已安排", "插件", "项目管理"].filter((name) => !metrics.some((card) => card.name === name)),
       sourcesHidden: Array.from(document.querySelectorAll("[data-codex-sidebar-shortcut-source-hidden], [data-codex-sidebar-shortcut-source-group-hidden]"))
         .every((node) => getComputedStyle(node).display === "none"),
       overflowTop,
@@ -101,12 +101,11 @@ try {
   assert.equal(actual.ariaLabel, "快捷入口");
   assert.equal(actual.columns, 6);
   const canonicalOrder = ["新对话", "拉取请求", "站点", "已安排", "插件", "项目管理"];
-  const expectedVisible = canonicalOrder.filter((name) => !["站点", "插件", "项目管理"].includes(name)
-    && !actual.hiddenSettingKeys.includes(`native:${name}`));
+  const expectedVisible = canonicalOrder.filter((name) => !actual.hiddenSettingKeys.includes(`native:${name}`));
   assert.ok(actual.sourceNames.length >= 5, "at least the five stable native shortcuts must be available");
   assert.deepEqual(actual.sourceNames, canonicalOrder.filter((name) => actual.sourceNames.includes(name)));
   assert.deepEqual(actual.visibleNames, expectedVisible);
-  assert.deepEqual(actual.hiddenNativeNames, ["站点", "插件", "项目管理"]);
+  assert.deepEqual(actual.hiddenNativeNames, []);
   assert.ok(Math.max(...actual.cards.map((card) => card.top)) - Math.min(...actual.cards.map((card) => card.top)) <= 1,
     "shortcut cards must remain visually aligned within one device pixel");
   assert.equal(new Set(actual.cards.map((card) => card.width)).size, 1);

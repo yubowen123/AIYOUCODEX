@@ -21,12 +21,24 @@ if ($fullInstallDir -eq $root -or $fullInstallDir -eq [IO.Path]::GetFullPath($lo
   throw "Unsafe install directory: $fullInstallDir"
 }
 
-$injectorPath = Join-Path $fullInstallDir "scripts\injector.mjs"
+$injectorPath = Join-Path $fullInstallDir "scripts\runtime.mjs"
+$legacyMarker = Join-Path $fullInstallDir ".legacy-taskboard-disabled.json"
 try {
   Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($injectorPath, [StringComparison]::OrdinalIgnoreCase) -ge 0 } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 } catch {}
+
+if (Test-Path -LiteralPath $legacyMarker -PathType Leaf) {
+  try {
+    $entries = @(Get-Content -LiteralPath $legacyMarker -Raw | ConvertFrom-Json)
+    foreach ($entry in $entries) {
+      if ($entry.original -and $entry.disabled -and (Test-Path -LiteralPath $entry.disabled -PathType Leaf)) {
+        Move-Item -LiteralPath $entry.disabled -Destination $entry.original -Force
+      }
+    }
+  } catch {}
+}
 
 $targets = @(
   (Join-Path $startupDir "Codex Sidebar Enhancer.lnk"),

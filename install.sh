@@ -47,7 +47,10 @@ fi
 [[ -x "${NODE_PATH}" ]] || fail "Node.js 22+ was not found; install Node.js or the Codex desktop app first"
 
 NODE_MAJOR="$(${NODE_PATH} -p 'Number(process.versions.node.split(".")[0])')"
-[[ "${NODE_MAJOR}" -ge 22 ]] || fail "Node.js 22 or newer is required"
+NODE_MINOR="$(${NODE_PATH} -p 'Number(process.versions.node.split(".")[1])')"
+if [[ "${NODE_MAJOR}" -lt 22 || ( "${NODE_MAJOR}" -eq 22 && "${NODE_MINOR}" -lt 5 ) ]]; then
+  fail "Node.js 22.5 or newer is required"
+fi
 
 if [[ -z "${SOURCE_DIR}" ]]; then
   TEMP_DIR="$(mktemp -d)"
@@ -58,7 +61,11 @@ if [[ -z "${SOURCE_DIR}" ]]; then
   /usr/bin/tar -xzf "${ARCHIVE_PATH}" -C "${TEMP_DIR}"
   SOURCE_DIR="$(find "${TEMP_DIR}" -mindepth 1 -maxdepth 1 -type d -print -quit)"
 fi
-[[ -f "${SOURCE_DIR}/scripts/injector.mjs" ]] || fail "downloaded package is incomplete"
+[[ -f "${SOURCE_DIR}/scripts/runtime.mjs" ]] || fail "downloaded package is incomplete"
+[[ -f "${SOURCE_DIR}/vendor/codex-taskboard/VERSION.json" ]] || fail "bundled Taskboard manifest is missing"
+[[ -f "${SOURCE_DIR}/vendor/codex-taskboard/dist/web/index.html" ]] || fail "bundled Taskboard web build is missing"
+[[ -f "${SOURCE_DIR}/vendor/codex-workspace-enhancer/asset-browser/server.js" ]] || fail "bundled Asset Console service is missing"
+[[ -f "${SOURCE_DIR}/vendor/codex-workspace-enhancer/asset-console/public/index.html" ]] || fail "bundled Asset Console web build is missing"
 
 INSTALL_PARENT="$(dirname "${INSTALL_DIR}")"
 mkdir -p "${INSTALL_PARENT}"
@@ -68,7 +75,8 @@ mkdir -p "${STAGING_DIR}"
 /usr/bin/rsync -a \
   --exclude '.git' \
   --exclude 'node_modules' \
-  --exclude '*.png' \
+  --exclude '/output/' \
+  --exclude '/*.png' \
   "${SOURCE_DIR}/" "${STAGING_DIR}/"
 
 if [[ -e "${INSTALL_DIR}" ]]; then

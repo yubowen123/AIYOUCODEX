@@ -8,7 +8,7 @@ $configPath = Join-Path $PSScriptRoot "config.json"
 if (-not (Test-Path -LiteralPath $configPath)) { throw "Windows installation config is missing." }
 $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
 $installDir = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$injectorPath = Join-Path $installDir "scripts\injector.mjs"
+$injectorPath = Join-Path $installDir "scripts\runtime.mjs"
 $nodePath = [string]$config.nodePath
 $port = [int]$config.port
 $logsDir = [string]$config.logsDir

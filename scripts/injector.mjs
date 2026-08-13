@@ -13,6 +13,8 @@ import {
   needsPreviewAttachment,
 } from "../lib/injector-state.mjs";
 import { createDesktopAppRuntime } from "../lib/desktop-runtime.mjs";
+import { readActiveTaskThreads } from "../lib/taskboard-status.mjs";
+import { AssetConsoleBridge } from "../lib/asset-console-bridge.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(root, "inject", "conversation-preview.user.js");
@@ -47,9 +49,17 @@ let client = null;
 let registeredScriptIdentifier = null;
 const desktopAppRecovery = new DesktopAppRecovery();
 const desktopAppRuntime = createDesktopAppRuntime();
+const assetConsoleBridge = new AssetConsoleBridge({
+  staticRoot: process.env.CODEX_ASSET_CONSOLE_STATIC_ROOT
+    || path.join(root, "vendor", "codex-workspace-enhancer", "asset-console", "public"),
+  tokenPath: process.env.CODEX_ASSET_CONSOLE_TOKEN_FILE,
+  port: Number(process.env.CODEX_ASSET_CONSOLE_PORT || 5177),
+  logger: (message) => process.stdout.write(`[asset-console] ${message}\n`),
+});
 
 async function closeClient() {
   const closingClient = client;
+  if (assetConsoleBridge.client === closingClient) await assetConsoleBridge.dispose();
   closingClient?.close();
   if (client === closingClient) client = null;
 }
@@ -92,6 +102,7 @@ async function attach() {
   registeredScriptIdentifier = registered.identifier;
   await client.evaluate(rendererSource);
   await client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] = ${JSON.stringify(registered.identifier)}`);
+  await assetConsoleBridge.install(client);
   attachedTargetId = nextTargetId;
   process.stdout.write(`Codex conversation preview attached to renderer ${nextTargetId}\n`);
   return true;
@@ -99,7 +110,7 @@ async function attach() {
 
 async function pushPreviews() {
   if (!client || !attachedTargetId) return;
-  const [requests, recentCatalog, pinnedThreadIds] = await Promise.all([
+  const [requests, recentCatalog, pinnedThreadIds, taskboardStatus] = await Promise.all([
     client.evaluate(`(() => {
       const seen = new Set();
       const allPanel = document.getElementById('codex-sidebar-all-projects');
@@ -119,9 +130,10 @@ async function pushPreviews() {
     })()`),
     repository.readRecentCatalog(),
     repository.readPinnedThreadIds(),
+    readActiveTaskThreads(),
   ]);
   const interruptedCatalog = await repository.readInterruptedCatalog({
-    activeThreadIds: [],
+    activeThreadIds: taskboardStatus.activeThreadIds,
   });
   const recentRequests = recentCatalog.slice(0, 30).map((entry) => ({
     key: `local:${entry.threadId}\n${entry.title}`,
@@ -151,6 +163,7 @@ async function pushPreviews() {
     api?.setRecentCatalog?.(${JSON.stringify(recentCatalog)});
     api?.setInterruptedCatalog?.(${JSON.stringify(interruptedCatalog)});
     api?.setPinnedThreads?.(${JSON.stringify(pinnedThreadIds)});
+    api?.setActiveProjectThreads?.(${JSON.stringify(taskboardStatus.activeThreadIds)});
   })()`);
 }
 
