@@ -5,7 +5,7 @@ import test from "node:test";
 import { TASKBOARD_VERSION, createRuntimePlan } from "../lib/runtime-plan.mjs";
 
 test("runtime starts the sidebar, pinned Taskboard, and Asset Console together", () => {
-  const root = path.resolve("/tmp/codex-sidebar");
+  const root = "/tmp/codex-sidebar";
   const plan = createRuntimePlan({
     root,
     nodePath: "/usr/local/bin/node",
@@ -17,9 +17,9 @@ test("runtime starts the sidebar, pinned Taskboard, and Asset Console together",
 
   assert.equal(TASKBOARD_VERSION, "0.1.0-codexoptimiz.20260813");
   assert.equal(plan.children.length, 3);
-  assert.deepEqual(plan.children[0].args, [path.join(root, "scripts", "injector.mjs"), "--port", "9231", "--watch"]);
+  assert.deepEqual(plan.children[0].args, [path.posix.join(root, "scripts", "injector.mjs"), "--port", "9231", "--watch"]);
   assert.deepEqual(plan.children[1].args, [
-    path.join(root, "vendor", "codex-taskboard", "scripts", "codex-injector.mjs"),
+    path.posix.join(root, "vendor", "codex-taskboard", "scripts", "codex-injector.mjs"),
     "--port", "9231", "--watch",
   ]);
   assert.equal(plan.children[1].env.CODEX_TASKBOARD_HOST, "127.0.0.1");
@@ -30,7 +30,7 @@ test("runtime starts the sidebar, pinned Taskboard, and Asset Console together",
     "/Users/tester/Library/Application Support/Codex Sidebar Enhancer Data/Taskboard",
   );
   assert.deepEqual(plan.children[2].args, [
-    path.join(root, "vendor", "codex-workspace-enhancer", "asset-browser", "server.js"),
+    path.posix.join(root, "vendor", "codex-workspace-enhancer", "asset-browser", "server.js"),
   ]);
   assert.equal(plan.children[2].env.PORT, "5177");
 });
