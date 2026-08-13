@@ -11,6 +11,7 @@ test("public package contains every managed runtime and excludes local-only outp
   const result = JSON.parse(execFileSync(npm, ["pack", "--dry-run", "--json"], {
     cwd: root,
     encoding: "utf8",
+    shell: process.platform === "win32",
   }))[0];
   const files = new Set(result.files.map((entry) => entry.path));
   const required = [
