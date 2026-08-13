@@ -50,6 +50,17 @@ try {
   assert.ok(target?.id, "a visible conversation card is required");
   const rowSelector = `#codex-sidebar-all-projects [data-app-action-sidebar-thread-id=${JSON.stringify(target.id)}]`;
 
+  await client.evaluate(`(() => {
+    const key = ${JSON.stringify(STORAGE_KEY)};
+    const statuses = JSON.parse(localStorage.getItem(key) || "{}");
+    delete statuses[${JSON.stringify(target.id)}];
+    localStorage.setItem(key, JSON.stringify(statuses));
+  })()`);
+  await client.send("Page.reload", { ignoreCache: true });
+  assert.equal(await waitFor(client, `Boolean(window.__codexConversationPreviewInjection__)`), true);
+  await client.evaluate(`document.querySelector('[data-codex-sidebar-section-tab="项目"]')?.click()`);
+  await client.evaluate(`document.querySelector('[data-codex-sidebar-folder-tag="__all__"]')?.click()`);
+
   assert.equal(await waitFor(client, `Boolean(document.querySelector(${JSON.stringify(`${rowSelector} [data-codex-conversation-status-button]`)}))`), true,
     "every visible conversation card must expose a status button");
   let actual = await client.evaluate(`(() => {
@@ -61,8 +72,8 @@ try {
     };
   })()`);
   assert.deepEqual(actual, {
-    status: "urgent-important",
-    label: "状态：紧急且重要",
+    status: "unmarked",
+    label: "状态：未标记",
     hasPopup: "menu",
   });
 
@@ -107,7 +118,7 @@ try {
     }));
   })()`);
   assert.deepEqual(actual, [
-    { value: "urgent-important", text: "紧急且重要", checked: "true" },
+    { value: "urgent-important", text: "紧急且重要", checked: "false" },
     { value: "urgent-or-important", text: "紧急或重要", checked: "false" },
     { value: "not-urgent", text: "不紧急", checked: "false" },
     { value: "clear", text: "清除标注", checked: null },
@@ -119,7 +130,9 @@ try {
 
   await client.evaluate(`document.querySelector(${JSON.stringify(`${rowSelector} [data-codex-conversation-status-button]`)})?.click()`);
   await client.evaluate(`document.querySelector('[data-codex-conversation-status-option="clear"]')?.click()`);
-  assert.equal(await waitFor(client, `document.querySelector(${JSON.stringify(`${rowSelector} [data-codex-conversation-status-button]`)})?.dataset.status === 'clear'`), true);
+  assert.equal(await waitFor(client, `document.querySelector(${JSON.stringify(`${rowSelector} [data-codex-conversation-status-button]`)})?.dataset.status === 'unmarked'`), true);
+  assert.equal(await client.evaluate(`Object.hasOwn(JSON.parse(localStorage.getItem(${JSON.stringify(STORAGE_KEY)}) || '{}'), ${JSON.stringify(target.id)})`), false,
+    "clearing a marker must delete its persisted state");
 
   await client.evaluate(`document.querySelector(${JSON.stringify(`${rowSelector} [data-codex-conversation-status-button]`)})?.click()`);
   await client.evaluate(`document.querySelector('[data-codex-conversation-status-option="not-urgent"]')?.click()`);
@@ -129,7 +142,7 @@ try {
   assert.equal(await waitFor(client, `document.querySelector(${JSON.stringify(`${rowSelector} [data-codex-conversation-status-button]`)})?.dataset.status === 'not-urgent'`), true,
     "the selected status must survive a renderer reload");
 
-  process.stdout.write(`${JSON.stringify({ target, layout, statuses: ["urgent-important", "urgent-or-important", "not-urgent", "clear"] }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ target, layout, statuses: ["unmarked", "urgent-important", "urgent-or-important", "not-urgent", "clear"] }, null, 2)}\n`);
 } finally {
   try {
     await client.evaluate(`(() => {

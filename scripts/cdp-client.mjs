@@ -49,7 +49,7 @@ export class CdpClient {
       if (!message.id) {
         if (!message.method) return;
         for (const listener of this.listeners.get(message.method) || []) {
-          try { listener(message.params || {}); } catch {}
+          try { listener(message.params || {}, { sessionId: message.sessionId || null }); } catch {}
         }
         return;
       }
@@ -102,7 +102,7 @@ export class CdpClient {
     });
   }
 
-  send(method, params = {}) {
+  send(method, params = {}, sessionId = null) {
     if (!this.socket || this.socket.readyState !== 1) {
       return Promise.reject(new Error("CDP connection is not open"));
     }
@@ -116,7 +116,9 @@ export class CdpClient {
       }, this.requestTimeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       try {
-        this.socket.send(JSON.stringify({ id, method, params }));
+        const message = { id, method, params };
+        if (sessionId) message.sessionId = sessionId;
+        this.socket.send(JSON.stringify(message));
       } catch (error) {
         const pending = this.pending.get(id);
         if (!pending) return;

@@ -54,7 +54,7 @@ test("installer activation writes a loadable user LaunchAgent without invoking l
     assert.equal(activation.launchctlSkipped, true);
     const plist = await readFile(activation.plistPath, "utf8");
     assert.match(plist, new RegExp(process.execPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    assert.match(plist, /scripts\/injector\.mjs/);
+    assert.match(plist, /scripts\/runtime\.mjs/);
     assert.equal(activation.launcherPath, path.join(testHome, "Applications", "Codex Sidebar Enhancer.app"));
     await access(path.join(activation.launcherPath, "Contents", "Info.plist"));
     const launcherExecutable = path.join(activation.launcherPath, "Contents", "MacOS", "Codex Sidebar Enhancer");

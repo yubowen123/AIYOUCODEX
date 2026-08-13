@@ -18,8 +18,11 @@ async function waitFor(client, expression, timeoutMs = 12_000) {
   return true;
 }
 
-const catalog = await new PreviewRepository().readSearchCatalog();
+const repository = new PreviewRepository();
+const pinnedThreadIds = new Set(await repository.readPinnedThreadIds());
+const catalog = await repository.readSearchCatalog();
 const expected = catalog
+  .filter((entry) => !pinnedThreadIds.has(entry.threadId))
   .map((entry, sourceIndex) => ({ ...entry, sourceIndex, time: Date.parse(entry.updatedAt || "") }))
   .sort((left, right) => right.time - left.time || left.sourceIndex - right.sourceIndex);
 assert.ok(expected.length > 10, "The live catalog must contain projects from multiple folders");

@@ -119,6 +119,12 @@ try {
   assert.equal(folderOrderSettled, true,
     `folder tags must settle into real recent-use order after preview timestamps arrive: expected ${JSON.stringify(expectedOrder)}, got ${JSON.stringify(actualFolderOrder)}`);
 
+  await client.evaluate(`Array.from(document.querySelectorAll('[data-codex-sidebar-folder-tag]'))
+    .find((tag) => tag.dataset.codexSidebarFolderLabel === ${JSON.stringify(expectedFolderOrder[0])})?.click()`);
+  assert.equal(await waitFor(client, `Array.from(document.querySelectorAll('[data-codex-sidebar-folder-panel]'))
+    .filter((panel) => !panel.hidden).length === 1`), true,
+  "A real folder must restore one visible native project panel after the All view");
+
   const inspect = () => client.evaluate(`(() => {
     const root = document.getElementById('codex-sidebar-folder-switcher');
     if (!root) return null;

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createInstallPlan } from "../lib/install-config.mjs";
+import { createInstallPlan, LEGACY_TASKBOARD_LABELS } from "../lib/install-config.mjs";
 import { access, mkdir, unlink, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -28,7 +28,8 @@ const plan = createInstallPlan(options);
 if (options.dryRun) {
   process.stdout.write(`${JSON.stringify(plan)}\n`);
 } else if (options.activate) {
-  await access(path.join(plan.installDir, "scripts", "injector.mjs"));
+  await access(path.join(plan.installDir, "scripts", "runtime.mjs"));
+  await access(path.join(plan.installDir, "vendor", "codex-taskboard", "dist", "web", "index.html"));
   await mkdir(plan.launchAgentsDir, { recursive: true });
   await mkdir(plan.logsDir, { recursive: true });
   await mkdir(path.dirname(plan.launcherExecutablePath), { recursive: true });
@@ -38,6 +39,19 @@ if (options.dryRun) {
   const legacyPlistPath = path.join(plan.launchAgentsDir, "com.yubowen.codex-conversation-preview.plist");
   if (!options.skipLaunchctl) {
     const domain = `gui/${process.getuid()}`;
+    const disabledLegacyLabels = [];
+    for (const legacyLabel of LEGACY_TASKBOARD_LABELS) {
+      const legacyPlistPath = path.join(plan.launchAgentsDir, `${legacyLabel}.plist`);
+      try {
+        await access(legacyPlistPath);
+        spawnSync(options.launchctlPath, ["bootout", domain, legacyPlistPath], { stdio: "ignore" });
+        const disabled = spawnSync(options.launchctlPath, ["disable", `${domain}/${legacyLabel}`], { encoding: "utf8" });
+        if (disabled.status === 0) disabledLegacyLabels.push(legacyLabel);
+      } catch {}
+    }
+    if (disabledLegacyLabels.length > 0) {
+      await writeFile(plan.legacyCompatibilityMarker, `${disabledLegacyLabels.join("\n")}\n`, { mode: 0o600 });
+    }
     spawnSync(options.launchctlPath, ["bootout", domain, plan.plistPath], { stdio: "ignore" });
     const loaded = spawnSync(options.launchctlPath, ["bootstrap", domain, plan.plistPath], { encoding: "utf8" });
     if (loaded.status !== 0) throw new Error(loaded.stderr || "launchctl bootstrap failed");

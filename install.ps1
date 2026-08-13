@@ -16,8 +16,10 @@ function Test-Node22([string]$Candidate) {
     return $false
   }
   try {
-    $major = & $Candidate -p "Number(process.versions.node.split('.')[0])"
-    return ($LASTEXITCODE -eq 0 -and [int]$major -ge 22)
+    $versionText = & $Candidate -p "process.versions.node"
+    if ($LASTEXITCODE -ne 0) { return $false }
+    $version = [Version]$versionText
+    return ($version.Major -gt 22 -or ($version.Major -eq 22 -and $version.Minor -ge 5))
   } catch {
     return $false
   }
@@ -26,7 +28,7 @@ function Test-Node22([string]$Candidate) {
 function Copy-Package([string]$From, [string]$To) {
   $entries = @(
     "LICENSE", "README.md", "package.json", "package-lock.json",
-    "inject", "lib", "scripts", "windows", "install.ps1", "uninstall.ps1"
+    "inject", "lib", "scripts", "vendor", "windows", "install.ps1", "uninstall.ps1"
   )
   foreach ($entry in $entries) {
     $source = Join-Path $From $entry
@@ -75,6 +77,29 @@ function New-Shortcut([string]$Path, [string]$Target, [string]$Arguments, [strin
   $shortcut.Save()
 }
 
+function Suspend-LegacyTaskboard([string]$StartupDirectory, [string]$MarkerPath) {
+  $disabled = @()
+  $shell = New-Object -ComObject WScript.Shell
+  foreach ($shortcutPath in Get-ChildItem -LiteralPath $StartupDirectory -Filter "*.lnk" -File -ErrorAction SilentlyContinue) {
+    try {
+      $shortcut = $shell.CreateShortcut($shortcutPath.FullName)
+      $command = "$($shortcut.TargetPath) $($shortcut.Arguments)"
+      if ($command -notmatch "dashi-taskboard" -or $command -notmatch "(?:codex-injector\.mjs|server[\\/]index\.mjs)") { continue }
+      $disabledPath = "$($shortcutPath.FullName).disabled-by-codex-sidebar-enhancer"
+      Move-Item -LiteralPath $shortcutPath.FullName -Destination $disabledPath -Force
+      $disabled += @{ original = $shortcutPath.FullName; disabled = $disabledPath }
+    } catch {}
+  }
+  try {
+    Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.CommandLine -match "dashi-taskboard" -and $_.CommandLine -match "(?:codex-injector\.mjs|server[\\/]index\.mjs)" } |
+      ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  } catch {}
+  if ($disabled.Count -gt 0) {
+    $disabled | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $MarkerPath -Encoding UTF8
+  }
+}
+
 $repository = Get-Setting "CODEX_SIDEBAR_REPOSITORY" "yubowen123/codex-sidebar-enhancer"
 $repositoryRef = Get-Setting "CODEX_SIDEBAR_REF" "main"
 $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
@@ -106,8 +131,20 @@ try {
     Expand-Archive -LiteralPath $archive -DestinationPath $expandedSource -Force
     $sourceDir = (Get-ChildItem -LiteralPath $expandedSource -Directory | Select-Object -First 1).FullName
   }
-  if (-not (Test-Path -LiteralPath (Join-Path $sourceDir "scripts\injector.mjs"))) {
+  if (-not (Test-Path -LiteralPath (Join-Path $sourceDir "scripts\runtime.mjs"))) {
     throw "Downloaded package is incomplete."
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $sourceDir "vendor\codex-taskboard\VERSION.json"))) {
+    throw "Bundled Taskboard manifest is missing."
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $sourceDir "vendor\codex-taskboard\dist\web\index.html"))) {
+    throw "Bundled Taskboard web build is missing."
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $sourceDir "vendor\codex-workspace-enhancer\asset-browser\server.js"))) {
+    throw "Bundled Asset Console service is missing."
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $sourceDir "vendor\codex-workspace-enhancer\asset-console\public\index.html"))) {
+    throw "Bundled Asset Console web build is missing."
   }
 
   New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($fullInstallDir)) -Force | Out-Null
@@ -137,6 +174,7 @@ try {
   New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
   New-Item -ItemType Directory -Path $startupDir -Force | Out-Null
   New-Item -ItemType Directory -Path $startMenuDir -Force | Out-Null
+  Suspend-LegacyTaskboard $startupDir (Join-Path $fullInstallDir ".legacy-taskboard-disabled.json")
   $powerShellPath = (Get-Process -Id $PID).Path
   $launcherPath = Join-Path $fullInstallDir "windows\launcher.ps1"
   $commonArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcherPath`""

@@ -47,6 +47,7 @@ try {
         selected: tab.getAttribute("aria-selected"),
         tabIndex: tab.tabIndex,
         controls: tab.getAttribute("aria-controls"),
+        top: Math.round(tab.getBoundingClientRect().top),
       })),
       panels: panels.map((panel) => ({
         name: panel.dataset.codexSidebarSectionPanel,
@@ -70,10 +71,11 @@ try {
   assert.ok(actual, "section tabs must exist");
   assert.equal(actual.role, "tablist");
   assert.equal(actual.ariaLabel, "对话分组");
-  assert.deepEqual(actual.tabs.map((tab) => tab.name), ["置顶", "项目", "最近"]);
+  assert.deepEqual(actual.tabs.map((tab) => tab.name), ["置顶", "项目", "最近", "中断"]);
+  assert.equal(new Set(actual.tabs.map((tab) => tab.top)).size, 1, "all four section tabs must stay on one row");
   assert.equal(actual.tabs.filter((tab) => tab.selected === "true").length, 1);
   assert.equal(actual.tabs.filter((tab) => tab.tabIndex === 0).length, 1);
-  assert.deepEqual(actual.panels.map((panel) => panel.name), ["置顶", "项目", "最近"]);
+  assert.deepEqual(actual.panels.map((panel) => panel.name), ["中断", "置顶", "项目", "最近"]);
   assert.ok(actual.panels.every((panel) => panel.role === "tabpanel" && panel.labelledBy));
   assert.equal(actual.panels.filter((panel) => !panel.hidden).length, 1);
   assert.equal(actual.nativeHeadingsHidden, true);
@@ -130,8 +132,53 @@ try {
   assert.equal(actual.actionsHidden, true);
   assert.deepEqual(actual.panels.filter((panel) => !panel.hidden).map((panel) => panel.name), ["最近"]);
 
+  await client.evaluate(`document.querySelector('[data-codex-sidebar-section-tab="中断"]')?.click()`);
+  assert.equal(await waitFor(client, `document.querySelector('[data-codex-sidebar-section-tab="中断"]')?.getAttribute("aria-selected") === "true"`), true);
+  actual = await inspect();
+  assert.equal(actual.actionsHidden, true);
+  assert.deepEqual(actual.panels.filter((panel) => !panel.hidden).map((panel) => panel.name), ["中断"]);
+  assert.equal(await client.evaluate(`Boolean(document.getElementById("codex-sidebar-interrupted-list"))`), true);
+  assert.equal(actual.nativeExpanded["最近"], "true",
+    "the virtual interrupted panel must retain a mounted native anchor for later tab restoration");
+
+  await client.send("Page.reload", { ignoreCache: true });
+  assert.equal(await waitFor(client, `Boolean(window.__codexConversationPreviewInjection__)`, 20_000), true);
+  assert.equal(await waitFor(client, `document.querySelector('[data-codex-sidebar-section-tab="中断"]')?.getAttribute("aria-selected") === "true"`, 20_000), true);
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  assert.equal(await client.evaluate(`document.querySelectorAll('button[data-app-action-sidebar-section-toggle]').length`), 3,
+    "the virtual interrupted tab must not collapse and unmount every native sidebar section");
+  await client.evaluate(`document.querySelector('[data-codex-sidebar-section-tab="项目"]')?.click()`);
+  assert.equal(await waitFor(client, `Boolean(document.querySelector('[data-codex-sidebar-folder-search]')?.getClientRects().length)`, 20_000), true,
+    "the first project-tab click after reload must restore the folder search and project content");
+
+  await client.evaluate(`(() => {
+    for (const button of document.querySelectorAll('button[data-app-action-sidebar-section-toggle]')) {
+      button.dataset.codexSectionToggleTest = 'true';
+      button.removeAttribute('data-app-action-sidebar-section-toggle');
+    }
+    window.__codexConversationPreviewInjection__?.refresh?.();
+  })()`);
+  assert.equal(await waitFor(client, `!document.getElementById('codex-sidebar-section-tabs')`), true,
+    "stale custom tabs must be removed while Codex replaces their native section anchors");
+  await client.evaluate(`(() => {
+    for (const button of document.querySelectorAll('[data-codex-section-toggle-test="true"]')) {
+      button.setAttribute('data-app-action-sidebar-section-toggle', '');
+      button.removeAttribute('data-codex-section-toggle-test');
+    }
+    window.__codexConversationPreviewInjection__?.refresh?.();
+  })()`);
+  assert.equal(await waitFor(client, `Boolean(document.querySelector('[data-codex-sidebar-folder-search]')?.getClientRects().length)`), true,
+    "the project search must rebuild when Codex remounts its native section anchors");
+
   process.stdout.write(`${JSON.stringify(actual, null, 2)}\n`);
 } finally {
-  try { await client.evaluate(`document.querySelector('[data-codex-sidebar-section-tab="项目"]')?.click()`); } catch {}
+  try { await client.evaluate(`(() => {
+    for (const button of document.querySelectorAll('[data-codex-section-toggle-test="true"]')) {
+      button.setAttribute('data-app-action-sidebar-section-toggle', '');
+      button.removeAttribute('data-codex-section-toggle-test');
+    }
+    window.__codexConversationPreviewInjection__?.refresh?.();
+    document.querySelector('[data-codex-sidebar-section-tab="项目"]')?.click();
+  })()`); } catch {}
   client.close();
 }

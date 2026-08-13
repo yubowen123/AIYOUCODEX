@@ -12,6 +12,15 @@ test("shortcut settings persist visibility and custom entries", () => {
   assert.match(source, /localStorage\.setItem\(SHORTCUT_SETTINGS_STORAGE_KEY/);
 });
 
+test("built-in workspace enhancements participate in the same visibility menu", () => {
+  assert.match(source, /name:\s*"Skills 分组"/);
+  assert.match(source, /name:\s*"资产控制台"/);
+  assert.match(source, /kind:\s*"enhancement"/);
+  assert.match(source, /openSkillsGrouping/);
+  assert.match(source, /openAssetConsolePanel/);
+  assert.match(source, /shortcutCatalog\.filter\(\(item\) => item\.kind !== "settings"\)/);
+});
+
 test("custom shortcuts support preset icons and both open modes", () => {
   assert.match(source, /SHORTCUT_ICON_PRESETS/);
   assert.match(source, /data-codex-shortcut-icon/);
