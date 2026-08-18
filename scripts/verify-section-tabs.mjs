@@ -141,7 +141,10 @@ try {
   assert.equal(actual.nativeExpanded["最近"], "true",
     "the virtual interrupted panel must retain a mounted native anchor for later tab restoration");
 
-  await client.send("Page.reload", { ignoreCache: true });
+  await client.evaluate(`(() => {
+    window.__codexConversationPreviewInjection__?.destroy?.();
+    delete window.__codexConversationPreviewInjection__;
+  })()`);
   assert.equal(await waitFor(client, `Boolean(window.__codexConversationPreviewInjection__)`, 20_000), true);
   assert.equal(await waitFor(client, `document.querySelector('[data-codex-sidebar-section-tab="中断"]')?.getAttribute("aria-selected") === "true"`, 20_000), true);
   await new Promise((resolve) => setTimeout(resolve, 600));

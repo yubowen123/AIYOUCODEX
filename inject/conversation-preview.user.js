@@ -2618,16 +2618,30 @@
     );
   }
 
+  function shortcutGroupButtons(group) {
+    return Array.from(group?.querySelectorAll(":scope > button, :scope > * > button") || [])
+      .filter((button) => button instanceof HTMLButtonElement && !button.closest(`#${SHORTCUT_GRID_ID}`));
+  }
+
+  function shortcutSiblingGroup(button) {
+    let candidate = button?.parentElement;
+    while (candidate && !candidate.matches("nav, [data-app-action-sidebar-scroll]")) {
+      const buttons = shortcutGroupButtons(candidate);
+      if (buttons.includes(button) && buttons.length >= 3) return candidate;
+      candidate = candidate.parentElement;
+    }
+    return null;
+  }
+
   function nativeShortcutSources() {
     const newConversation = findNativeShortcutButton("新对话");
     const pullRequests = findNativeShortcutButton("拉取请求");
-    const navigationGroup = pullRequests?.parentElement;
+    const navigationGroup = shortcutSiblingGroup(pullRequests);
     const newConversationRow = newConversation?.parentElement;
     const header = newConversationRow?.parentElement?.parentElement?.parentElement;
     if (!newConversation || !navigationGroup || !header) return null;
 
-    const navigationButtons = Array.from(navigationGroup.children)
-      .filter((node) => node instanceof HTMLButtonElement && !node.closest(`#${SHORTCUT_GRID_ID}`));
+    const navigationButtons = shortcutGroupButtons(navigationGroup);
     const quickButton = Array.from(newConversationRow.children)
       .flatMap((node) => node === newConversation ? [] : Array.from(node.querySelectorAll?.("button") || []))[0] || null;
     const sourceItems = [
@@ -3821,12 +3835,21 @@
     updateUsageState();
   }
 
+  function protectHeaderControlsFromDrag(host) {
+    if (!host.hasAttribute("data-codex-sidebar-header-controls")) {
+      host.setAttribute("data-codex-sidebar-header-controls", "true");
+      host.dataset.codexSidebarHeaderControlsAppRegion = host.style.getPropertyValue("-webkit-app-region");
+    }
+    host.style.webkitAppRegion = "no-drag";
+  }
+
   function ensureViewToggle() {
     const search = document.querySelector('button[aria-label="搜索"], button[aria-label="Search"]');
     if (!search) return;
     const searchSlot = search.parentElement;
     const host = searchSlot?.parentElement;
     if (!host) return;
+    protectHeaderControlsFromDrag(host);
     let button = document.getElementById(TOGGLE_ID);
     if (button?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN) {
       button?.remove();
@@ -3852,6 +3875,7 @@
     const searchSlot = search.parentElement;
     const host = searchSlot?.parentElement;
     if (!host) return;
+    protectHeaderControlsFromDrag(host);
     let button = document.getElementById(SHORTCUT_SETTINGS_BUTTON_ID);
     if (button?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN) {
       button?.remove();
@@ -4105,6 +4129,13 @@
     document.getElementById(TOGGLE_ID)?.remove();
     document.getElementById(USAGE_ID)?.remove();
     document.getElementById(SHORTCUT_SETTINGS_BUTTON_ID)?.remove();
+    document.querySelectorAll('[data-codex-sidebar-header-controls="true"]').forEach((host) => {
+      const previous = host.dataset.codexSidebarHeaderControlsAppRegion || "";
+      if (previous) host.style.setProperty("-webkit-app-region", previous);
+      else host.style.removeProperty("-webkit-app-region");
+      host.removeAttribute("data-codex-sidebar-header-controls");
+      host.removeAttribute("data-codex-sidebar-header-controls-app-region");
+    });
     clearShortcutEnhancement();
     document.getElementById(SHORTCUT_SETTINGS_ID)?.remove();
     clearSectionEnhancement();

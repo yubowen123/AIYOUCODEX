@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { createReadStream, promises as fs, readFileSync, watch } from "node:fs";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
+import { deflateRawSync, inflateRawSync } from "node:zlib";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +37,14 @@ if (apiToken.length < 32) throw new Error(`AssetBrowser API token is missing or 
 const imageExts = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif", ".heic", ".heif"]);
 const videoExts = new Set([".mp4", ".mov", ".m4v", ".webm"]);
 const audioExts = new Set([".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".oga", ".opus"]);
+const textExts = new Set([".md", ".markdown", ".txt", ".rtf", ".doc", ".docx"]);
+const supportedAssetExts = new Set([...imageExts, ...videoExts, ...audioExts, ...textExts]);
+const defaultAssetTaxonomy = {
+  text: ["提示词", "Skills", "剧本", "文档"],
+  image: ["角色", "场景", "道具", "分镜图", "参考图"],
+  audio: ["音效", "音乐", "角色声音", "旁白"],
+  video: ["预告", "成片", "抽卡片段", "素材片段"],
+};
 const sseClients = new Set();
 let watchTimer = null;
 const watcherHandles = new Map();
@@ -135,6 +144,46 @@ function normalizeScanRoots(values) {
   return [...new Set(normalized.length ? normalized : ["."])];
 }
 
+function normalizeProjectFolders(project = {}) {
+  const explicit = Array.isArray(project.folders) ? project.folders : [];
+  const legacyPath = String(project.path || "").trim();
+  const legacyRoots = normalizeScanRoots(project.scanRoots);
+  const candidates = explicit.length
+    ? explicit
+    : legacyPath
+      ? legacyRoots.map((root) => path.resolve(legacyPath, root))
+      : [];
+  return [...new Set(candidates.map((item) => path.resolve(String(item || ""))).filter(Boolean))];
+}
+
+function normalizeAssetManagerSettings(value = {}) {
+  const taxonomy = {};
+  for (const [kind, defaults] of Object.entries(defaultAssetTaxonomy)) {
+    const supplied = Array.isArray(value.taxonomy?.[kind]) ? value.taxonomy[kind] : [];
+    taxonomy[kind] = [...new Set([...defaults, ...supplied].map((item) => String(item || "").trim()).filter(Boolean))];
+  }
+  return {
+    columns: Math.max(1, Math.min(8, Number(value.columns) || 4)),
+    tags: [...new Set((Array.isArray(value.tags) ? value.tags : []).map((item) => String(item || "").trim()).filter(Boolean))],
+    taxonomy,
+  };
+}
+
+function normalizeAssetMetadata(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).map(([filePath, meta]) => [path.resolve(filePath), {
+    category: String(meta?.category || ""),
+    tags: [...new Set((Array.isArray(meta?.tags) ? meta.tags : []).map((item) => String(item || "").trim()).filter(Boolean))],
+  }]));
+}
+
+function normalizeAssetAssignments(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value)
+    .map(([filePath, projectId]) => [path.resolve(filePath), String(projectId || "")])
+    .filter(([, projectId]) => projectId));
+}
+
 function systemCapabilities() {
   return {
     platform: process.platform,
@@ -152,12 +201,16 @@ async function loadConfig() {
       projects: (config.projects || []).map((project) => ({
         id: project.id,
         name: project.name || project.id,
-        path: path.resolve(project.path),
-        scanRoots: normalizeScanRoots(project.scanRoots)
-      })).filter((project) => project.id && project.path),
+        path: path.resolve(project.path || normalizeProjectFolders(project)[0] || "."),
+        scanRoots: normalizeScanRoots(project.scanRoots),
+        folders: normalizeProjectFolders(project)
+      })).filter((project) => project.id && project.folders.length),
       system: systemCapabilities(),
       automation: normalizeAutomation(config.automation),
-      deduplication: normalizeDeduplication(config.deduplication, { defaultQuarantinePath: duplicateQuarantinePath })
+      deduplication: normalizeDeduplication(config.deduplication, { defaultQuarantinePath: duplicateQuarantinePath }),
+      assetManager: normalizeAssetManagerSettings(config.assetManager),
+      assetMetadata: normalizeAssetMetadata(config.assetMetadata),
+      assetAssignments: normalizeAssetAssignments(config.assetAssignments),
     };
   } catch {
     return {
@@ -165,7 +218,10 @@ async function loadConfig() {
       projects: [],
       system: systemCapabilities(),
       automation: normalizeAutomation(),
-      deduplication: normalizeDeduplication({}, { defaultQuarantinePath: duplicateQuarantinePath })
+      deduplication: normalizeDeduplication({}, { defaultQuarantinePath: duplicateQuarantinePath }),
+      assetManager: normalizeAssetManagerSettings(),
+      assetMetadata: {},
+      assetAssignments: {},
     };
   }
 }
@@ -177,10 +233,14 @@ async function saveConfig(config) {
       id: project.id,
       name: project.name || project.id,
       path: path.resolve(project.path),
-      scanRoots: normalizeScanRoots(project.scanRoots)
+      scanRoots: normalizeScanRoots(project.scanRoots),
+      folders: normalizeProjectFolders(project)
     })),
     automation: normalizeAutomation(config.automation),
-    deduplication: normalizeDeduplication(config.deduplication, { defaultQuarantinePath: duplicateQuarantinePath })
+    deduplication: normalizeDeduplication(config.deduplication, { defaultQuarantinePath: duplicateQuarantinePath }),
+    assetManager: normalizeAssetManagerSettings(config.assetManager),
+    assetMetadata: normalizeAssetMetadata(config.assetMetadata),
+    assetAssignments: normalizeAssetAssignments(config.assetAssignments),
   };
   const tempPath = path.join(
     path.dirname(configPath),
@@ -369,7 +429,8 @@ async function listProjects() {
       name: project.name,
       path: project.path,
       scanRoots: project.scanRoots,
-      exists: await exists(project.path)
+      folders: project.folders,
+      exists: (await Promise.all(project.folders.map((folder) => exists(folder)))).every(Boolean)
     });
   }
   return projects;
@@ -553,10 +614,19 @@ async function renameProjectDirectory({ projectId, path: folderPath, name }) {
   }
 }
 
-async function addProject({ name, path: projectPath, scanRoots }) {
-  if (!projectPath) throw new Error("Missing project path");
-  const absolutePath = path.resolve(projectPath);
-  if (!await exists(absolutePath)) throw new Error(`Project folder does not exist: ${absolutePath}`);
+async function addProject({ name, path: projectPath, scanRoots, folders }) {
+  const requestedFolders = Array.isArray(folders) && folders.length
+    ? folders.map((folder) => path.resolve(String(folder || ""))).filter(Boolean)
+    : projectPath
+      ? normalizeScanRoots(scanRoots).map((root) => path.resolve(projectPath, root))
+      : [];
+  const absoluteFolders = [...new Set(requestedFolders)];
+  if (!absoluteFolders.length) throw new Error("至少需要关联一个文件夹");
+  for (const folder of absoluteFolders) {
+    const stats = await fs.stat(folder).catch(() => null);
+    if (!stats?.isDirectory()) throw new Error(`关联文件夹不存在：${folder}`);
+  }
+  const absolutePath = path.resolve(projectPath || absoluteFolders[0]);
   const { result: project } = await updateConfig((config) => {
     const idBase = slugify(name || path.basename(absolutePath));
     let id = idBase;
@@ -566,7 +636,8 @@ async function addProject({ name, path: projectPath, scanRoots }) {
       id,
       name: name || path.basename(absolutePath),
       path: absolutePath,
-      scanRoots: normalizeScanRoots(scanRoots)
+      scanRoots: normalizeScanRoots(scanRoots),
+      folders: absoluteFolders,
     };
     config.projects.push(createdProject);
     return createdProject;
@@ -574,6 +645,33 @@ async function addProject({ name, path: projectPath, scanRoots }) {
   await ensureWatchers();
   notifyClients("project-change");
   return project;
+}
+
+async function updateProject(projectId, body = {}) {
+  const requestedFolders = Array.isArray(body.folders)
+    ? [...new Set(body.folders.map((folder) => path.resolve(String(folder || ""))).filter(Boolean))]
+    : null;
+  if (requestedFolders) {
+    if (!requestedFolders.length) throw new Error("项目至少需要关联一个文件夹");
+    for (const folder of requestedFolders) {
+      const stats = await fs.stat(folder).catch(() => null);
+      if (!stats?.isDirectory()) throw new Error(`关联文件夹不存在：${folder}`);
+    }
+  }
+  const { result } = await updateConfig((config) => {
+    const project = config.projects.find((item) => item.id === projectId);
+    if (!project) throw new Error(`项目不存在：${projectId}`);
+    if (String(body.name || "").trim()) project.name = String(body.name).trim();
+    if (requestedFolders) {
+      project.folders = requestedFolders;
+      project.path = requestedFolders[0];
+      project.scanRoots = ["."];
+    }
+    return project;
+  });
+  await ensureWatchers();
+  notifyClients("project-change");
+  return result;
 }
 
 async function reorderProjects(projectIds) {
@@ -1088,6 +1186,419 @@ async function listAssets(projectId, caseId) {
   return assets.sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
 
+function isPathInside(root, target) {
+  const relative = path.relative(path.resolve(root), path.resolve(target));
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+function encodeAssetRef(filePath) {
+  return Buffer.from(path.resolve(filePath), "utf8").toString("base64url");
+}
+
+function decodeAssetRef(value) {
+  try {
+    const decoded = Buffer.from(String(value || ""), "base64url").toString("utf8");
+    if (!decoded || !path.isAbsolute(decoded)) throw new Error();
+    return path.resolve(decoded);
+  } catch {
+    throw new Error("素材引用无效");
+  }
+}
+
+function allManagedFolders(config) {
+  return [...new Set(config.projects.flatMap((project) => project.folders || normalizeProjectFolders(project)))];
+}
+
+async function resolveManagedAsset(config, assetRef) {
+  const filePath = decodeAssetRef(assetRef);
+  const managed = allManagedFolders(config).some((folder) => isPathInside(folder, filePath))
+    || Object.hasOwn(config.assetAssignments || {}, filePath);
+  if (!managed) throw new Error("素材不属于任何本地项目");
+  const stats = await fs.lstat(filePath).catch(() => null);
+  if (!stats?.isFile() || stats.isSymbolicLink()) throw new Error("素材文件不存在或不是普通文件");
+  return { filePath, stats };
+}
+
+async function walkLibrary(directory, files, limit = 30000) {
+  if (files.length >= limit) return;
+  let entries = [];
+  try {
+    entries = await fs.readdir(directory, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (files.length >= limit) return;
+    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    const filePath = path.join(directory, entry.name);
+    if (entry.isDirectory() && !entry.isSymbolicLink()) {
+      await walkLibrary(filePath, files, limit);
+    } else if (entry.isFile() && supportedAssetExts.has(path.extname(entry.name).toLowerCase())) {
+      files.push(filePath);
+    }
+  }
+}
+
+function libraryAssetKind(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (textExts.has(ext)) return "text";
+  if (imageExts.has(ext)) return "image";
+  if (audioExts.has(ext)) return "audio";
+  if (videoExts.has(ext)) return "video";
+  return "other";
+}
+
+function inferAssetCategory(filePath, kind) {
+  const haystack = filePath.toLowerCase();
+  const rules = {
+    text: [
+      ["Skills", ["skill.md", "skills", "技能"]],
+      ["提示词", ["prompt", "提示词", "提示語"]],
+      ["剧本", ["screenplay", "script", "剧本", "分集"]],
+    ],
+    image: [
+      ["分镜图", ["storyboard", "分镜", "shot"]],
+      ["角色", ["character", "角色", "人物"]],
+      ["场景", ["scene", "场景", "环境"]],
+      ["道具", ["prop", "道具"]],
+    ],
+    audio: [
+      ["角色声音", ["voice", "角色声音", "音色", "对白"]],
+      ["音效", ["sfx", "sound effect", "音效"]],
+      ["音乐", ["music", "bgm", "音乐", "配乐"]],
+      ["旁白", ["narration", "voiceover", "旁白"]],
+    ],
+    video: [
+      ["预告", ["trailer", "teaser", "预告"]],
+      ["成片", ["final", "master", "成片", "正片"]],
+      ["抽卡片段", ["抽卡", "draw", "card clip"]],
+    ],
+  };
+  const match = (rules[kind] || []).find(([, tokens]) => tokens.some((token) => haystack.includes(token)));
+  return match?.[0] || defaultAssetTaxonomy[kind]?.at(-1) || "其他";
+}
+
+function decodeXmlEntities(value) {
+  return String(value || "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+function escapeXml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function readZipEntries(buffer) {
+  let eocd = -1;
+  for (let index = buffer.length - 22; index >= Math.max(0, buffer.length - 65557); index -= 1) {
+    if (buffer.readUInt32LE(index) === 0x06054b50) { eocd = index; break; }
+  }
+  if (eocd < 0) throw new Error("Word 文档结构无效");
+  const entryCount = buffer.readUInt16LE(eocd + 10);
+  let cursor = buffer.readUInt32LE(eocd + 16);
+  const entries = [];
+  for (let index = 0; index < entryCount; index += 1) {
+    if (buffer.readUInt32LE(cursor) !== 0x02014b50) throw new Error("Word 文档目录损坏");
+    const flags = buffer.readUInt16LE(cursor + 8);
+    const method = buffer.readUInt16LE(cursor + 10);
+    const modTime = buffer.readUInt16LE(cursor + 12);
+    const modDate = buffer.readUInt16LE(cursor + 14);
+    const crc = buffer.readUInt32LE(cursor + 16);
+    const compressedSize = buffer.readUInt32LE(cursor + 20);
+    const uncompressedSize = buffer.readUInt32LE(cursor + 24);
+    const nameLength = buffer.readUInt16LE(cursor + 28);
+    const extraLength = buffer.readUInt16LE(cursor + 30);
+    const commentLength = buffer.readUInt16LE(cursor + 32);
+    const externalAttributes = buffer.readUInt32LE(cursor + 38);
+    const localOffset = buffer.readUInt32LE(cursor + 42);
+    const name = buffer.subarray(cursor + 46, cursor + 46 + nameLength).toString("utf8");
+    if (flags & 1) throw new Error("不支持加密的 Word 文档");
+    if (buffer.readUInt32LE(localOffset) !== 0x04034b50) throw new Error("Word 文档内容损坏");
+    const localNameLength = buffer.readUInt16LE(localOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
+    const data = method === 0 ? Buffer.from(compressed) : method === 8 ? inflateRawSync(compressed) : null;
+    if (!data || data.length !== uncompressedSize) throw new Error(`不支持的 Word 压缩格式：${method}`);
+    entries.push({ name, data, method, modTime, modDate, crc, externalAttributes });
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+const crcTable = Array.from({ length: 256 }, (_, value) => {
+  let crc = value;
+  for (let bit = 0; bit < 8; bit += 1) crc = (crc & 1) ? (0xedb88320 ^ (crc >>> 1)) : (crc >>> 1);
+  return crc >>> 0;
+});
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function writeZipEntries(entries) {
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, "utf8");
+    const data = Buffer.from(entry.data);
+    const method = entry.name.endsWith("/") || !data.length ? 0 : 8;
+    const compressed = method === 8 ? deflateRawSync(data) : data;
+    const crc = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x800, 6);
+    local.writeUInt16LE(method, 8);
+    local.writeUInt16LE(entry.modTime || 0, 10);
+    local.writeUInt16LE(entry.modDate || 0, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(compressed.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    localParts.push(local, name, compressed);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x800, 8);
+    central.writeUInt16LE(method, 10);
+    central.writeUInt16LE(entry.modTime || 0, 12);
+    central.writeUInt16LE(entry.modDate || 0, 14);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(compressed.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(entry.externalAttributes || 0, 38);
+    central.writeUInt32LE(offset, 42);
+    centralParts.push(central, name);
+    offset += local.length + name.length + compressed.length;
+  }
+  const centralDirectory = Buffer.concat(centralParts);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(centralDirectory.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...localParts, centralDirectory, eocd]);
+}
+
+function extractDocxText(buffer) {
+  const document = readZipEntries(buffer).find((entry) => entry.name === "word/document.xml");
+  if (!document) throw new Error("Word 文档缺少正文");
+  const xml = document.data.toString("utf8");
+  return [...xml.matchAll(/<w:p\b[^>]*>([\s\S]*?)<\/w:p>/g)].map((paragraph) => {
+    const body = paragraph[1].replace(/<w:tab\s*\/>/g, "\t").replace(/<w:(?:br|cr)\s*\/>/g, "\n");
+    return [...body.matchAll(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>/g)].map((match) => decodeXmlEntities(match[1])).join("");
+  }).join("\n");
+}
+
+function replaceDocxText(buffer, text) {
+  const entries = readZipEntries(buffer);
+  const document = entries.find((entry) => entry.name === "word/document.xml");
+  if (!document) throw new Error("Word 文档缺少正文");
+  const xml = document.data.toString("utf8");
+  const match = xml.match(/^([\s\S]*?<w:body\b[^>]*>)([\s\S]*)(<\/w:body>[\s\S]*)$/);
+  if (!match) throw new Error("Word 正文结构无法编辑");
+  const section = match[2].match(/<w:sectPr\b[\s\S]*?<\/w:sectPr>/)?.[0] || "";
+  const paragraphs = String(text || "").split(/\r?\n/).map((line) => line
+    ? `<w:p><w:r><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`
+    : "<w:p/>").join("");
+  document.data = Buffer.from(`${match[1]}${paragraphs}${section}${match[3]}`, "utf8");
+  return writeZipEntries(entries);
+}
+
+async function textAssetContent(filePath, maxBytes = 5 * 1024 * 1024) {
+  const ext = path.extname(filePath).toLowerCase();
+  const stats = await fs.stat(filePath);
+  if (stats.size > maxBytes) throw new Error("文本文件超过 5MB，无法在卡片编辑器中打开");
+  if (ext === ".docx") return extractDocxText(await fs.readFile(filePath));
+  if (ext === ".doc") throw new Error("旧版 .doc 仅作为资产管理；请先另存为 .docx 后编辑");
+  const raw = await fs.readFile(filePath, "utf8");
+  return ext === ".rtf"
+    ? raw.replace(/\\'[0-9a-f]{2}/gi, "").replace(/\\[a-z]+-?\d* ?/gi, "").replace(/[{}]/g, "").trim()
+    : raw;
+}
+
+async function readTextPreview(filePath) {
+  try {
+    const text = await textAssetContent(filePath, 2 * 1024 * 1024);
+    return text.replace(/\s+/g, " ").trim().slice(0, 420);
+  } catch (error) {
+    return String(error.message || error);
+  }
+}
+
+async function buildLibraryAsset(filePath, project, config, assignment) {
+  const stats = await fs.stat(filePath);
+  const kind = libraryAssetKind(filePath);
+  const metadata = config.assetMetadata?.[filePath] || {};
+  const assetRef = encodeAssetRef(filePath);
+  return {
+    id: assetRef,
+    projectId: project.id,
+    projectName: project.name,
+    name: path.basename(filePath),
+    title: path.basename(filePath, path.extname(filePath)),
+    extension: path.extname(filePath).slice(1).toUpperCase(),
+    kind,
+    category: metadata.category || inferAssetCategory(filePath, kind),
+    tags: metadata.tags || [],
+    size: stats.size,
+    mtimeMs: stats.mtimeMs,
+    mtime: new Date(stats.mtimeMs).toISOString(),
+    directory: path.dirname(filePath),
+    assigned: Boolean(assignment),
+    editable: kind === "text" && ![".doc", ".rtf"].includes(path.extname(filePath).toLowerCase()),
+    preview: kind === "text" ? await readTextPreview(filePath) : "",
+    mediaUrl: `/media?id=${encodeURIComponent(assetRef)}`,
+    downloadUrl: `/download?id=${encodeURIComponent(assetRef)}`,
+  };
+}
+
+async function listLibraryAssets(projectId, filters = {}) {
+  const config = await loadConfig();
+  const project = config.projects.find((item) => item.id === projectId) || config.projects[0];
+  if (!project) return { project: null, assets: [], counts: { all: 0, text: 0, image: 0, audio: 0, video: 0 }, settings: config.assetManager };
+  const candidates = [];
+  for (const folder of project.folders) await walkLibrary(folder, candidates);
+  for (const [filePath, assignedProjectId] of Object.entries(config.assetAssignments || {})) {
+    if (assignedProjectId === project.id && !candidates.includes(filePath) && supportedAssetExts.has(path.extname(filePath).toLowerCase())) candidates.push(filePath);
+  }
+  const unique = [...new Set(candidates.map((item) => path.resolve(item)))];
+  const assets = [];
+  for (const filePath of unique) {
+    const assignment = config.assetAssignments?.[filePath] || "";
+    if (assignment && assignment !== project.id) continue;
+    if (!await exists(filePath)) continue;
+    const asset = await buildLibraryAsset(filePath, project, config, assignment);
+    if (filters.kind && asset.kind !== filters.kind) continue;
+    if (filters.category && asset.category !== filters.category) continue;
+    const query = String(filters.query || "").trim().toLocaleLowerCase("zh-CN");
+    if (query && ![asset.name, asset.preview, asset.category, ...asset.tags].join(" ").toLocaleLowerCase("zh-CN").includes(query)) continue;
+    assets.push(asset);
+  }
+  assets.sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name, "zh-CN", { numeric: true }));
+  const counts = { all: assets.length, text: 0, image: 0, audio: 0, video: 0 };
+  for (const asset of assets) counts[asset.kind] = (counts[asset.kind] || 0) + 1;
+  return {
+    project: { id: project.id, name: project.name, folders: project.folders },
+    assets,
+    counts,
+    settings: config.assetManager,
+  };
+}
+
+async function assignAssetToProject(body = {}) {
+  const config = await loadConfig();
+  const { filePath } = await resolveManagedAsset(config, body.assetId);
+  const target = config.projects.find((project) => project.id === body.targetProjectId);
+  if (!target) throw new Error("目标项目不存在");
+  await updateConfig((draft) => { draft.assetAssignments[filePath] = target.id; });
+  notifyClients("asset-change");
+  return { assetId: encodeAssetRef(filePath), targetProjectId: target.id, movedFile: false };
+}
+
+async function renameLibraryAsset(body = {}) {
+  const config = await loadConfig();
+  const { filePath } = await resolveManagedAsset(config, body.assetId);
+  const currentExt = path.extname(filePath);
+  const requested = String(body.name || "").trim();
+  if (!requested || requested !== path.basename(requested) || /[\\/]/.test(requested)) throw new Error("请输入有效文件名");
+  const nextName = path.extname(requested) ? requested : `${requested}${currentExt}`;
+  const nextPath = path.join(path.dirname(filePath), nextName);
+  if (path.extname(nextPath).toLowerCase() !== currentExt.toLowerCase()) throw new Error("重命名不能改变文件格式");
+  if (await exists(nextPath)) throw new Error("同名文件已经存在");
+  await fs.rename(filePath, nextPath);
+  await updateConfig((draft) => {
+    if (draft.assetAssignments[filePath]) {
+      draft.assetAssignments[nextPath] = draft.assetAssignments[filePath];
+      delete draft.assetAssignments[filePath];
+    }
+    if (draft.assetMetadata[filePath]) {
+      draft.assetMetadata[nextPath] = draft.assetMetadata[filePath];
+      delete draft.assetMetadata[filePath];
+    }
+  });
+  notifyClients("asset-change");
+  return { assetId: encodeAssetRef(nextPath), name: path.basename(nextPath), previousName: path.basename(filePath) };
+}
+
+async function deleteLibraryAsset(body = {}) {
+  const config = await loadConfig();
+  const { filePath } = await resolveManagedAsset(config, body.assetId);
+  if (String(body.confirmName || "") !== path.basename(filePath)) throw new Error("永久删除需要输入完整文件名确认");
+  await fs.rm(filePath, { force: false });
+  await updateConfig((draft) => {
+    delete draft.assetAssignments[filePath];
+    delete draft.assetMetadata[filePath];
+  });
+  notifyClients("asset-change");
+  return { deleted: true, name: path.basename(filePath), recoverable: false };
+}
+
+async function readTextAsset(assetId) {
+  const config = await loadConfig();
+  const { filePath, stats } = await resolveManagedAsset(config, assetId);
+  if (libraryAssetKind(filePath) !== "text") throw new Error("该素材不是文本文件");
+  return { assetId, name: path.basename(filePath), content: await textAssetContent(filePath), size: stats.size, editable: ![".doc", ".rtf"].includes(path.extname(filePath).toLowerCase()) };
+}
+
+async function saveTextAsset(body = {}) {
+  const config = await loadConfig();
+  const { filePath } = await resolveManagedAsset(config, body.assetId);
+  const ext = path.extname(filePath).toLowerCase();
+  if (libraryAssetKind(filePath) !== "text" || [".doc", ".rtf"].includes(ext)) throw new Error("该文本格式暂不支持直接保存");
+  const content = String(body.content ?? "");
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.editing`;
+  if (ext === ".docx") {
+    await fs.writeFile(tempPath, replaceDocxText(await fs.readFile(filePath), content));
+  } else {
+    await fs.writeFile(tempPath, content, "utf8");
+  }
+  await fs.rename(tempPath, filePath);
+  notifyClients("asset-change");
+  return { saved: true, assetId: encodeAssetRef(filePath), size: (await fs.stat(filePath)).size };
+}
+
+async function updateLibraryAssetMetadata(body = {}) {
+  const config = await loadConfig();
+  const { filePath } = await resolveManagedAsset(config, body.assetId);
+  const metadata = {
+    category: String(body.category || ""),
+    tags: [...new Set((Array.isArray(body.tags) ? body.tags : []).map((item) => String(item || "").trim()).filter(Boolean))],
+  };
+  await updateConfig((draft) => { draft.assetMetadata[filePath] = metadata; });
+  notifyClients("asset-change");
+  return metadata;
+}
+
+async function updateAssetManagerSettings(body = {}) {
+  const { result } = await updateConfig((config) => {
+    config.assetManager = normalizeAssetManagerSettings({
+      ...config.assetManager,
+      ...body,
+      taxonomy: { ...config.assetManager.taxonomy, ...(body.taxonomy || {}) },
+    });
+    return config.assetManager;
+  });
+  notifyClients("config-change");
+  return result;
+}
+
 async function serveFile(req, res, filePath, asDownload = false) {
   const stats = await fs.stat(filePath);
   const headers = {
@@ -1440,8 +1951,7 @@ async function runDuplicateSweep() {
 async function ensureWatchers() {
   const config = await loadConfig();
   for (const project of config.projects) {
-    for (const scanRoot of project.scanRoots) {
-      const watchRoot = safeResolveProject(project, scanRoot);
+    for (const watchRoot of project.folders) {
       if (!await exists(watchRoot)) continue;
       if (watcherHandles.has(watchRoot)) continue;
       try {
@@ -1615,6 +2125,13 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    const projectUpdateMatch = url.pathname.match(/^\/api\/projects\/([^/]+)$/);
+    if (projectUpdateMatch && req.method === "PATCH") {
+      const project = await updateProject(decodeURIComponent(projectUpdateMatch[1]), await readRequestBody(req));
+      sendJson(res, { ok: true, project });
+      return;
+    }
+
     if (url.pathname === "/api/projects") {
       sendJson(res, { projects: await listProjects() });
       return;
@@ -1670,6 +2187,50 @@ const server = createServer(async (req, res) => {
       const result = await restoreTrashedAssets(await readRequestBody(req));
       notifyClients("asset-change");
       sendJson(res, { ok: true, result });
+      return;
+    }
+
+    if (url.pathname === "/api/library" && req.method === "GET") {
+      sendJson(res, await listLibraryAssets(url.searchParams.get("project") || "", {
+        kind: url.searchParams.get("kind") || "",
+        category: url.searchParams.get("category") || "",
+        query: url.searchParams.get("query") || "",
+      }));
+      return;
+    }
+
+    if (url.pathname === "/api/assets/assign" && req.method === "POST") {
+      sendJson(res, { ok: true, result: await assignAssetToProject(await readRequestBody(req)) });
+      return;
+    }
+
+    if (url.pathname === "/api/assets/rename" && req.method === "POST") {
+      sendJson(res, { ok: true, result: await renameLibraryAsset(await readRequestBody(req)) });
+      return;
+    }
+
+    if (url.pathname === "/api/assets/delete" && req.method === "DELETE") {
+      sendJson(res, { ok: true, result: await deleteLibraryAsset(await readRequestBody(req)) });
+      return;
+    }
+
+    if (url.pathname === "/api/assets/metadata" && req.method === "PATCH") {
+      sendJson(res, { ok: true, metadata: await updateLibraryAssetMetadata(await readRequestBody(req)) });
+      return;
+    }
+
+    if (url.pathname === "/api/text" && req.method === "GET") {
+      sendJson(res, await readTextAsset(url.searchParams.get("id") || ""));
+      return;
+    }
+
+    if (url.pathname === "/api/text" && req.method === "PUT") {
+      sendJson(res, { ok: true, result: await saveTextAsset(await readRequestBody(req)) });
+      return;
+    }
+
+    if (url.pathname === "/api/settings" && req.method === "PATCH") {
+      sendJson(res, { ok: true, settings: await updateAssetManagerSettings(await readRequestBody(req)) });
       return;
     }
 
@@ -1890,10 +2451,16 @@ const server = createServer(async (req, res) => {
     }
 
     if (url.pathname === "/media" || url.pathname === "/download") {
-      const projectId = url.searchParams.get("project");
-      const project = await getProject(projectId);
-      const requested = url.searchParams.get("path");
-      const filePath = safeResolveProject(project, requested);
+      let filePath;
+      if (url.searchParams.get("id")) {
+        const resolved = await resolveManagedAsset(await loadConfig(), url.searchParams.get("id"));
+        filePath = resolved.filePath;
+      } else {
+        const projectId = url.searchParams.get("project");
+        const project = await getProject(projectId);
+        const requested = url.searchParams.get("path");
+        filePath = safeResolveProject(project, requested);
+      }
       await serveFile(req, res, filePath, url.pathname === "/download");
       return;
     }

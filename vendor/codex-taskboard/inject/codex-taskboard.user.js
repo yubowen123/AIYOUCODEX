@@ -219,24 +219,37 @@
     return labels.includes(text);
   }
 
+  function directShortcutButtons(group) {
+    return Array.from(group?.querySelectorAll(":scope > button, :scope > * > button") || [])
+      .filter((button) => button instanceof HTMLButtonElement);
+  }
+
+  function shortcutSiblingGroup(button) {
+    let candidate = button?.parentElement;
+    while (candidate && !candidate.matches("nav, [data-app-action-sidebar-scroll]")) {
+      const buttons = directShortcutButtons(candidate);
+      if (buttons.includes(button) && buttons.length >= 3) return candidate;
+      candidate = candidate.parentElement;
+    }
+    return null;
+  }
+
   function findReferenceButton() {
     const scroll = document.querySelector("[data-app-action-sidebar-scroll]");
     if (!scroll) return null;
     const buttons = Array.from(scroll.querySelectorAll("button"));
     const plugin = buttons.find((button) => buttonMatches(button, PLUGIN_LABELS));
-    if (plugin && plugin.parentElement) {
-      const siblings = Array.from(plugin.parentElement.children).filter((child) => child.tagName === "BUTTON");
-      if (siblings.length >= 3) return plugin;
-    }
+    const pluginGroup = shortcutSiblingGroup(plugin);
+    if (pluginGroup && directShortcutButtons(pluginGroup).length >= 3) return plugin;
 
     const firstSection = scroll.querySelector("[data-app-action-sidebar-section]");
     const sectionTop = firstSection?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY;
     const groups = Array.from(scroll.querySelectorAll("div")).filter((element) => {
-      const directButtons = Array.from(element.children).filter((child) => child.tagName === "BUTTON");
+      const directButtons = directShortcutButtons(element);
       return directButtons.length >= 3 && element.getBoundingClientRect().top < sectionTop;
     });
     const group = groups.sort((left, right) => right.children.length - left.children.length)[0];
-    return Array.from(group?.children || []).filter((child) => child.tagName === "BUTTON").at(-1) || null;
+    return directShortcutButtons(group).at(-1) || null;
   }
 
   function replaceEntryIcon(button) {
