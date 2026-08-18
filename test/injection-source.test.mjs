@@ -51,6 +51,19 @@ test("public shortcut grid exposes bundled project management but excludes priva
   assert.doesNotMatch(source, /TV_SHORTCUT_URL|__codexTvHostV1|data-codex-tv-open/);
 });
 
+test("shortcut discovery supports Codex navigation buttons wrapped by contents containers", () => {
+  assert.match(source, /function shortcutSiblingGroup\(button\)/);
+  assert.match(source, /:scope > button, :scope > \* > button/);
+  assert.match(source, /const navigationGroup = shortcutSiblingGroup\(pullRequests\)/);
+  assert.match(source, /shortcutGroupButtons\(navigationGroup\)/);
+});
+
+test("header controls opt their shared toolbar host out of the Electron drag region", () => {
+  assert.match(source, /data-codex-sidebar-header-controls/);
+  assert.match(source, /webkitAppRegion = "no-drag"/);
+  assert.match(source, /removeProperty\("-webkit-app-region"\)/);
+});
+
 test("section enhancement fails closed when Codex native anchors are incomplete", () => {
   assert.match(source, /NATIVE_ANCHOR_GRACE_MS = 1_800/);
   assert.match(source, /sectionSourcesMissingSince[\s\S]*scheduleAnchorRetry\(\)[\s\S]*clearSectionEnhancement\(\)/);

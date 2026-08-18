@@ -13,6 +13,32 @@ const client = new CdpClient(target.webSocketDebuggerUrl, { requestTimeoutMs: 10
 await client.connect();
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+async function clickViewToggle() {
+  const target = await client.evaluate(`(() => {
+    const button = document.getElementById('codex-conversation-view-toggle');
+    if (!button) return null;
+    const rect = button.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    return {
+      x,
+      y,
+      hit: document.elementFromPoint(x, y)?.closest?.('button')?.id || null,
+      appRegion: getComputedStyle(button.parentElement).webkitAppRegion,
+    };
+  })()`);
+  assert.ok(target, "view toggle must remain mounted for a real pointer click");
+  assert.equal(target.hit, "codex-conversation-view-toggle");
+  assert.equal(target.appRegion, "no-drag");
+  await client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: target.x, y: target.y });
+  await client.send("Input.dispatchMouseEvent", {
+    type: "mousePressed", x: target.x, y: target.y, button: "left", buttons: 1, clickCount: 1,
+  });
+  await client.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased", x: target.x, y: target.y, button: "left", buttons: 0, clickCount: 1,
+  });
+}
+
 try {
   await client.evaluate(`(() => {
     document.querySelector('[data-codex-sidebar-section-tab="项目"]')?.click();
@@ -42,10 +68,10 @@ try {
   assert.equal(initial.sameHost, true);
 
   if (initial.mode !== "list") {
-    await client.evaluate(`document.getElementById('codex-conversation-view-toggle').click()`);
+    await clickViewToggle();
     await wait(250);
   }
-  await client.evaluate(`document.getElementById('codex-conversation-view-toggle').click()`);
+  await clickViewToggle();
   await wait(350);
   await client.evaluate(`(() => {
     const grid = Array.from(document.querySelectorAll('[data-codex-conversation-card-grid="true"]'))
@@ -183,7 +209,7 @@ try {
   assert.deepEqual(hover?.labels, ["核心总结", "最近输入", "最近输出"]);
   assert.deepEqual(hover?.clamps, ["3", "3", "3"]);
 
-  await client.evaluate(`document.getElementById('codex-conversation-view-toggle').click()`);
+  await clickViewToggle();
   await wait(350);
   const restored = await client.evaluate(`(() => {
     const row = document.querySelector('[data-app-action-sidebar-thread-row][data-codex-conversation-preview-enhanced="true"]');
@@ -204,7 +230,7 @@ try {
 } finally {
   try {
     const mode = await client.evaluate(`document.documentElement.dataset.codexConversationView`);
-    if (mode === "card") await client.evaluate(`document.getElementById('codex-conversation-view-toggle')?.click()`);
+    if (mode === "card") await clickViewToggle();
   } catch {}
   client.close();
 }

@@ -77,30 +77,13 @@ try {
       .find((button) => button.getAttribute("aria-label")?.startsWith("查看活动"));
     activity?.setAttribute("aria-label", "查看活动");
     window.__codexConversationPreviewInjection__?.refresh?.();
+    activity?.setAttribute("aria-label", "查看活动，需要关注");
+    window.__codexConversationPreviewInjection__?.refresh?.();
     window.__codexSettingsSecondClickProbe = false;
     document.querySelector("[data-codex-sidebar-shortcut-settings]")
       ?.addEventListener("click", () => { window.__codexSettingsSecondClickProbe = true; }, { capture: true, once: true });
   })()`);
-  await client.send("Input.dispatchMouseEvent", {
-    type: "mousePressed",
-    x: probe.x,
-    y: probe.y,
-    button: "left",
-    clickCount: 1,
-  });
-  await client.evaluate(`(() => {
-    const activity = Array.from(document.querySelectorAll("button[aria-label]"))
-      .find((button) => button.getAttribute("aria-label")?.startsWith("查看活动"));
-    activity?.setAttribute("aria-label", "查看活动，需要关注");
-    window.__codexConversationPreviewInjection__?.refresh?.();
-  })()`);
-  await client.send("Input.dispatchMouseEvent", {
-    type: "mouseReleased",
-    x: probe.x,
-    y: probe.y,
-    button: "left",
-    clickCount: 1,
-  });
+  await clickAt(client, probe.x, probe.y);
   assert.equal(await waitForOpen(client), true, "one click must reopen settings after a sync");
   assert.equal(await client.evaluate(`window.__codexSettingsSecondClickProbe`), true);
 

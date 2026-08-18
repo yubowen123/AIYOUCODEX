@@ -47,6 +47,14 @@ test("custom Taskboard keeps full-workspace embedding and the loopback null-orig
   assert.match(server, /access-control-allow-private-network/);
 });
 
+test("custom Taskboard finds the plugin entry through Codex contents wrappers", async () => {
+  const injection = await readFile(new URL("inject/codex-taskboard.user.js", root), "utf8");
+  assert.match(injection, /function directShortcutButtons\(group\)/);
+  assert.match(injection, /:scope > button, :scope > \* > button/);
+  assert.match(injection, /function shortcutSiblingGroup\(button\)/);
+  assert.match(injection, /const pluginGroup = shortcutSiblingGroup\(plugin\)/);
+});
+
 test("custom Taskboard watch mode avoids macOS process probes on Windows", async () => {
   const source = await readFile(new URL("scripts/codex-injector.mjs", root), "utf8");
   assert.match(source, /function codexPids\(\) \{\s+if \(process\.platform === "win32"\) return \[\]/);

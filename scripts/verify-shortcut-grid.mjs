@@ -101,11 +101,24 @@ try {
   assert.equal(actual.ariaLabel, "快捷入口");
   assert.equal(actual.columns, 6);
   const canonicalOrder = ["新对话", "拉取请求", "站点", "已安排", "插件", "项目管理"];
-  const expectedVisible = canonicalOrder.filter((name) => !actual.hiddenSettingKeys.includes(`native:${name}`));
+  const enhancementOrder = [
+    ["Skills 分组", "skills-grouping"],
+    ["资产控制台", "asset-console"],
+  ];
+  const expectedVisible = [
+    ...canonicalOrder.filter((name) => !actual.hiddenSettingKeys.includes(`native:${name}`)),
+    ...enhancementOrder
+      .filter(([, id]) => !actual.hiddenSettingKeys.includes(`enhancement:${id}`))
+      .map(([name]) => name),
+  ];
   assert.ok(actual.sourceNames.length >= 5, "at least the five stable native shortcuts must be available");
   assert.deepEqual(actual.sourceNames, canonicalOrder.filter((name) => actual.sourceNames.includes(name)));
   assert.deepEqual(actual.visibleNames, expectedVisible);
-  assert.deepEqual(actual.hiddenNativeNames, []);
+  assert.deepEqual(
+    actual.hiddenNativeNames,
+    ["拉取请求", "站点", "已安排", "插件", "项目管理"]
+      .filter((name) => actual.hiddenSettingKeys.includes(`native:${name}`)),
+  );
   assert.ok(Math.max(...actual.cards.map((card) => card.top)) - Math.min(...actual.cards.map((card) => card.top)) <= 1,
     "shortcut cards must remain visually aligned within one device pixel");
   assert.equal(new Set(actual.cards.map((card) => card.width)).size, 1);
