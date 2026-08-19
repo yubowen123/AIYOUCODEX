@@ -1,0 +1,89 @@
+import assert from "node:assert/strict";
+import path from "node:path";
+import test from "node:test";
+
+const classifierUrl = new URL(
+  "../vendor/codex-workspace-enhancer/asset-browser/asset-smart-classifier.js",
+  import.meta.url,
+);
+
+async function classifierApi() {
+  try {
+    return await import(classifierUrl);
+  } catch {
+    return {
+      buildImageSequenceProfiles: () => new Map(),
+      classifyLocalAsset: () => ({}),
+    };
+  }
+}
+
+test("continuous video extraction frames are grouped as local noise without model calls", async () => {
+  const { buildImageSequenceProfiles, classifyLocalAsset } = await classifierApi();
+  const files = Array.from({ length: 24 }, (_, index) =>
+    `/project/video-analysis/frames/second_frames/frame_${String(index).padStart(4, "0")}.jpg`);
+  const profiles = buildImageSequenceProfiles(files, path.posix);
+
+  const result = classifyLocalAsset({ filePath: files[8], kind: "image" }, { profiles, pathApi: path.posix });
+
+  assert.equal(result.smartGroup, "noise");
+  assert.equal(result.category, "视频解析帧");
+  assert.ok(result.autoTags.includes("自动·视频解析帧"));
+  assert.ok(result.autoTags.includes("连续帧序列"));
+  assert.ok(result.confidence >= 95);
+  assert.match(result.reason, /连续|帧/u);
+  assert.equal(result.tokenCost, 0);
+});
+
+test("role scene and prop folders become formal image assets", async () => {
+  const { buildImageSequenceProfiles, classifyLocalAsset } = await classifierApi();
+  const fixtures = [
+    ["/project/04-资产/角色图/CHAR_HERO_BASE.png", "角色"],
+    ["/project/04-资产/场景图/SCENE_TEMPLE.png", "场景"],
+    ["/project/04-资产/道具图/PROP_SWORD.png", "道具"],
+  ];
+  const profiles = buildImageSequenceProfiles(fixtures.map(([filePath]) => filePath), path.posix);
+
+  for (const [filePath, category] of fixtures) {
+    const result = classifyLocalAsset({ filePath, kind: "image" }, { profiles, pathApi: path.posix });
+    assert.equal(result.smartGroup, "asset");
+    assert.equal(result.category, category);
+    assert.ok(result.autoTags.includes(`自动·${category}`));
+    assert.ok(result.confidence >= 90);
+  }
+});
+
+test("unidentified images stay in review instead of being guessed", async () => {
+  const { buildImageSequenceProfiles, classifyLocalAsset } = await classifierApi();
+  const filePath = "/project/misc/visual.png";
+  const profiles = buildImageSequenceProfiles([filePath], path.posix);
+
+  const result = classifyLocalAsset({ filePath, kind: "image" }, { profiles, pathApi: path.posix });
+
+  assert.equal(result.smartGroup, "review");
+  assert.equal(result.category, "参考图");
+  assert.deepEqual(result.autoTags, ["自动·待确认", "信息不足"]);
+  assert.ok(result.confidence < 80);
+});
+
+test("manual grouping and labels permanently override local inference", async () => {
+  const { buildImageSequenceProfiles, classifyLocalAsset } = await classifierApi();
+  const filePath = "/project/frames/frame_0042.jpg";
+  const profiles = buildImageSequenceProfiles(
+    Array.from({ length: 20 }, (_, index) => `/project/frames/frame_${String(index).padStart(4, "0")}.jpg`),
+    path.posix,
+  );
+
+  const result = classifyLocalAsset({
+    filePath,
+    kind: "image",
+    metadata: { smartGroup: "asset", category: "角色", tags: ["主角", "已确认"] },
+  }, { profiles, pathApi: path.posix });
+
+  assert.equal(result.smartGroup, "asset");
+  assert.equal(result.category, "角色");
+  assert.deepEqual(result.tags, ["主角", "已确认"]);
+  assert.equal(result.source, "manual");
+  assert.equal(result.confidence, 100);
+  assert.equal(result.tokenCost, 0);
+});

@@ -77,6 +77,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 button:disabled { cursor: wait; opacity: 0.55; }
 
 .asset-toolbar { max-width: 1680px; margin: 0 auto 20px; padding: 10px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); box-shadow: 0 7px 24px rgba(31, 40, 55, 0.04); backdrop-filter: blur(20px); }
+.smart-group-row { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
+.smart-group-tabs { display: grid; grid-template-columns: repeat(3, minmax(118px, 1fr)); gap: 5px; flex: 1; padding: 3px; border: 1px solid rgba(49, 94, 251, 0.1); border-radius: 13px; background: #f6f8fc; }
+.smart-group-tabs button { min-height: 40px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 10px; background: transparent; color: #787e88; cursor: pointer; font-size: 12px; font-weight: 720; }
+.smart-group-tabs button small { min-width: 24px; padding: 3px 7px; border-radius: 999px; background: rgba(22, 27, 36, 0.06); color: #8b919a; font-size: 9px; }
+.smart-group-tabs button.active { background: white; color: var(--ink); box-shadow: 0 4px 14px rgba(31, 40, 55, 0.09); }
+.smart-group-tabs button[data-smart-group="asset"].active { color: var(--accent); }
+.smart-group-tabs button[data-smart-group="review"].active { color: #a46700; }
+.smart-group-tabs button[data-smart-group="noise"].active { color: #737983; }
+.smart-group-tabs button.active small { background: currentColor; color: white; }
+.local-rule-note { flex: none; padding: 7px 10px; border: 1px solid #cfe7d9; border-radius: 999px; background: #eff9f3; color: #36815a; font-size: 9px; font-weight: 700; white-space: nowrap; }
 .kind-tabs { display: grid; grid-template-columns: repeat(5, minmax(80px, 1fr)); gap: 5px; padding: 3px; border-radius: 12px; background: #f0f1f4; }
 .kind-tabs button { min-width: 0; display: flex; justify-content: center; align-items: center; gap: 7px; min-height: 38px; border: 0; border-radius: 9px; background: transparent; color: #747a84; cursor: pointer; font-size: 12px; font-weight: 650; }
 .kind-tabs button small { min-width: 20px; padding: 2px 5px; border-radius: 8px; background: rgba(0, 0, 0, 0.055); font-size: 9px; }
@@ -102,6 +112,8 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .asset-grid.masonry .asset-card { display: inline-block; width: 100%; margin: 0 0 14px; break-inside: avoid; }
 .asset-card { position: relative; min-width: 0; overflow: visible; border: 1px solid var(--line); border-radius: 16px; background: var(--card); box-shadow: 0 10px 28px rgba(31, 40, 55, 0.055); transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease; }
 .asset-card:hover { z-index: 2; transform: translateY(-2px); border-color: rgba(49, 94, 251, 0.22); box-shadow: 0 18px 42px rgba(31, 40, 55, 0.11); }
+.asset-card[data-smart-group="review"] { border-color: rgba(216, 143, 14, 0.26); }
+.asset-card[data-smart-group="noise"] { border-style: dashed; background: rgba(250, 250, 251, 0.92); }
 .load-more-card { min-height: 110px; display: grid; place-content: center; gap: 5px; width: 100%; border: 1px dashed rgba(49, 94, 251, 0.3); border-radius: 16px; background: rgba(234, 240, 255, 0.5); color: var(--accent); cursor: pointer; break-inside: avoid; }
 .load-more-card strong { font-size: 12px; }
 .load-more-card span { color: #7f8caf; font-size: 9px; }
@@ -120,9 +132,13 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .asset-menu button:hover { background: var(--soft); }
 .asset-menu button.danger { color: var(--danger); }
 .asset-meta { display: flex; gap: 9px; padding: 8px 14px 0; color: #999fa8; font-size: 9px; }
+.classification-line { display: flex; align-items: center; justify-content: space-between; gap: 7px; padding: 7px 14px 0; color: #8a9099; font-size: 8px; }
+.classification-line span:first-child { color: #565d67; font-weight: 720; }
+.classification-line span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .asset-tags { display: flex; gap: 5px; min-height: 38px; padding: 10px 14px 13px; overflow: hidden; }
 .asset-tag { max-width: 92px; overflow: hidden; padding: 4px 7px; border-radius: 999px; background: #f0f2f5; color: #6d747e; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .asset-tag.muted { color: #8d939c; }
+.asset-tag.automatic { border: 1px solid rgba(49, 94, 251, 0.12); background: #f0f4ff; color: #5670ca; }
 .card-hint { padding: 0 14px 12px; color: #a0a5ad; font-size: 8px; }
 
 .text-card { height: 300px; display: flex; flex-direction: column; }
@@ -171,6 +187,8 @@ dialog.modal::backdrop { background: rgba(22, 27, 36, 0.38); backdrop-filter: bl
 .save-state { margin-right: auto; color: #6c737d; font-size: 10px; }
 .danger-callout { display: grid; gap: 5px; padding: 12px; border: 1px solid rgba(220, 59, 67, 0.2); border-radius: 11px; background: #fff2f3; color: var(--danger); font-size: 10px; }
 .danger-callout span { overflow: hidden; color: #966c70; text-overflow: ellipsis; white-space: nowrap; }
+.classification-callout { display: grid; gap: 5px; padding: 12px; border: 1px solid rgba(49, 94, 251, 0.14); border-radius: 11px; background: #f4f7ff; color: #4c5e91; font-size: 10px; line-height: 1.5; }
+.classification-callout span { color: #77819d; }
 .modal fieldset { margin: 14px 0; padding: 0; border: 0; }
 .modal legend { margin-bottom: 8px; color: #515862; font-size: 11px; font-weight: 700; }
 .check-chip-grid { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -212,6 +230,10 @@ dialog.modal::backdrop { background: rgba(22, 27, 36, 0.38); backdrop-filter: bl
   .project-folders-panel { display: none; }
   .workspace-header { align-items: flex-start; }
   .header-actions { flex-direction: column; }
+  .smart-group-row { align-items: stretch; flex-direction: column; }
+  .smart-group-tabs { grid-template-columns: repeat(3, max-content); overflow-x: auto; }
+  .smart-group-tabs button { padding: 0 14px; }
+  .local-rule-note { align-self: flex-start; }
   .kind-tabs { grid-template-columns: repeat(5, max-content); overflow-x: auto; }
   .kind-tabs button { padding: 0 14px; }
   .toolbar-row { display: block; }

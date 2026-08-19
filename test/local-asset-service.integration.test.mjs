@@ -60,17 +60,24 @@ test("local asset API scans multiple folders and keeps project moves logical", a
   const first = path.join(root, "first");
   const second = path.join(root, "second");
   const target = path.join(root, "target");
-  await Promise.all([mkdir(first), mkdir(second), mkdir(target)]);
+  const frameDirectory = path.join(second, "video-analysis", "frames", "second_frames");
+  const miscDirectory = path.join(second, "misc");
+  await Promise.all([mkdir(first), mkdir(second), mkdir(target), mkdir(frameDirectory, { recursive: true }), mkdir(miscDirectory, { recursive: true })]);
   const promptPath = path.join(first, "hero-prompt.md");
   const audioPath = path.join(first, "character-voice.mp3");
   const imagePath = path.join(second, "角色海报.png");
   const videoPath = path.join(second, "final-trailer.mp4");
   const wordPath = path.join(first, "production-notes.docx");
+  const ambiguousImagePath = path.join(miscDirectory, "visual.png");
+  const framePaths = Array.from({ length: 24 }, (_, index) =>
+    path.join(frameDirectory, `frame_${String(index).padStart(4, "0")}.jpg`));
   await Promise.all([
     writeFile(promptPath, "# Hero\nOriginal prompt"),
     writeFile(audioPath, "audio-fixture"),
     writeFile(imagePath, "image-fixture"),
     writeFile(videoPath, "video-fixture"),
+    writeFile(ambiguousImagePath, "ambiguous-image-fixture"),
+    ...framePaths.map((filePath) => writeFile(filePath, "frame-fixture")),
     writeFile(wordPath, createStoredZip({
       "[Content_Types].xml": "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"></Types>",
       "word/document.xml": "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>Word original</w:t></w:r></w:p><w:sectPr/></w:body></w:document>",
@@ -132,9 +139,18 @@ test("local asset API scans multiple folders and keeps project moves logical", a
     assert.deepEqual(sourceProject.folders, [first, second]);
 
     const initial = await request(`/api/library?project=${sourceProject.id}`);
-    assert.deepEqual(initial.counts, { all: 5, text: 2, image: 1, audio: 1, video: 1 });
+    assert.deepEqual(initial.counts, { all: 30, text: 2, image: 26, audio: 1, video: 1 });
+    assert.deepEqual(initial.smartCounts, { asset: 5, review: 1, noise: 24 });
     assert.equal(initial.assets.find((asset) => asset.name === "hero-prompt.md").category, "提示词");
     assert.equal(initial.assets.find((asset) => asset.name === "character-voice.mp3").category, "角色声音");
+    const roleImage = initial.assets.find((asset) => asset.name === "角色海报.png");
+    assert.equal(roleImage.smartGroup, "asset");
+    assert.ok(roleImage.autoTags.includes("自动·角色"));
+    const extractedFrame = initial.assets.find((asset) => asset.name === "frame_0008.jpg");
+    assert.equal(extractedFrame.smartGroup, "noise");
+    assert.equal(extractedFrame.category, "视频解析帧");
+    assert.ok(extractedFrame.confidence >= 95);
+    assert.equal(initial.assets.find((asset) => asset.name === "visual.png").smartGroup, "review");
 
     const prompt = initial.assets.find((asset) => asset.name === "hero-prompt.md");
     const read = await request(`/api/text?id=${encodeURIComponent(prompt.id)}`);
@@ -154,6 +170,17 @@ test("local asset API scans multiple folders and keeps project moves logical", a
     const tagged = (await request(`/api/library?project=${sourceProject.id}`)).assets.find((asset) => asset.id === prompt.id);
     assert.equal(tagged.category, "剧本");
     assert.deepEqual(tagged.tags, ["已审核"]);
+
+    await request("/api/assets/metadata", {
+      method: "PATCH",
+      body: JSON.stringify({ assetId: extractedFrame.id, smartGroup: "asset", category: "角色", tags: ["人工确认"] }),
+    });
+    const overriddenFrame = (await request(`/api/library?project=${sourceProject.id}`)).assets
+      .find((asset) => asset.id === extractedFrame.id);
+    assert.equal(overriddenFrame.smartGroup, "asset");
+    assert.equal(overriddenFrame.category, "角色");
+    assert.deepEqual(overriddenFrame.tags, ["人工确认"]);
+    assert.equal(overriddenFrame.classificationSource, "manual");
 
     await request("/api/assets/assign", {
       method: "POST",

@@ -28,6 +28,18 @@ test("local asset cards implement media-specific interactions", async () => {
   assert.match(source, /saveTextAsset/);
 });
 
+test("local asset manager exposes zero-token smart groups and manual overrides", async () => {
+  const html = await readFile(new URL("index.html", consoleRoot), "utf8");
+  const source = await readFile(new URL("app.js", consoleRoot), "utf8");
+  assert.match(html, /id="smartGroupTabs"/);
+  assert.match(html, /data-smart-group="asset"/);
+  assert.match(html, /data-smart-group="review"/);
+  assert.match(html, /data-smart-group="noise"/);
+  assert.match(source, /classificationReason/);
+  assert.match(source, /classificationSource/);
+  assert.match(source, /form\.get\("smartGroup"\)/);
+});
+
 test("asset service supports multi-folder projects and non-destructive project reassignment", async () => {
   const server = await readFile(new URL("server.js", browserRoot), "utf8");
   assert.match(server, /textExts/);

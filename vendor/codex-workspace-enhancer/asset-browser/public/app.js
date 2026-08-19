@@ -4,7 +4,9 @@ const state = {
   selectedProject: localStorage.getItem("asset-library:selected-project") || "",
   assets: [],
   counts: { all: 0, text: 0, image: 0, audio: 0, video: 0 },
+  smartCounts: { asset: 0, review: 0, noise: 0 },
   settings: { columns: 4, tags: [], taxonomy: {} },
+  smartGroup: "asset",
   kind: "all",
   category: "",
   query: "",
@@ -21,7 +23,7 @@ const state = {
 const els = Object.fromEntries([
   "localProjectList", "projectCount", "projectFoldersPanel", "projectFolderList", "newProjectButton",
   "editProjectButton", "workspaceTitle", "workspaceSubtitle", "scanState", "refreshLibraryButton", "settingsButton",
-  "assetKindTabs", "librarySearchInput", "librarySortSelect", "assetColumnRange", "assetColumnOutput",
+  "smartGroupTabs", "assetKindTabs", "librarySearchInput", "librarySortSelect", "assetColumnRange", "assetColumnOutput",
   "categoryChips", "assetGrid", "emptyLibraryState", "emptyCreateProjectButton", "projectDialog", "projectForm",
   "projectDialogTitle", "projectNameInput", "codexNewProjectScanRoots", "projectFormError", "saveProjectButton",
   "textViewerDialog", "textViewerTitle", "textViewerFormat", "textViewerPreview", "textViewerEditor",
@@ -146,16 +148,33 @@ function renderProjects() {
 }
 
 function updateKindCounts() {
+  const counts = { all: 0, text: 0, image: 0, audio: 0, video: 0 };
+  state.assets.filter((asset) => asset.smartGroup === state.smartGroup).forEach((asset) => {
+    counts.all += 1;
+    counts[asset.kind] = (counts[asset.kind] || 0) + 1;
+  });
   document.querySelectorAll("[data-kind-count]").forEach((item) => {
-    item.textContent = String(state.counts[item.dataset.kindCount] || 0);
+    item.textContent = String(counts[item.dataset.kindCount] || 0);
+  });
+}
+
+function renderSmartGroupTabs() {
+  els.smartGroupTabs.querySelectorAll("[data-smart-group]").forEach((button) => {
+    const active = button.dataset.smartGroup === state.smartGroup;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  document.querySelectorAll("[data-smart-count]").forEach((item) => {
+    item.textContent = String(state.smartCounts[item.dataset.smartCount] || 0);
   });
 }
 
 function renderCategoryChips() {
   const kind = state.kind === "all" ? "" : state.kind;
+  const groupedAssets = state.assets.filter((asset) => asset.smartGroup === state.smartGroup);
   const categories = kind
     ? state.settings.taxonomy?.[kind] || []
-    : [...new Set(state.assets.map((asset) => asset.category).filter(Boolean))];
+    : [...new Set(groupedAssets.map((asset) => asset.category).filter(Boolean))];
   els.categoryChips.replaceChildren();
   const all = document.createElement("button");
   all.type = "button";
@@ -164,7 +183,7 @@ function renderCategoryChips() {
   all.addEventListener("click", () => { state.category = ""; renderCategoryChips(); resetAssetWindow(); });
   els.categoryChips.append(all);
   for (const category of categories) {
-    const count = state.assets.filter((asset) => (!kind || asset.kind === kind) && asset.category === category).length;
+    const count = groupedAssets.filter((asset) => (!kind || asset.kind === kind) && asset.category === category).length;
     if (!count) continue;
     const button = document.createElement("button");
     button.type = "button";
@@ -176,16 +195,18 @@ function renderCategoryChips() {
 }
 
 function commonCardMarkup(asset, typeLabel) {
-  const tags = asset.tags.length
-    ? asset.tags.map((tag) => `<span class="asset-tag">${escapeHtml(tag)}</span>`).join("")
-    : `<span class="asset-tag muted">${escapeHtml(asset.category)}</span>`;
-  return `<header class="asset-card-header"><div><span class="asset-format">${escapeHtml(typeLabel)}</span><h3 title="${escapeHtml(asset.name)}">${escapeHtml(asset.title)}</h3></div><details class="asset-menu"><summary aria-label="管理 ${escapeHtml(asset.name)}">•••</summary><div><button data-action="metadata" type="button">分类与标签</button><button data-action="rename" type="button">重命名</button><button data-action="move" type="button">移动到项目</button><button data-action="delete" type="button" class="danger">永久删除</button></div></details></header><div class="asset-meta"><span>${formatBytes(asset.size)}</span><span>${formatDate(asset.mtimeMs)}</span></div><div class="asset-tags">${tags}</div>`;
+  const manualTags = (asset.tags || []).map((tag) => `<span class="asset-tag">${escapeHtml(tag)}</span>`).join("");
+  const autoTags = (asset.autoTags || []).slice(0, 2).map((tag) => `<span class="asset-tag automatic">${escapeHtml(tag)}</span>`).join("");
+  const tags = manualTags || autoTags || `<span class="asset-tag muted">${escapeHtml(asset.category)}</span>`;
+  const sourceLabel = asset.classificationSource === "manual" ? "人工确认" : "本地规则 · 0 Token";
+  return `<header class="asset-card-header"><div><span class="asset-format">${escapeHtml(typeLabel)}</span><h3 title="${escapeHtml(asset.name)}">${escapeHtml(asset.title)}</h3></div><details class="asset-menu"><summary aria-label="管理 ${escapeHtml(asset.name)}">•••</summary><div><button data-action="metadata" type="button">分类与标签</button><button data-action="rename" type="button">重命名</button><button data-action="move" type="button">移动到项目</button><button data-action="delete" type="button" class="danger">永久删除</button></div></details></header><div class="asset-meta"><span>${formatBytes(asset.size)}</span><span>${formatDate(asset.mtimeMs)}</span></div><div class="classification-line" title="${escapeHtml(asset.classificationReason || "")}"><span>${escapeHtml(asset.category)}</span><span>${escapeHtml(sourceLabel)} · ${Number(asset.confidence) || 0}%</span></div><div class="asset-tags">${tags}</div>`;
 }
 
 function renderTextCard(asset) {
   const card = document.createElement("article");
   card.className = "asset-card text-card";
   card.dataset.assetId = asset.id;
+  card.dataset.smartGroup = asset.smartGroup;
   card.innerHTML = `${commonCardMarkup(asset, asset.extension || "TEXT")}<div class="text-card-preview" tabindex="0">${escapeHtml(asset.preview || "暂无可预览内容")}</div><div class="card-hint">双击放大 · 卡片内可滚动</div>`;
   card.addEventListener("dblclick", (event) => {
     if (event.target.closest(".asset-menu")) return;
@@ -198,6 +219,7 @@ function renderImageCard(asset) {
   const card = document.createElement("article");
   card.className = "asset-card image-card";
   card.dataset.assetId = asset.id;
+  card.dataset.smartGroup = asset.smartGroup;
   card.innerHTML = `<figure class="media-frame"><img src="${asset.mediaUrl}" alt="${escapeHtml(asset.title)}" loading="lazy"><figcaption class="dimension-label">读取尺寸…</figcaption></figure>${commonCardMarkup(asset, asset.extension || "IMAGE")}`;
   const image = card.querySelector("img");
   image.addEventListener("load", () => { card.querySelector(".dimension-label").textContent = `${image.naturalWidth} × ${image.naturalHeight}`; });
@@ -209,6 +231,7 @@ function renderAudioCard(asset) {
   const card = document.createElement("article");
   card.className = "asset-card audio-card";
   card.dataset.assetId = asset.id;
+  card.dataset.smartGroup = asset.smartGroup;
   card.innerHTML = `${commonCardMarkup(asset, asset.extension || "AUDIO")}<div class="audio-visual"><button class="audio-play" type="button" aria-label="播放">▶</button><div class="waveform" aria-hidden="true">${Array.from({ length: 34 }, (_, index) => `<i style="--h:${22 + ((index * 17) % 64)}%"></i>`).join("")}</div><span class="duration-label">--:--</span></div><audio src="${asset.mediaUrl}" preload="metadata"></audio><div class="card-hint">鼠标移入试听</div>`;
   const audio = card.querySelector("audio");
   const play = card.querySelector(".audio-play");
@@ -225,6 +248,7 @@ function renderVideoCard(asset) {
   const card = document.createElement("article");
   card.className = "asset-card video-card";
   card.dataset.assetId = asset.id;
+  card.dataset.smartGroup = asset.smartGroup;
   card.innerHTML = `<figure class="media-frame"><video src="${asset.mediaUrl}" muted loop playsinline preload="metadata"></video><div class="video-overlay"><button class="video-fullscreen" type="button">⛶ 全屏</button><span class="duration-label">--:--</span></div></figure>${commonCardMarkup(asset, asset.extension || "VIDEO")}<div class="card-hint">鼠标移入预览</div>`;
   const video = card.querySelector("video");
   video.addEventListener("loadedmetadata", () => { card.querySelector(".duration-label").textContent = formatDuration(video.duration); });
@@ -248,10 +272,11 @@ function openMediaLightbox(source) {
 function visibleAssets() {
   const query = state.query.trim().toLocaleLowerCase("zh-CN");
   const assets = state.assets.filter((asset) => {
+    if (asset.smartGroup !== state.smartGroup) return false;
     if (state.kind !== "all" && asset.kind !== state.kind) return false;
     if (state.category && asset.category !== state.category) return false;
     if (!query) return true;
-    return [asset.name, asset.preview, asset.category, ...asset.tags].join(" ").toLocaleLowerCase("zh-CN").includes(query);
+    return [asset.name, asset.preview, asset.category, ...(asset.tags || []), ...(asset.autoTags || [])].join(" ").toLocaleLowerCase("zh-CN").includes(query);
   });
   return assets.sort((a, b) => {
     if (state.sort === "oldest") return a.mtimeMs - b.mtimeMs;
@@ -287,11 +312,11 @@ function renderAssets() {
   els.emptyLibraryState.hidden = Boolean(matchingAssets.length);
   els.emptyLibraryState.querySelector("h2").textContent = hasProject ? "没有符合条件的资产" : "这里还没有资产";
   els.emptyLibraryState.querySelector("p").textContent = hasProject
-    ? "换一个类型、分类或搜索词，也可以重新扫描关联文件夹。"
+    ? "换一个智能分组、类型、分类或搜索词，也可以重新扫描关联文件夹。"
     : "创建项目并关联一个或多个文件夹，扫描结果会自动分类。";
   els.emptyCreateProjectButton.hidden = hasProject;
   els.workspaceSubtitle.textContent = hasProject
-    ? `${state.assets.length} 个本地资产 · ${selectedProject().folders.length} 个关联文件夹`
+    ? `${state.assets.length} 个本地文件 · 正式资产 ${state.smartCounts.asset || 0} · 待确认 ${state.smartCounts.review || 0} · 干扰项 ${state.smartCounts.noise || 0}`
     : "关联本地文件夹后，系统会自动识别并分类资产。";
 }
 
@@ -300,8 +325,9 @@ async function loadLibrary({ quiet = false } = {}) {
   if (!project) {
     state.assets = [];
     state.counts = { all: 0, text: 0, image: 0, audio: 0, video: 0 };
+    state.smartCounts = { asset: 0, review: 0, noise: 0 };
     els.workspaceTitle.textContent = "选择一个项目";
-    renderCategoryChips(); updateKindCounts(); resetAssetWindow();
+    renderSmartGroupTabs(); renderCategoryChips(); updateKindCounts(); resetAssetWindow();
     return;
   }
   state.busy = true;
@@ -311,12 +337,13 @@ async function loadLibrary({ quiet = false } = {}) {
     const data = await api(`/api/library?project=${encodeURIComponent(project.id)}`);
     state.assets = data.assets || [];
     state.counts = data.counts || state.counts;
+    state.smartCounts = data.smartCounts || state.smartCounts;
     state.settings = data.settings || state.settings;
     state.visibleLimit = 120;
     setColumns(state.settings.columns);
     els.workspaceTitle.textContent = project.name;
     els.scanState.textContent = `已同步 ${formatDate(Date.now())}`;
-    updateKindCounts(); renderCategoryChips(); renderAssets();
+    renderSmartGroupTabs(); updateKindCounts(); renderCategoryChips(); renderAssets();
     if (!quiet) showToast(`已扫描 ${state.assets.length} 个资产`);
   } catch (error) {
     els.scanState.textContent = "扫描失败";
@@ -472,7 +499,9 @@ function openAssetAction(action, asset) {
     const categories = state.settings.taxonomy?.[asset.kind] || [];
     const categoryOptions = categories.map((category) => `<option value="${escapeHtml(category)}" ${category === asset.category ? "selected" : ""}>${escapeHtml(category)}</option>`).join("");
     const tags = state.settings.tags.map((tag) => `<label class="check-chip"><input type="checkbox" name="tags" value="${escapeHtml(tag)}" ${asset.tags.includes(tag) ? "checked" : ""}><span>${escapeHtml(tag)}</span></label>`).join("") || "<p class=\"field-hint\">请先在设置中添加标签。</p>";
-    els.assetActionFields.innerHTML = `<label>子分类<select name="category">${categoryOptions}</select></label><fieldset><legend>标签</legend><div class="check-chip-grid">${tags}</div></fieldset>`;
+    const groupOptions = [["asset", "正式资产"], ["review", "待确认"], ["noise", "干扰项"]].map(([value, label]) => `<option value="${value}" ${value === asset.smartGroup ? "selected" : ""}>${label}</option>`).join("");
+    const sourceLabel = asset.classificationSource === "manual" ? "人工确认" : "本地规则 · 0 Token";
+    els.assetActionFields.innerHTML = `<div class="classification-callout"><strong>${escapeHtml(sourceLabel)} · 置信度 ${Number(asset.confidence) || 0}%</strong><span>${escapeHtml(asset.classificationReason || "")}</span></div><label>智能分组<select name="smartGroup">${groupOptions}</select></label><label>子分类<select name="category">${categoryOptions}</select></label><fieldset><legend>标签</legend><div class="check-chip-grid">${tags}</div></fieldset>`;
   }
   els.assetActionDialog.showModal();
 }
@@ -494,7 +523,7 @@ async function submitAssetAction(event) {
       await api("/api/assets/delete", { method: "DELETE", body: JSON.stringify({ assetId: asset.id, confirmName: form.get("confirmName") }) });
       showToast("真实文件已永久删除");
     } else {
-      await api("/api/assets/metadata", { method: "PATCH", body: JSON.stringify({ assetId: asset.id, category: form.get("category"), tags: form.getAll("tags") }) });
+      await api("/api/assets/metadata", { method: "PATCH", body: JSON.stringify({ assetId: asset.id, smartGroup: form.get("smartGroup"), category: form.get("category"), tags: form.getAll("tags") }) });
       showToast("分类和标签已保存");
     }
     els.assetActionDialog.close();
@@ -549,6 +578,13 @@ function bindEvents() {
   els.projectForm.addEventListener("submit", saveProject);
   els.refreshLibraryButton.addEventListener("click", () => loadLibrary());
   els.settingsButton.addEventListener("click", () => { renderSettings(); els.settingsDialog.showModal(); });
+  els.smartGroupTabs.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-smart-group]");
+    if (!button) return;
+    state.smartGroup = button.dataset.smartGroup;
+    state.category = "";
+    renderSmartGroupTabs(); updateKindCounts(); renderCategoryChips(); resetAssetWindow();
+  });
   els.assetKindTabs.addEventListener("click", (event) => {
     const button = event.target.closest("[data-asset-kind]");
     if (!button) return;

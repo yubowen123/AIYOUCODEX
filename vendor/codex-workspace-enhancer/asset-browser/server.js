@@ -12,6 +12,7 @@ import { ExactDuplicateCleaner, normalizeDeduplication } from "./duplicate-clean
 import { PromptLibrary } from "./prompt-library.js";
 import { ThreeDWorkbench } from "./three-d-workbench.js";
 import { createProjectFolder, renameProjectFolder } from "./folder-operations.js";
+import { buildImageSequenceProfiles, classifyLocalAsset } from "./asset-smart-classifier.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicRoot = path.join(__dirname, "public");
@@ -41,7 +42,7 @@ const textExts = new Set([".md", ".markdown", ".txt", ".rtf", ".doc", ".docx"]);
 const supportedAssetExts = new Set([...imageExts, ...videoExts, ...audioExts, ...textExts]);
 const defaultAssetTaxonomy = {
   text: ["提示词", "Skills", "剧本", "文档"],
-  image: ["角色", "场景", "道具", "分镜图", "参考图"],
+  image: ["角色", "场景", "道具", "分镜图", "参考图", "视频解析帧", "截图", "缩略图", "联系表", "过程图"],
   audio: ["音效", "音乐", "角色声音", "旁白"],
   video: ["预告", "成片", "抽卡片段", "素材片段"],
 };
@@ -174,6 +175,7 @@ function normalizeAssetMetadata(value = {}) {
   return Object.fromEntries(Object.entries(value).map(([filePath, meta]) => [path.resolve(filePath), {
     category: String(meta?.category || ""),
     tags: [...new Set((Array.isArray(meta?.tags) ? meta.tags : []).map((item) => String(item || "").trim()).filter(Boolean))],
+    smartGroup: ["asset", "review", "noise"].includes(meta?.smartGroup) ? meta.smartGroup : "",
   }]));
 }
 
@@ -1442,11 +1444,17 @@ async function readTextPreview(filePath) {
   }
 }
 
-async function buildLibraryAsset(filePath, project, config, assignment) {
+async function buildLibraryAsset(filePath, project, config, assignment, classificationContext) {
   const stats = await fs.stat(filePath);
   const kind = libraryAssetKind(filePath);
   const metadata = config.assetMetadata?.[filePath] || {};
   const assetRef = encodeAssetRef(filePath);
+  const classification = classifyLocalAsset({
+    filePath,
+    kind,
+    metadata,
+    inferredCategory: inferAssetCategory(filePath, kind),
+  }, classificationContext);
   return {
     id: assetRef,
     projectId: project.id,
@@ -1455,8 +1463,14 @@ async function buildLibraryAsset(filePath, project, config, assignment) {
     title: path.basename(filePath, path.extname(filePath)),
     extension: path.extname(filePath).slice(1).toUpperCase(),
     kind,
-    category: metadata.category || inferAssetCategory(filePath, kind),
-    tags: metadata.tags || [],
+    category: classification.category,
+    tags: classification.tags,
+    smartGroup: classification.smartGroup,
+    autoTags: classification.autoTags,
+    confidence: classification.confidence,
+    classificationReason: classification.reason,
+    classificationSource: classification.source,
+    tokenCost: classification.tokenCost,
     size: stats.size,
     mtimeMs: stats.mtimeMs,
     mtime: new Date(stats.mtimeMs).toISOString(),
@@ -1472,32 +1486,48 @@ async function buildLibraryAsset(filePath, project, config, assignment) {
 async function listLibraryAssets(projectId, filters = {}) {
   const config = await loadConfig();
   const project = config.projects.find((item) => item.id === projectId) || config.projects[0];
-  if (!project) return { project: null, assets: [], counts: { all: 0, text: 0, image: 0, audio: 0, video: 0 }, settings: config.assetManager };
+  if (!project) return {
+    project: null,
+    assets: [],
+    counts: { all: 0, text: 0, image: 0, audio: 0, video: 0 },
+    smartCounts: { asset: 0, review: 0, noise: 0 },
+    settings: config.assetManager,
+  };
   const candidates = [];
   for (const folder of project.folders) await walkLibrary(folder, candidates);
   for (const [filePath, assignedProjectId] of Object.entries(config.assetAssignments || {})) {
     if (assignedProjectId === project.id && !candidates.includes(filePath) && supportedAssetExts.has(path.extname(filePath).toLowerCase())) candidates.push(filePath);
   }
   const unique = [...new Set(candidates.map((item) => path.resolve(item)))];
+  const classificationContext = {
+    profiles: buildImageSequenceProfiles(unique.filter((filePath) => libraryAssetKind(filePath) === "image"), path),
+    pathApi: path,
+  };
   const assets = [];
   for (const filePath of unique) {
     const assignment = config.assetAssignments?.[filePath] || "";
     if (assignment && assignment !== project.id) continue;
     if (!await exists(filePath)) continue;
-    const asset = await buildLibraryAsset(filePath, project, config, assignment);
+    const asset = await buildLibraryAsset(filePath, project, config, assignment, classificationContext);
     if (filters.kind && asset.kind !== filters.kind) continue;
     if (filters.category && asset.category !== filters.category) continue;
+    if (filters.smartGroup && asset.smartGroup !== filters.smartGroup) continue;
     const query = String(filters.query || "").trim().toLocaleLowerCase("zh-CN");
-    if (query && ![asset.name, asset.preview, asset.category, ...asset.tags].join(" ").toLocaleLowerCase("zh-CN").includes(query)) continue;
+    if (query && ![asset.name, asset.preview, asset.category, ...asset.tags, ...asset.autoTags].join(" ").toLocaleLowerCase("zh-CN").includes(query)) continue;
     assets.push(asset);
   }
   assets.sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name, "zh-CN", { numeric: true }));
   const counts = { all: assets.length, text: 0, image: 0, audio: 0, video: 0 };
-  for (const asset of assets) counts[asset.kind] = (counts[asset.kind] || 0) + 1;
+  const smartCounts = { asset: 0, review: 0, noise: 0 };
+  for (const asset of assets) {
+    counts[asset.kind] = (counts[asset.kind] || 0) + 1;
+    smartCounts[asset.smartGroup] = (smartCounts[asset.smartGroup] || 0) + 1;
+  }
   return {
     project: { id: project.id, name: project.name, folders: project.folders },
     assets,
     counts,
+    smartCounts,
     settings: config.assetManager,
   };
 }
@@ -1580,6 +1610,7 @@ async function updateLibraryAssetMetadata(body = {}) {
   const metadata = {
     category: String(body.category || ""),
     tags: [...new Set((Array.isArray(body.tags) ? body.tags : []).map((item) => String(item || "").trim()).filter(Boolean))],
+    smartGroup: ["asset", "review", "noise"].includes(body.smartGroup) ? body.smartGroup : "",
   };
   await updateConfig((draft) => { draft.assetMetadata[filePath] = metadata; });
   notifyClients("asset-change");
@@ -2194,6 +2225,7 @@ const server = createServer(async (req, res) => {
       sendJson(res, await listLibraryAssets(url.searchParams.get("project") || "", {
         kind: url.searchParams.get("kind") || "",
         category: url.searchParams.get("category") || "",
+        smartGroup: url.searchParams.get("smartGroup") || "",
         query: url.searchParams.get("query") || "",
       }));
       return;
