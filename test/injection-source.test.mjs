@@ -16,6 +16,9 @@ test("hover previews contain all requested fields and clamp message bodies to th
   assert.match(source, /最近输入/);
   assert.match(source, /最近输出/);
   assert.match(source, /-webkit-line-clamp:\s*3/);
+  assert.match(source, /codex-conversation-preview-fallback-tooltip/);
+  assert.match(source, /handlePreviewPointerOver/);
+  assert.match(source, /handlePreviewPointerOut/);
 });
 
 test("injection is idempotent and reversible", () => {
@@ -64,10 +67,23 @@ test("header controls opt their shared toolbar host out of the Electron drag reg
   assert.match(source, /removeProperty\("-webkit-app-region"\)/);
 });
 
+test("view switch responds on pointer down before Codex can consume the click", () => {
+  assert.match(source, /button\.onpointerdown = handleViewTogglePointerDown/);
+  assert.match(source, /event\.detail > 0/);
+});
+
 test("section enhancement fails closed when Codex native anchors are incomplete", () => {
   assert.match(source, /NATIVE_ANCHOR_GRACE_MS = 1_800/);
   assert.match(source, /sectionSourcesMissingSince[\s\S]*scheduleAnchorRetry\(\)[\s\S]*clearSectionEnhancement\(\)/);
   assert.match(source, /folderSourcesMissingSince[\s\S]*scheduleAnchorRetry\(\)[\s\S]*clearFolderEnhancement\(\)/);
+});
+
+test("priority-only Codex sidebars retain virtual tabs, project search, and folder filters", () => {
+  assert.match(source, /function nativePrioritySource\(\)/);
+  assert.match(source, /data-codex-sidebar-priority-native-hidden/);
+  assert.match(source, /data-codex-sidebar-virtual-section/);
+  assert.match(source, /function ensureVirtualPinnedRows\(\)/);
+  assert.match(source, /function virtualFolderSourceItems\(project\)/);
 });
 
 test("running Taskboard threads receive a reduced-motion-safe blue border glow", () => {
