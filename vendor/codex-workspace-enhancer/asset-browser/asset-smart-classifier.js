@@ -32,9 +32,20 @@ function inferFormalImageCategory(filePath) {
   const value = normalizedPath(filePath);
   const rules = [
     ["分镜图", [/(?:^|[/_.-])storyboards?(?:[/_.-]|$)/u, /分镜(?:图)?/u]],
-    ["角色", [/(?:^|[/_.-])char(?:acter)?(?:[/_.-]|$)/u, /角色(?:图)?|人物(?:图)?|主角/u]],
-    ["场景", [/(?:^|[/_.-])scenes?(?:[/_.-]|$)/u, /场景(?:图)?|环境(?:图)?/u]],
-    ["道具", [/(?:^|[/_.-])props?(?:[/_.-]|$)/u, /道具(?:图)?/u]],
+    ["角色", [
+      /(?:^|[/_.-])char(?:acter)?s?(?:[/_.-]|$)/u,
+      /角色(?:图|设定|立绘|三视图)?|人物(?:图|设定|立绘)?|主角|群像/u,
+      /(?:战斗|日常|学生|医官|侦察|突入|防御|战术官|维修|地下战|祭祀?)(?:工装|服|装|制服)|器灵本体/u,
+    ]],
+    ["场景", [
+      /(?:^|[/_.-])(?:scenes?|locations?|environments?)(?:[/_.-]|$)/u,
+      /场景(?:图|设定)?|环境(?:图|设定)?|全貌|街道|城区|回收区|战术厅|大厅|传动井|日出|空场/u,
+    ]],
+    ["道具", [
+      /(?:^|[/_.-])(?:props?|items?)(?:[/_.-]|$)/u,
+      /道具(?:图|设定)?|物件|物品|遗物|武器|装备|饰品/u,
+      /烬骨|断刃|线轴|指环|钥匙|铁腹匣|断路钳|引火齿|万民册|手机|电话|手提包|酒杯|餐盘|维修盒|轴承环|扳手|八音盒/u,
+    ]],
   ];
   return rules.find(([, patterns]) => patterns.some((pattern) => pattern.test(value)))?.[0] || "";
 }
@@ -61,7 +72,7 @@ function automaticResult({ smartGroup, category, autoTags, confidence, reason, t
 }
 
 export function classifyLocalAsset(
-  { filePath, kind, metadata = {}, inferredCategory = "" } = {},
+  { filePath, kind, metadata = {}, inferredCategory = "", width = 0, height = 0 } = {},
   { profiles = new Map(), pathApi = path } = {},
 ) {
   const manualTags = [...new Set((Array.isArray(metadata.tags) ? metadata.tags : [])
@@ -96,8 +107,8 @@ export function classifyLocalAsset(
   const directory = pathApi.resolve(pathApi.dirname(filePath));
   const profile = profiles.get(directory) || { total: 0, sequenceLike: 0, density: 0 };
   const denseSequence = profile.total >= 12 && profile.density >= 0.8;
-  const explicitFramePath = /(?:^|\/)(?:frames?|second[_-]?frames?|video[_-]?frames?|extracted[_-]?frames?|final[_-]?frames?)(?:\/|$)|抽帧|截帧|视频帧/u.test(normalized);
-  const explicitProcessPath = /(?:^|\/)(?:thumbnails?|contact[_-]?sheets?|screenshots?|rendered[_-]?reference|audit)(?:\/|$)|缩略图|联系表|审计图|过程图/u.test(normalized);
+  const explicitFramePath = /(?:^|\/)(?:frames?|second[_-]?frames?|video[_-]?frames?|extracted[_-]?frames?|final[_-]?frames?)(?:\/|$)|(?:^|[/_.-])frame[_-]?(?:first|middle|last)(?:[/_.-]|$)|抽帧|截帧|视频帧/u.test(normalized);
+  const explicitProcessPath = /(?:^|\/)(?:thumbnails?|contact[_-]?sheets?|screenshots?|rendered[_-]?reference|audit)(?:\/|$)|(?:^|[/_.-])contact[_-]?sheet(?:[/_.-]|$)|缩略图|联系表|(?:^|\/)\d{0,2}-?审计(?:\/|$)|审计图|过程图|候选资产总览/u.test(normalized);
   if (denseSequence || explicitFramePath || explicitProcessPath) {
     const sequenceNoise = denseSequence || explicitFramePath;
     return automaticResult({
@@ -117,12 +128,24 @@ export function classifyLocalAsset(
 
   const formalCategory = inferFormalImageCategory(filePath);
   if (formalCategory) {
+    const nearNineSixteen = width >= 600 && height >= 1000 && height / width >= 1.68 && height / width <= 1.88;
     return automaticResult({
       smartGroup: "asset",
       category: formalCategory,
-      autoTags: [`自动·${formalCategory}`, "正式资产"],
+      autoTags: [`自动·${formalCategory}`, "正式资产", ...(nearNineSixteen ? ["9:16竖版"] : [])],
       confidence: 96,
-      reason: `目录或文件名明确匹配${formalCategory}资产语义`,
+      reason: `目录或文件名明确匹配${formalCategory}资产语义${nearNineSixteen ? "，图片比例接近9:16竖版" : ""}`,
+    });
+  }
+
+  const nearNineSixteen = width >= 600 && height >= 1000 && height / width >= 1.68 && height / width <= 1.88;
+  if (nearNineSixteen) {
+    return automaticResult({
+      smartGroup: "asset",
+      category: "角色",
+      autoTags: ["自动·角色", "正式资产", "9:16竖版"],
+      confidence: 82,
+      reason: "图片比例接近9:16竖版，且未命中场景、道具或过程图语义",
     });
   }
 

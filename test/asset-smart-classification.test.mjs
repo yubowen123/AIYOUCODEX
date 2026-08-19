@@ -53,6 +53,66 @@ test("role scene and prop folders become formal image assets", async () => {
   }
 });
 
+test("9:16 character sheets are recognized even when the filename only contains the costume", async () => {
+  const { classifyLocalAsset } = await classifierApi();
+  const result = classifyLocalAsset({
+    filePath: "/project/05-生成结果/images/IMG01_林照_第七码队战斗工装.png",
+    kind: "image",
+    width: 941,
+    height: 1672,
+  }, { pathApi: path.posix });
+
+  assert.equal(result.smartGroup, "asset");
+  assert.equal(result.category, "角色");
+  assert.ok(result.autoTags.includes("9:16竖版"));
+  assert.match(result.reason, /9:16|竖版/u);
+});
+
+test("short-drama semantic filenames identify scenes and props without special folders", async () => {
+  const { classifyLocalAsset } = await classifierApi();
+  const fixtures = [
+    ["/project/images/IMG15_垂天城与铸日塔全貌.png", "场景"],
+    ["/project/images/IMG17_第七码队战术厅.png", "场景"],
+    ["/project/images/IMG23_炉序烬骨.png", "道具"],
+    ["/project/images/IMG27_门序七枚旧钥匙.png", "道具"],
+    ["/project/items/item_rohan_phone_a/candidate.png", "道具"],
+  ];
+
+  for (const [filePath, category] of fixtures) {
+    const result = classifyLocalAsset({ filePath, kind: "image" }, { pathApi: path.posix });
+    assert.equal(result.smartGroup, "asset", filePath);
+    assert.equal(result.category, category, filePath);
+  }
+});
+
+test("contact sheets, representative frames, and audit outputs are excluded as process noise", async () => {
+  const { classifyLocalAsset } = await classifierApi();
+  const files = [
+    "/project/review/contact-sheet.jpg",
+    "/project/review/frame-first.jpg",
+    "/project/04-审计/candidate.png",
+    "/project/候选资产总览/overview.png",
+  ];
+
+  for (const filePath of files) {
+    const result = classifyLocalAsset({ filePath, kind: "image" }, { pathApi: path.posix });
+    assert.equal(result.smartGroup, "noise", filePath);
+  }
+});
+
+test("explicit scene semantics win over the 9:16 role fallback", async () => {
+  const { classifyLocalAsset } = await classifierApi();
+  const result = classifyLocalAsset({
+    filePath: "/project/images/SCENE_city_street.png",
+    kind: "image",
+    width: 1080,
+    height: 1920,
+  }, { pathApi: path.posix });
+
+  assert.equal(result.smartGroup, "asset");
+  assert.equal(result.category, "场景");
+});
+
 test("unidentified images stay in review instead of being guessed", async () => {
   const { buildImageSequenceProfiles, classifyLocalAsset } = await classifierApi();
   const filePath = "/project/misc/visual.png";

@@ -13,6 +13,7 @@ import { PromptLibrary } from "./prompt-library.js";
 import { ThreeDWorkbench } from "./three-d-workbench.js";
 import { createProjectFolder, renameProjectFolder } from "./folder-operations.js";
 import { buildImageSequenceProfiles, classifyLocalAsset } from "./asset-smart-classifier.js";
+import { readImageDimensions } from "./image-dimensions.js";
 import { createAssetScanCoordinator } from "./asset-scan-coordinator.js";
 import { filterLibraryResult } from "./asset-library-filter.js";
 
@@ -1280,7 +1281,7 @@ function inferAssetCategory(filePath, kind) {
     ],
   };
   const match = (rules[kind] || []).find(([, tokens]) => tokens.some((token) => haystack.includes(token)));
-  return match?.[0] || defaultAssetTaxonomy[kind]?.at(-1) || "其他";
+  return match?.[0] || (kind === "image" ? "参考图" : defaultAssetTaxonomy[kind]?.at(-1)) || "其他";
 }
 
 function decodeXmlEntities(value) {
@@ -1450,6 +1451,7 @@ async function readTextPreview(filePath) {
 async function buildLibraryAsset(filePath, project, config, assignment, classificationContext) {
   const stats = await fs.stat(filePath);
   const kind = libraryAssetKind(filePath);
+  const dimensions = kind === "image" ? await readImageDimensions(filePath).catch(() => null) : null;
   const metadata = config.assetMetadata?.[filePath] || {};
   const assetRef = encodeAssetRef(filePath);
   const classification = classifyLocalAsset({
@@ -1457,6 +1459,8 @@ async function buildLibraryAsset(filePath, project, config, assignment, classifi
     kind,
     metadata,
     inferredCategory: inferAssetCategory(filePath, kind),
+    width: dimensions?.width || 0,
+    height: dimensions?.height || 0,
   }, classificationContext);
   return {
     id: assetRef,
@@ -1475,6 +1479,8 @@ async function buildLibraryAsset(filePath, project, config, assignment, classifi
     classificationSource: classification.source,
     tokenCost: classification.tokenCost,
     size: stats.size,
+    width: dimensions?.width || 0,
+    height: dimensions?.height || 0,
     mtimeMs: stats.mtimeMs,
     mtime: new Date(stats.mtimeMs).toISOString(),
     directory: path.dirname(filePath),
