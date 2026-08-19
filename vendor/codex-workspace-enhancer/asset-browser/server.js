@@ -13,6 +13,8 @@ import { PromptLibrary } from "./prompt-library.js";
 import { ThreeDWorkbench } from "./three-d-workbench.js";
 import { createProjectFolder, renameProjectFolder } from "./folder-operations.js";
 import { buildImageSequenceProfiles, classifyLocalAsset } from "./asset-smart-classifier.js";
+import { createAssetScanCoordinator } from "./asset-scan-coordinator.js";
+import { filterLibraryResult } from "./asset-library-filter.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicRoot = path.join(__dirname, "public");
@@ -40,6 +42,7 @@ const videoExts = new Set([".mp4", ".mov", ".m4v", ".webm"]);
 const audioExts = new Set([".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".oga", ".opus"]);
 const textExts = new Set([".md", ".markdown", ".txt", ".rtf", ".doc", ".docx"]);
 const supportedAssetExts = new Set([...imageExts, ...videoExts, ...audioExts, ...textExts]);
+const libraryScanCoordinator = createAssetScanCoordinator();
 const defaultAssetTaxonomy = {
   text: ["提示词", "Skills", "剧本", "文档"],
   image: ["角色", "场景", "道具", "分镜图", "参考图", "视频解析帧", "截图", "缩略图", "联系表", "过程图"],
@@ -1483,7 +1486,7 @@ async function buildLibraryAsset(filePath, project, config, assignment, classifi
   };
 }
 
-async function listLibraryAssets(projectId, filters = {}) {
+async function listLibraryAssets(projectId) {
   const config = await loadConfig();
   const project = config.projects.find((item) => item.id === projectId) || config.projects[0];
   if (!project) return {
@@ -1509,11 +1512,6 @@ async function listLibraryAssets(projectId, filters = {}) {
     if (assignment && assignment !== project.id) continue;
     if (!await exists(filePath)) continue;
     const asset = await buildLibraryAsset(filePath, project, config, assignment, classificationContext);
-    if (filters.kind && asset.kind !== filters.kind) continue;
-    if (filters.category && asset.category !== filters.category) continue;
-    if (filters.smartGroup && asset.smartGroup !== filters.smartGroup) continue;
-    const query = String(filters.query || "").trim().toLocaleLowerCase("zh-CN");
-    if (query && ![asset.name, asset.preview, asset.category, ...asset.tags, ...asset.autoTags].join(" ").toLocaleLowerCase("zh-CN").includes(query)) continue;
     assets.push(asset);
   }
   assets.sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name, "zh-CN", { numeric: true }));
@@ -2222,7 +2220,9 @@ const server = createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/library" && req.method === "GET") {
-      sendJson(res, await listLibraryAssets(url.searchParams.get("project") || "", {
+      const projectId = url.searchParams.get("project") || "";
+      const library = await libraryScanCoordinator.run(projectId, () => listLibraryAssets(projectId));
+      sendJson(res, filterLibraryResult(library, {
         kind: url.searchParams.get("kind") || "",
         category: url.searchParams.get("category") || "",
         smartGroup: url.searchParams.get("smartGroup") || "",

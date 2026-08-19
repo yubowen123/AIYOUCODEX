@@ -97,7 +97,7 @@ export function classifyLocalAsset(
   const profile = profiles.get(directory) || { total: 0, sequenceLike: 0, density: 0 };
   const denseSequence = profile.total >= 12 && profile.density >= 0.8;
   const explicitFramePath = /(?:^|\/)(?:frames?|second[_-]?frames?|video[_-]?frames?|extracted[_-]?frames?|final[_-]?frames?)(?:\/|$)|抽帧|截帧|视频帧/u.test(normalized);
-  const explicitProcessPath = /(?:^|\/)(?:thumbnails?|contact[_-]?sheets?|screenshots?|rendered[_-]?reference|audit|temp|tmp|cache)(?:\/|$)|缩略图|联系表|审计图|过程图/u.test(normalized);
+  const explicitProcessPath = /(?:^|\/)(?:thumbnails?|contact[_-]?sheets?|screenshots?|rendered[_-]?reference|audit)(?:\/|$)|缩略图|联系表|审计图|过程图/u.test(normalized);
   if (denseSequence || explicitFramePath || explicitProcessPath) {
     const sequenceNoise = denseSequence || explicitFramePath;
     return automaticResult({

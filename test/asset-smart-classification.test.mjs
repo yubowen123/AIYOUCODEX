@@ -66,6 +66,22 @@ test("unidentified images stay in review instead of being guessed", async () => 
   assert.ok(result.confidence < 80);
 });
 
+test("Windows temp roots do not turn real or ambiguous images into process noise", async () => {
+  const { buildImageSequenceProfiles, classifyLocalAsset } = await classifierApi();
+  const fixtures = [
+    ["C:\\Users\\runner\\AppData\\Local\\Temp\\fixture\\角色\\hero.png", "asset", "角色"],
+    ["C:\\Users\\runner\\AppData\\Local\\Temp\\fixture\\misc\\visual.png", "review", "参考图"],
+    ["C:\\Users\\runner\\AppData\\Local\\Temp\\fixture\\screenshots\\shot.png", "noise", "截图"],
+  ];
+  const profiles = buildImageSequenceProfiles(fixtures.map(([filePath]) => filePath), path.win32);
+
+  for (const [filePath, smartGroup, category] of fixtures) {
+    const result = classifyLocalAsset({ filePath, kind: "image" }, { profiles, pathApi: path.win32 });
+    assert.equal(result.smartGroup, smartGroup, filePath);
+    assert.equal(result.category, category, filePath);
+  }
+});
+
 test("manual grouping and labels permanently override local inference", async () => {
   const { buildImageSequenceProfiles, classifyLocalAsset } = await classifierApi();
   const filePath = "/project/frames/frame_0042.jpg";
