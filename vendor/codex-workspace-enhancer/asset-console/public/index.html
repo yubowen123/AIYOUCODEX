@@ -52,6 +52,14 @@
       </header>
 
       <section class="asset-toolbar" aria-label="资产筛选">
+        <div class="smart-group-row">
+          <nav id="smartGroupTabs" class="smart-group-tabs" role="tablist" aria-label="智能分组">
+            <button type="button" role="tab" data-smart-group="asset" aria-selected="true" class="active"><span>正式资产</span><small data-smart-count="asset">0</small></button>
+            <button type="button" role="tab" data-smart-group="review" aria-selected="false"><span>待确认</span><small data-smart-count="review">0</small></button>
+            <button type="button" role="tab" data-smart-group="noise" aria-selected="false"><span>干扰项</span><small data-smart-count="noise">0</small></button>
+          </nav>
+          <span class="local-rule-note" title="仅使用文件路径、名称和目录序列密度判断，不调用大模型">本地规则 · 0 Token</span>
+        </div>
         <nav id="assetKindTabs" class="kind-tabs" aria-label="资产类型">
           <button type="button" data-asset-kind="all" class="active"><span>全部</span><small data-kind-count="all">0</small></button>
           <button type="button" data-asset-kind="text"><span>文本</span><small data-kind-count="text">0</small></button>

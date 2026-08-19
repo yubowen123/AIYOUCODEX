@@ -49,6 +49,11 @@ try {
   const initial = await frame.evaluate(`(() => ({
     title: document.title,
     projectCount: document.querySelectorAll('#localProjectList .project-item').length,
+    smartGroups: Array.from(document.querySelectorAll('#smartGroupTabs [data-smart-group]')).map((node) => ({
+      name: node.querySelector('span')?.textContent?.trim() || '',
+      count: Number(node.querySelector('small')?.textContent || 0),
+      selected: node.getAttribute('aria-selected') === 'true',
+    })),
     tabs: Array.from(document.querySelectorAll('[data-asset-kind]')).map((node) => node.textContent.trim()),
     searchPlaceholder: document.getElementById('librarySearchInput')?.placeholder || '',
     cardCount: document.querySelectorAll('#assetGrid .asset-card').length,
@@ -56,9 +61,50 @@ try {
     columns: getComputedStyle(document.documentElement).getPropertyValue('--asset-columns').trim(),
   }))()`);
   assert.equal(initial.title, "本地资产库");
+  assert.deepEqual(initial.smartGroups.map((item) => item.name), ["正式资产", "待确认", "干扰项"]);
+  assert.equal(initial.smartGroups[0].selected, true);
+  assert.ok(initial.smartGroups.every((item) => item.count >= 0));
   assert.deepEqual(initial.tabs.map((item) => item.replace(/\d+/g, "")), ["全部", "文本", "图片", "音频", "视频"]);
   assert.match(initial.searchPlaceholder, /名称、内容、分类或标签/);
   assert.ok(initial.sidebarWidth >= 200);
+
+  const classificationAudit = await frame.evaluate(`(() => {
+    const assets = state.assets || [];
+    const byGroup = Object.fromEntries(['asset', 'review', 'noise'].map((group) => [group, assets.filter((asset) => asset.smartGroup === group).length]));
+    const noiseCategories = assets.filter((asset) => asset.smartGroup === 'noise').reduce((counts, asset) => {
+      counts[asset.category] = (counts[asset.category] || 0) + 1;
+      return counts;
+    }, {});
+    return {
+      total: assets.length,
+      byGroup,
+      noiseCategories,
+      zeroToken: assets.every((asset) => asset.tokenCost === 0),
+      samples: Object.fromEntries(['asset', 'review', 'noise'].map((group) => [group, assets.filter((asset) => asset.smartGroup === group).slice(0, 3).map((asset) => asset.name)])),
+    };
+  })()`);
+  assert.deepEqual(classificationAudit.byGroup, Object.fromEntries(initial.smartGroups.map((item, index) => [["asset", "review", "noise"][index], item.count])));
+  assert.equal(classificationAudit.zeroToken, true);
+  assert.ok(classificationAudit.byGroup.noise > 0);
+
+  await clickAt(frame, `document.querySelector('#smartGroupTabs [data-smart-group="noise"]')`);
+  const noiseView = await waitFor(() => frame.evaluate(`(() => {
+    const button = document.querySelector('#smartGroupTabs [data-smart-group="noise"]');
+    const cards = Array.from(document.querySelectorAll('#assetGrid .asset-card'));
+    if (button?.getAttribute('aria-selected') !== 'true' || !cards.length) return null;
+    return {
+      active: true,
+      cardCount: cards.length,
+      allNoise: cards.every((card) => card.dataset.smartGroup === 'noise'),
+      hasAutomaticTag: Boolean(document.querySelector('#assetGrid .asset-tag.automatic')),
+      hasConfidence: Array.from(document.querySelectorAll('#assetGrid .classification-line')).some((node) => /[0-9]+%/.test(node.textContent)),
+    };
+  })()`));
+  assert.equal(noiseView?.allNoise, true, "noise tab did not immediately filter cards");
+  assert.equal(noiseView?.hasAutomaticTag, true, "noise cards did not expose automatic tags");
+  assert.equal(noiseView?.hasConfidence, true, "noise cards did not expose confidence");
+  await clickAt(frame, `document.querySelector('#smartGroupTabs [data-smart-group="asset"]')`);
+  assert.equal(await frame.evaluate(`document.querySelector('#smartGroupTabs [data-smart-group="asset"]')?.getAttribute('aria-selected') === 'true'`), true);
 
   await clickAt(frame, `document.querySelector('[data-asset-kind="image"]')`);
   const imageTab = await frame.evaluate(`(() => ({
@@ -105,7 +151,7 @@ try {
   const screenshot = await main.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
 
-  process.stdout.write(`${JSON.stringify({ initial, imageTab, projectDialog, textViewer, screenshotPath }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ initial, classificationAudit, noiseView, imageTab, projectDialog, textViewer, screenshotPath }, null, 2)}\n`);
 } finally {
   frame?.close();
   main.close();
