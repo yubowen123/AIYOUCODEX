@@ -18,6 +18,7 @@ const state = {
   action: null,
   actionAsset: null,
   textAsset: null,
+  previewAsset: null,
   refreshTimer: null,
   visibleLimit: 120,
 };
@@ -32,6 +33,8 @@ const els = Object.fromEntries([
   "toggleTextEditButton", "saveTextButton", "textSaveState", "assetActionDialog", "assetActionForm",
   "assetActionTitle", "assetActionFields", "assetActionError", "confirmAssetAction", "settingsDialog",
   "settingsForm", "tagManager", "newTagInput", "addTagButton", "taxonomyManager", "toastRegion",
+  "mediaPreviewDialog", "mediaPreviewTitle", "mediaPreviewFormat", "mediaPreviewLayout", "mediaPreviewStage",
+  "mediaPromptPanel", "mediaPromptMeta", "mediaPromptText", "mediaNegativePromptGroup", "mediaNegativePromptText", "mediaPromptReferences",
 ].map((id) => [id, document.getElementById(id)]));
 
 function escapeHtml(value) {
@@ -204,7 +207,10 @@ function commonCardMarkup(asset, typeLabel) {
   const reviewActions = asset.smartGroup === "review"
     ? `<div class="review-actions" aria-label="人工复核 ${escapeHtml(asset.name)}"><button data-action="manual-category" type="button">手动分类</button><button data-action="manual-tags" type="button">手动标签</button></div>`
     : "";
-  return `<header class="asset-card-header"><div><span class="asset-format">${escapeHtml(typeLabel)}</span><h3 title="${escapeHtml(asset.name)}">${escapeHtml(asset.title)}</h3></div><details class="asset-menu"><summary aria-label="管理 ${escapeHtml(asset.name)}">•••</summary><div><button data-action="metadata" type="button">分类与标签</button><button data-action="rename" type="button">重命名</button><button data-action="move" type="button">移动到项目</button><button data-action="delete" type="button" class="danger">永久删除</button></div></details></header><div class="asset-meta"><span>${formatBytes(asset.size)}</span><span>${formatDate(asset.mtimeMs)}</span></div><div class="classification-line" title="${escapeHtml(asset.classificationReason || "")}"><span>${escapeHtml(asset.category)}</span><span>${escapeHtml(sourceLabel)} · ${Number(asset.confidence) || 0}%</span></div><div class="asset-tags">${tags}</div>${reviewActions}`;
+  const promptBadge = asset.promptAssociation?.available
+    ? `<span class="prompt-link-badge" title="双击查看资产与关联提示词">⌘ 已关联提示词</span>`
+    : "";
+  return `<header class="asset-card-header"><div><span class="asset-format">${escapeHtml(typeLabel)}</span><h3 title="${escapeHtml(asset.name)}">${escapeHtml(asset.title)}</h3></div><details class="asset-menu"><summary aria-label="管理 ${escapeHtml(asset.name)}">•••</summary><div><button data-action="metadata" type="button">分类与标签</button><button data-action="rename" type="button">重命名</button><button data-action="move" type="button">移动到项目</button><button data-action="delete" type="button" class="danger">永久删除</button></div></details></header><div class="asset-meta"><span>${formatBytes(asset.size)}</span><span>${formatDate(asset.mtimeMs)}</span>${promptBadge}</div><div class="classification-line" title="${escapeHtml(asset.classificationReason || "")}"><span>${escapeHtml(asset.category)}</span><span>${escapeHtml(sourceLabel)} · ${Number(asset.confidence) || 0}%</span></div><div class="asset-tags">${tags}</div>${reviewActions}`;
 }
 
 function renderTextCard(asset) {
@@ -228,7 +234,10 @@ function renderImageCard(asset) {
   card.innerHTML = `<figure class="media-frame"><img src="${asset.mediaUrl}" alt="${escapeHtml(asset.title)}" loading="lazy"><figcaption class="dimension-label">读取尺寸…</figcaption></figure>${commonCardMarkup(asset, asset.extension || "IMAGE")}`;
   const image = card.querySelector("img");
   image.addEventListener("load", () => { card.querySelector(".dimension-label").textContent = `${image.naturalWidth} × ${image.naturalHeight}`; });
-  image.addEventListener("dblclick", () => openMediaLightbox(image));
+  card.addEventListener("dblclick", (event) => {
+    if (event.target.closest("button, details, .review-actions")) return;
+    openMediaAsset(asset);
+  });
   return card;
 }
 
@@ -246,6 +255,11 @@ function renderAudioCard(asset) {
   card.addEventListener("mouseenter", start);
   card.addEventListener("mouseleave", stop);
   play.addEventListener("click", (event) => { event.stopPropagation(); audio.paused ? start() : stop(); });
+  card.addEventListener("dblclick", (event) => {
+    if (event.target.closest("button, details, .review-actions")) return;
+    stop();
+    openMediaAsset(asset);
+  });
   return card;
 }
 
@@ -263,15 +277,49 @@ function renderVideoCard(asset) {
     event.stopPropagation();
     if (video.requestFullscreen) video.requestFullscreen();
   });
+  card.addEventListener("dblclick", (event) => {
+    if (event.target.closest("button, details, .review-actions")) return;
+    video.pause();
+    openMediaAsset(asset);
+  });
   return card;
 }
 
-function openMediaLightbox(source) {
-  const overlay = document.createElement("div");
-  overlay.className = "media-lightbox";
-  overlay.innerHTML = `<button type="button" aria-label="关闭">×</button><img src="${source.src}" alt="${escapeHtml(source.alt)}">`;
-  overlay.addEventListener("click", () => overlay.remove());
-  document.body.append(overlay);
+function renderMediaPreview(asset) {
+  if (asset.kind === "image") return `<img src="${asset.mediaUrl}" alt="${escapeHtml(asset.title)}">`;
+  if (asset.kind === "video") return `<video src="${asset.mediaUrl}" controls autoplay playsinline></video>`;
+  return `<div class="audio-preview-visual"><span aria-hidden="true">◉</span><strong>${escapeHtml(asset.title)}</strong><small>${escapeHtml(asset.extension || "AUDIO")} · ${formatBytes(asset.size)}</small></div><audio src="${asset.mediaUrl}" controls autoplay></audio>`;
+}
+
+async function openMediaAsset(asset) {
+  state.previewAsset = asset;
+  els.mediaPreviewTitle.textContent = asset.title;
+  els.mediaPreviewFormat.textContent = asset.extension || asset.kind.toUpperCase();
+  els.mediaPreviewStage.innerHTML = renderMediaPreview(asset);
+  els.mediaPromptPanel.hidden = true;
+  els.mediaPreviewLayout.classList.remove("has-prompt");
+  els.mediaPromptMeta.replaceChildren();
+  els.mediaPromptText.textContent = "";
+  els.mediaNegativePromptText.textContent = "";
+  els.mediaPromptReferences.replaceChildren();
+  els.mediaPreviewDialog.showModal();
+  if (!asset.promptAssociation?.available) return;
+  try {
+    const association = await api(`/api/assets/prompt?id=${encodeURIComponent(asset.id)}`);
+    if (state.previewAsset?.id !== asset.id || !els.mediaPreviewDialog.open) return;
+    const meta = [association.generator, association.model].filter(Boolean);
+    els.mediaPromptMeta.innerHTML = `${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}${association.threadId ? `<span title="${escapeHtml(association.threadId)}">Codex 任务</span>` : ""}`;
+    els.mediaPromptText.textContent = association.prompt || "（未登记提示词）";
+    els.mediaNegativePromptGroup.hidden = !association.negativePrompt;
+    els.mediaNegativePromptText.textContent = association.negativePrompt || "";
+    const references = Array.isArray(association.references) ? association.references : [];
+    els.mediaPromptReferences.hidden = !references.length;
+    if (references.length) els.mediaPromptReferences.innerHTML = `<h4>参考资产</h4><ul>${references.map((item) => `<li title="${escapeHtml(item)}">${escapeHtml(item)}</li>`).join("")}</ul>`;
+    els.mediaPromptPanel.hidden = false;
+    els.mediaPreviewLayout.classList.add("has-prompt");
+  } catch (error) {
+    showToast(error.message, "error");
+  }
 }
 
 function visibleAssets() {
@@ -642,6 +690,11 @@ function bindEvents() {
     state.settings.tags.push(tag); els.newTagInput.value = ""; renderSettings();
   });
   els.settingsForm.addEventListener("submit", saveSettings);
+  els.mediaPreviewDialog.addEventListener("close", () => {
+    els.mediaPreviewStage.querySelectorAll("audio, video").forEach((media) => media.pause());
+    els.mediaPreviewStage.replaceChildren();
+    state.previewAsset = null;
+  });
   document.querySelectorAll("[data-close-dialog]").forEach((button) => button.addEventListener("click", () => document.getElementById(button.dataset.closeDialog)?.close()));
   document.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {

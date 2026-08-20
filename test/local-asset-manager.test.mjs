@@ -53,6 +53,20 @@ test("review cards expose direct manual category and tag actions", async () => {
   assert.match(source, /defaultManualSmartGroup/);
 });
 
+test("linked media opens a split asset and prompt preview", async () => {
+  const html = await readFile(new URL("index.html", consoleRoot), "utf8");
+  const source = await readFile(new URL("app.js", consoleRoot), "utf8");
+  const styles = await readFile(new URL("ui-v3.css", consoleRoot), "utf8");
+  assert.match(html, /id="mediaPreviewDialog"/);
+  assert.match(html, /id="mediaPreviewStage"/);
+  assert.match(html, /id="mediaPromptPanel"/);
+  assert.match(source, /promptAssociation\?\.available/);
+  assert.match(source, /\/api\/assets\/prompt/);
+  assert.match(source, /openMediaAsset/);
+  assert.match(styles, /\.media-preview-layout\.has-prompt/);
+  assert.match(styles, /grid-template-columns:\s*minmax\(0,\s*1\.2fr\)\s+minmax\(320px,\s*0\.8fr\)/);
+});
+
 test("asset service supports multi-folder projects and non-destructive project reassignment", async () => {
   const server = await readFile(new URL("server.js", browserRoot), "utf8");
   assert.match(server, /textExts/);
@@ -68,6 +82,7 @@ test("asset service supports multi-folder projects and non-destructive project r
   assert.match(server, /\/api\/assets\/rename/);
   assert.match(server, /\/api\/assets\/delete/);
   assert.match(server, /\/api\/text/);
+  assert.match(server, /\/api\/assets\/prompt/);
 });
 
 test("embedded and service-served asset manager builds stay synchronized", async () => {

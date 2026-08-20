@@ -155,6 +155,25 @@
     </form>
   </dialog>
 
+  <dialog id="mediaPreviewDialog" class="modal media-preview-modal">
+    <div class="media-preview-shell">
+      <header class="modal-header">
+        <div><span id="mediaPreviewFormat" class="eyebrow">MEDIA</span><h2 id="mediaPreviewTitle">资产预览</h2></div>
+        <button type="button" class="icon-button" data-close-dialog="mediaPreviewDialog" aria-label="关闭">×</button>
+      </header>
+      <div id="mediaPreviewLayout" class="media-preview-layout">
+        <section id="mediaPreviewStage" class="media-preview-stage" aria-label="资产内容"></section>
+        <aside id="mediaPromptPanel" class="media-prompt-panel" aria-label="关联提示词" hidden>
+          <div class="prompt-panel-heading"><span class="eyebrow">LINKED PROMPT</span><h3>关联提示词</h3></div>
+          <div id="mediaPromptMeta" class="prompt-meta"></div>
+          <section class="prompt-section"><h4>正向提示词</h4><div id="mediaPromptText" class="prompt-content"></div></section>
+          <section id="mediaNegativePromptGroup" class="prompt-section"><h4>负向提示词 / 约束</h4><div id="mediaNegativePromptText" class="prompt-content"></div></section>
+          <section id="mediaPromptReferences" class="prompt-section prompt-references"></section>
+        </aside>
+      </div>
+    </div>
+  </dialog>
+
   <dialog id="settingsDialog" class="modal settings-modal">
     <form id="settingsForm" method="dialog">
       <header class="modal-header">

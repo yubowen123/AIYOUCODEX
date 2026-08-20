@@ -60,9 +60,17 @@ test("local asset API scans multiple folders and keeps project moves logical", a
   const first = path.join(root, "first");
   const second = path.join(root, "second");
   const target = path.join(root, "target");
+  const sessionsRoot = path.join(root, "sessions");
+  const generatedImagesRoot = path.join(root, "generated-images");
+  const generatedThreadId = "generated-thread";
+  const generatedCallId = "exec-generated-image";
+  const generatedImagePath = path.join(generatedImagesRoot, generatedThreadId, `${generatedCallId}.png`);
+  const unrelatedThreadId = "unrelated-thread";
+  const unrelatedCallId = "exec-unrelated-image";
+  const unrelatedImagePath = path.join(generatedImagesRoot, unrelatedThreadId, `${unrelatedCallId}.png`);
   const frameDirectory = path.join(second, "video-analysis", "frames", "second_frames");
   const miscDirectory = path.join(second, "misc");
-  await Promise.all([mkdir(first), mkdir(second), mkdir(target), mkdir(frameDirectory, { recursive: true }), mkdir(miscDirectory, { recursive: true })]);
+  await Promise.all([mkdir(first), mkdir(second), mkdir(target), mkdir(frameDirectory, { recursive: true }), mkdir(miscDirectory, { recursive: true }), mkdir(path.join(sessionsRoot, "2026", "08", "20"), { recursive: true }), mkdir(path.dirname(generatedImagePath), { recursive: true }), mkdir(path.dirname(unrelatedImagePath), { recursive: true })]);
   const promptPath = path.join(first, "hero-prompt.md");
   const audioPath = path.join(first, "character-voice.mp3");
   const imagePath = path.join(second, "角色海报.png");
@@ -75,8 +83,31 @@ test("local asset API scans multiple folders and keeps project moves logical", a
     writeFile(promptPath, "# Hero\nOriginal prompt"),
     writeFile(audioPath, "audio-fixture"),
     writeFile(imagePath, "image-fixture"),
+    writeFile(path.join(second, "角色海报.meta.json"), JSON.stringify({
+      schemaVersion: 1,
+      ticket: {
+        kind: "image",
+        prompt: "九比十六竖版东方女将角色全身设定图",
+        negativePrompt: "避免文字和水印",
+        generator: "codex-image",
+        model: "image-v1",
+        sourceContext: { threadId: "image-thread" },
+      },
+    })),
     writeFile(videoPath, "video-fixture"),
     writeFile(ambiguousImagePath, "ambiguous-image-fixture"),
+    writeFile(generatedImagePath, "generated-image-fixture"),
+    writeFile(unrelatedImagePath, "unrelated-generated-image-fixture"),
+    writeFile(path.join(sessionsRoot, "2026", "08", "20", "rollout.jsonl"), [
+      JSON.stringify({ timestamp: new Date().toISOString(), type: "session_meta", payload: { id: generatedThreadId, cwd: first } }),
+      JSON.stringify({ timestamp: new Date().toISOString(), type: "event_msg", payload: { type: "image_generation_end", call_id: generatedCallId, status: "completed", revised_prompt: "Codex 自动关联的角色概念图" } }),
+      "",
+    ].join("\n")),
+    writeFile(path.join(sessionsRoot, "2026", "08", "20", "unrelated-rollout.jsonl"), [
+      JSON.stringify({ timestamp: new Date().toISOString(), type: "session_meta", payload: { id: unrelatedThreadId, cwd: path.join(root, "not-a-project") } }),
+      JSON.stringify({ timestamp: new Date().toISOString(), type: "event_msg", payload: { type: "image_generation_end", call_id: unrelatedCallId, status: "completed", revised_prompt: "不应串入其他项目的生成图" } }),
+      "",
+    ].join("\n")),
     ...framePaths.map((filePath) => writeFile(filePath, "frame-fixture")),
     writeFile(wordPath, createStoredZip({
       "[Content_Types].xml": "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"></Types>",
@@ -97,6 +128,9 @@ test("local asset API scans multiple folders and keeps project moves logical", a
       ASSET_BROWSER_LEDGER: path.join(root, "ledger.json"),
       GENERATION_TICKETS: path.join(root, "generation.json"),
       GENERATION_THREAD_BINDINGS: path.join(root, "bindings.json"),
+      CODEX_PROMPT_ASSOCIATIONS: path.join(root, "prompt-associations.json"),
+      CODEX_SESSIONS_ROOT: sessionsRoot,
+      CODEX_GENERATED_IMAGES_ROOT: generatedImagesRoot,
       DUPLICATE_CLEANUP_LEDGER: path.join(root, "duplicates.json"),
       DUPLICATE_QUARANTINE: path.join(root, "quarantine"),
       RHYTHM_CONTROL_REGISTRY: path.join(root, "rhythm.json"),
@@ -146,6 +180,45 @@ test("local asset API scans multiple folders and keeps project moves logical", a
     const roleImage = initial.assets.find((asset) => asset.name === "角色海报.png");
     assert.equal(roleImage.smartGroup, "asset");
     assert.ok(roleImage.autoTags.includes("自动·角色"));
+    assert.deepEqual(roleImage.promptAssociation, {
+      available: true,
+      source: "generation-sidecar",
+      kind: "image",
+      generator: "codex-image",
+      model: "image-v1",
+      threadId: "image-thread",
+    });
+    const linkedPrompt = await request(`/api/assets/prompt?id=${encodeURIComponent(roleImage.id)}`);
+    assert.equal(linkedPrompt.prompt, "九比十六竖版东方女将角色全身设定图");
+    assert.equal(linkedPrompt.negativePrompt, "避免文字和水印");
+    const renamedLinked = await request("/api/assets/rename", {
+      method: "POST",
+      body: JSON.stringify({ assetId: roleImage.id, name: "角色设定" }),
+    });
+    const renamedLinkedPath = path.join(second, "角色设定.png");
+    const renamedLinkedMetaPath = path.join(second, "角色设定.meta.json");
+    assert.equal(existsSync(renamedLinkedPath), true);
+    assert.equal(existsSync(renamedLinkedMetaPath), true, "prompt sidecar must follow a renamed asset");
+    assert.equal((await request(`/api/assets/prompt?id=${encodeURIComponent(renamedLinked.result.assetId)}`)).prompt, "九比十六竖版东方女将角色全身设定图");
+    await request("/api/assets/delete", {
+      method: "DELETE",
+      body: JSON.stringify({ assetId: renamedLinked.result.assetId, confirmName: "角色设定.png" }),
+    });
+    assert.equal(existsSync(renamedLinkedPath), false);
+    assert.equal(existsSync(renamedLinkedMetaPath), false, "prompt sidecar must be deleted with the real asset");
+    let importedGenerated = null;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      importedGenerated = (await request(`/api/library?project=${sourceProject.id}`)).assets
+        .find((asset) => asset.name === `${generatedCallId}.png`);
+      if (importedGenerated) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(importedGenerated, "Codex-generated media should be assigned by the session cwd");
+    assert.equal(importedGenerated.promptAssociation.available, true);
+    assert.equal((await request(`/api/assets/prompt?id=${encodeURIComponent(importedGenerated.id)}`)).prompt, "Codex 自动关联的角色概念图");
+    assert.equal((await request(`/api/library?project=${sourceProject.id}`)).assets.some((asset) => asset.name === `${unrelatedCallId}.png`), false, "an unrelated cwd must not fall back into the only configured project");
+    assert.equal((await request("/api/assets/assign", { method: "DELETE", body: JSON.stringify({ assetId: importedGenerated.id }) })).result.removed, true);
+    assert.equal((await request(`/api/library?project=${sourceProject.id}`)).assets.some((asset) => asset.id === importedGenerated.id), false);
     const extractedFrame = initial.assets.find((asset) => asset.name === "frame_0008.jpg");
     assert.equal(extractedFrame.smartGroup, "noise");
     assert.equal(extractedFrame.category, "视频解析帧");

@@ -23,6 +23,7 @@ test("public package contains every managed runtime and excludes local-only outp
     "vendor/codex-workspace-enhancer/asset-browser/asset-library-filter.js",
     "vendor/codex-workspace-enhancer/asset-browser/image-dimensions.js",
     "vendor/codex-workspace-enhancer/asset-browser/asset-scan-coordinator.js",
+    "vendor/codex-workspace-enhancer/asset-browser/codex-prompt-associations.js",
     "vendor/codex-workspace-enhancer/asset-browser/server.js",
     "vendor/codex-workspace-enhancer/asset-console/public/index.html",
     "vendor/codex-workspace-enhancer/asset-console/public/asset-metadata-ui.js",
