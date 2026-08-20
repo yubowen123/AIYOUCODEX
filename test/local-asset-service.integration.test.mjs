@@ -60,6 +60,7 @@ test("local asset API scans multiple folders and keeps project moves logical", a
   const first = path.join(root, "first");
   const second = path.join(root, "second");
   const target = path.join(root, "target");
+  const productionExtra = path.join(root, "production-extra");
   const sessionsRoot = path.join(root, "sessions");
   const generatedImagesRoot = path.join(root, "generated-images");
   const generatedThreadId = "generated-thread";
@@ -70,13 +71,25 @@ test("local asset API scans multiple folders and keeps project moves logical", a
   const unrelatedImagePath = path.join(generatedImagesRoot, unrelatedThreadId, `${unrelatedCallId}.png`);
   const frameDirectory = path.join(second, "video-analysis", "frames", "second_frames");
   const miscDirectory = path.join(second, "misc");
-  await Promise.all([mkdir(first), mkdir(second), mkdir(target), mkdir(frameDirectory, { recursive: true }), mkdir(miscDirectory, { recursive: true }), mkdir(path.join(sessionsRoot, "2026", "08", "20"), { recursive: true }), mkdir(path.dirname(generatedImagePath), { recursive: true }), mkdir(path.dirname(unrelatedImagePath), { recursive: true })]);
+  await Promise.all([mkdir(first), mkdir(second), mkdir(target), mkdir(productionExtra), mkdir(frameDirectory, { recursive: true }), mkdir(miscDirectory, { recursive: true }), mkdir(path.join(sessionsRoot, "2026", "08", "20"), { recursive: true }), mkdir(path.dirname(generatedImagePath), { recursive: true }), mkdir(path.dirname(unrelatedImagePath), { recursive: true })]);
   const promptPath = path.join(first, "hero-prompt.md");
   const audioPath = path.join(first, "character-voice.mp3");
   const imagePath = path.join(second, "角色海报.png");
   const videoPath = path.join(second, "final-trailer.mp4");
   const wordPath = path.join(first, "production-notes.docx");
   const ambiguousImagePath = path.join(miscDirectory, "visual.png");
+  const globalStatePath = path.join(root, "codex-global-state.json");
+  const sessionIndexPath = path.join(root, "session-index.jsonl");
+  const codexState = {
+    "local-projects": {
+      production: { id: "production", name: "角色图制作", rootPaths: [first] },
+      code: { id: "code", name: "侧栏代码工具", rootPaths: [target] },
+    },
+    "thread-project-assignments": {
+      [generatedThreadId]: { projectId: "production" },
+      [unrelatedThreadId]: { projectId: "code" },
+    },
+  };
   const framePaths = Array.from({ length: 24 }, (_, index) =>
     path.join(frameDirectory, `frame_${String(index).padStart(4, "0")}.jpg`));
   await Promise.all([
@@ -98,6 +111,12 @@ test("local asset API scans multiple folders and keeps project moves logical", a
     writeFile(ambiguousImagePath, "ambiguous-image-fixture"),
     writeFile(generatedImagePath, "generated-image-fixture"),
     writeFile(unrelatedImagePath, "unrelated-generated-image-fixture"),
+    writeFile(globalStatePath, JSON.stringify(codexState)),
+    writeFile(sessionIndexPath, [
+      JSON.stringify({ id: generatedThreadId, thread_name: "批量生成角色图", updated_at: new Date().toISOString() }),
+      JSON.stringify({ id: unrelatedThreadId, thread_name: "修复 README 图片链接", updated_at: new Date().toISOString() }),
+      "",
+    ].join("\n")),
     writeFile(path.join(sessionsRoot, "2026", "08", "20", "rollout.jsonl"), [
       JSON.stringify({ timestamp: new Date().toISOString(), type: "session_meta", payload: { id: generatedThreadId, cwd: first } }),
       JSON.stringify({ timestamp: new Date().toISOString(), type: "event_msg", payload: { type: "image_generation_end", call_id: generatedCallId, status: "completed", revised_prompt: "Codex 自动关联的角色概念图" } }),
@@ -131,6 +150,8 @@ test("local asset API scans multiple folders and keeps project moves logical", a
       CODEX_PROMPT_ASSOCIATIONS: path.join(root, "prompt-associations.json"),
       CODEX_SESSIONS_ROOT: sessionsRoot,
       CODEX_GENERATED_IMAGES_ROOT: generatedImagesRoot,
+      CODEX_GLOBAL_STATE: globalStatePath,
+      CODEX_SESSION_INDEX: sessionIndexPath,
       DUPLICATE_CLEANUP_LEDGER: path.join(root, "duplicates.json"),
       DUPLICATE_QUARANTINE: path.join(root, "quarantine"),
       RHYTHM_CONTROL_REGISTRY: path.join(root, "rhythm.json"),
@@ -172,9 +193,31 @@ test("local asset API scans multiple folders and keeps project moves logical", a
     })).project;
     assert.deepEqual(sourceProject.folders, [first, second]);
 
+    let synchronizedProject = null;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      const projects = (await request("/api/projects")).projects;
+      synchronizedProject = projects.find((project) => project.id === sourceProject.id && project.codexSync?.projectId === "production");
+      if (synchronizedProject) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(synchronizedProject, "the matching manual project should be linked instead of duplicated");
+    assert.equal((await request("/api/projects")).projects.filter((project) => project.codexSync?.projectId === "production").length, 1);
+    assert.equal((await request("/api/projects")).projects.some((project) => project.codexSync?.projectId === "code"), false, "ordinary code projects must not be auto-imported");
+    assert.equal((await request("/api/codex-project-sync")).state, "ready");
+
+    codexState["local-projects"].production.rootPaths.push(productionExtra);
+    await writeFile(globalStatePath, JSON.stringify(codexState));
+    for (let attempt = 0; attempt < 180; attempt += 1) {
+      synchronizedProject = (await request("/api/projects")).projects.find((project) => project.id === sourceProject.id);
+      if (synchronizedProject?.folders.includes(productionExtra)) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(synchronizedProject.folders.includes(productionExtra), "new Codex project folders should be merged on the next incremental sync");
+    assert.ok(synchronizedProject.folders.includes(second), "manual folders must survive Codex synchronization");
+
     const initial = await request(`/api/library?project=${sourceProject.id}`);
-    assert.deepEqual(initial.counts, { all: 30, text: 2, image: 26, audio: 1, video: 1 });
-    assert.deepEqual(initial.smartCounts, { asset: 5, review: 1, noise: 24 });
+    assert.deepEqual(initial.counts, { all: 31, text: 2, image: 27, audio: 1, video: 1 });
+    assert.deepEqual(initial.smartCounts, { asset: 5, review: 2, noise: 24 });
     assert.equal(initial.assets.find((asset) => asset.name === "hero-prompt.md").category, "提示词");
     assert.equal(initial.assets.find((asset) => asset.name === "character-voice.mp3").category, "角色声音");
     const roleImage = initial.assets.find((asset) => asset.name === "角色海报.png");

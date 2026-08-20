@@ -137,7 +137,8 @@ function renderProjects() {
     button.className = `project-item ${project.id === state.selectedProject ? "active" : ""}`;
     button.dataset.projectId = project.id;
     const initial = [...String(project.name || "项")][0] || "项";
-    button.innerHTML = `<span class="project-avatar">${escapeHtml(initial)}</span><span class="project-copy"><strong>${escapeHtml(project.name)}</strong><small>${project.folders?.length || 0} 个文件夹</small></span><span class="project-chevron">›</span>`;
+    const syncBadge = project.codexSync?.projectId ? `<em class="project-sync-badge" title="由 Codex 制作型项目自动同步">Codex 同步</em>` : "";
+    button.innerHTML = `<span class="project-avatar">${escapeHtml(initial)}</span><span class="project-copy"><strong>${escapeHtml(project.name)}</strong><small><span>${project.folders?.length || 0} 个文件夹</span>${syncBadge}</small></span><span class="project-chevron">›</span>`;
     button.addEventListener("click", () => selectProject(project.id));
     els.localProjectList.append(button);
   }

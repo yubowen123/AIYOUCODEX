@@ -17,6 +17,11 @@ import { readImageDimensions } from "./image-dimensions.js";
 import { createAssetScanCoordinator } from "./asset-scan-coordinator.js";
 import { filterLibraryResult } from "./asset-library-filter.js";
 import { CodexPromptAssociationStore } from "./codex-prompt-associations.js";
+import {
+  CodexProductionProjectSync,
+  normalizeCodexSyncMetadata,
+  reconcileCodexProjects,
+} from "./codex-production-project-sync.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicRoot = path.join(__dirname, "public");
@@ -65,11 +70,16 @@ const promptAssociations = new CodexPromptAssociationStore({
   sessionsRoot: process.env.CODEX_SESSIONS_ROOT || path.join(os.homedir(), ".codex", "sessions"),
   generatedImagesRoot: process.env.CODEX_GENERATED_IMAGES_ROOT || path.join(os.homedir(), ".codex", "generated_images"),
 });
+const codexProductionProjects = new CodexProductionProjectSync({
+  globalStatePath: process.env.CODEX_GLOBAL_STATE || path.join(os.homedir(), ".codex", ".codex-global-state.json"),
+  sessionIndexPath: process.env.CODEX_SESSION_INDEX || path.join(os.homedir(), ".codex", "session_index.jsonl"),
+});
 const duplicateCleaner = new ExactDuplicateCleaner({ ledgerPath: duplicateLedgerPath });
 const promptLibrary = new PromptLibrary({ root: promptLibraryRoot });
 const threeDWorkbench = new ThreeDWorkbench({ registryPath: threeDRegistryPath, skillRoot: img2threejsSkillRoot });
 let automationBusy = false;
 let promptAssociationSyncBusy = false;
+let codexProjectSyncStatus = { state: "idle", lastRunAt: "", candidates: 0, created: 0, updated: 0, error: "" };
 let configUpdateQueue = Promise.resolve();
 
 function sendJson(res, data, status = 200) {
@@ -217,7 +227,8 @@ async function loadConfig() {
         name: project.name || project.id,
         path: path.resolve(project.path || normalizeProjectFolders(project)[0] || "."),
         scanRoots: normalizeScanRoots(project.scanRoots),
-        folders: normalizeProjectFolders(project)
+        folders: normalizeProjectFolders(project),
+        codexSync: normalizeCodexSyncMetadata(project.codexSync),
       })).filter((project) => project.id && project.folders.length),
       system: systemCapabilities(),
       automation: normalizeAutomation(config.automation),
@@ -248,7 +259,8 @@ async function saveConfig(config) {
       name: project.name || project.id,
       path: path.resolve(project.path),
       scanRoots: normalizeScanRoots(project.scanRoots),
-      folders: normalizeProjectFolders(project)
+      folders: normalizeProjectFolders(project),
+      ...(normalizeCodexSyncMetadata(project.codexSync) ? { codexSync: normalizeCodexSyncMetadata(project.codexSync) } : {}),
     })),
     automation: normalizeAutomation(config.automation),
     deduplication: normalizeDeduplication(config.deduplication, { defaultQuarantinePath: duplicateQuarantinePath }),
@@ -444,6 +456,7 @@ async function listProjects() {
       path: project.path,
       scanRoots: project.scanRoots,
       folders: project.folders,
+      codexSync: project.codexSync || null,
       exists: (await Promise.all(project.folders.map((folder) => exists(folder)))).every(Boolean)
     });
   }
@@ -675,12 +688,30 @@ async function updateProject(projectId, body = {}) {
   const { result } = await updateConfig((config) => {
     const project = config.projects.find((item) => item.id === projectId);
     if (!project) throw new Error(`项目不存在：${projectId}`);
-    if (String(body.name || "").trim()) project.name = String(body.name).trim();
+    const requestedName = String(body.name || "").trim();
+    const codexSync = normalizeCodexSyncMetadata(project.codexSync);
+    if (requestedName) {
+      if (codexSync && requestedName !== project.name) codexSync.userCustomizedName = true;
+      project.name = requestedName;
+    }
     if (requestedFolders) {
+      if (codexSync) {
+        const requested = new Set(requestedFolders);
+        const managed = new Set(codexSync.managedFolders);
+        codexSync.excludedFolders = [...new Set([
+          ...codexSync.excludedFolders.filter((folder) => !requested.has(folder)),
+          ...codexSync.managedFolders.filter((folder) => !requested.has(folder)),
+        ])];
+        for (const folder of requested) {
+          if (managed.has(folder)) codexSync.excludedFolders = codexSync.excludedFolders.filter((excluded) => excluded !== folder);
+        }
+        codexSync.userCustomizedFolders = true;
+      }
       project.folders = requestedFolders;
       project.path = requestedFolders[0];
       project.scanRoots = ["."];
     }
+    if (codexSync) project.codexSync = codexSync;
     return project;
   });
   await ensureWatchers();
@@ -2018,11 +2049,58 @@ function projectForPromptAssociation(association, config, bindings) {
   return config.projects.find((project) => project.id === "pending-review") || null;
 }
 
+async function syncCodexProductionProjects(associations) {
+  const startedAt = new Date().toISOString();
+  try {
+    const candidates = await codexProductionProjects.discover({ associations });
+    const snapshot = await loadConfig();
+    const preview = reconcileCodexProjects(snapshot.projects, candidates, { now: startedAt });
+    if (!preview.changed) {
+      codexProjectSyncStatus = {
+        state: "ready",
+        lastRunAt: startedAt,
+        candidates: candidates.length,
+        created: 0,
+        updated: 0,
+        error: "",
+      };
+      return { ...codexProjectSyncStatus, changed: false };
+    }
+    const { result } = await updateConfig((config) => {
+      const reconciliation = reconcileCodexProjects(config.projects, candidates, { now: startedAt });
+      if (reconciliation.changed) config.projects = reconciliation.projects;
+      return reconciliation;
+    });
+    if (result.changed) {
+      await ensureWatchers();
+      notifyClients("project-change");
+    }
+    codexProjectSyncStatus = {
+      state: "ready",
+      lastRunAt: startedAt,
+      candidates: candidates.length,
+      created: result.created.length,
+      updated: result.updated.length,
+      error: "",
+    };
+    return { ...codexProjectSyncStatus, changed: result.changed };
+  } catch (error) {
+    codexProjectSyncStatus = {
+      ...codexProjectSyncStatus,
+      state: "error",
+      lastRunAt: startedAt,
+      error: error.message || String(error),
+    };
+    throw error;
+  }
+}
+
 async function syncCodexPromptAssociations() {
   if (promptAssociationSyncBusy) return;
   promptAssociationSyncBusy = true;
   try {
     const synced = await promptAssociations.syncCodexSessions();
+    const projectSync = await syncCodexProductionProjects(synced.associations);
     const [config, bindings] = await Promise.all([loadConfig(), generationPipeline.readBindings()]);
     const assignments = {};
     for (const association of synced.importedAssociations) {
@@ -2035,7 +2113,7 @@ async function syncCodexPromptAssociations() {
     if (Object.keys(assignments).length) {
       await updateConfig((draft) => Object.assign(draft.assetAssignments, assignments));
     }
-    if (synced.imported || Object.keys(assignments).length) notifyClients("asset-change");
+    if (synced.imported || Object.keys(assignments).length || projectSync.changed) notifyClients("asset-change");
   } catch (error) {
     console.warn("Codex prompt association:", error.message);
   } finally {
@@ -2234,6 +2312,11 @@ const server = createServer(async (req, res) => {
       const body = await readRequestBody(req);
       const projects = await reorderProjects(body.projectIds);
       sendJson(res, { ok: true, projects });
+      return;
+    }
+
+    if (url.pathname === "/api/codex-project-sync" && req.method === "GET") {
+      sendJson(res, codexProjectSyncStatus);
       return;
     }
 

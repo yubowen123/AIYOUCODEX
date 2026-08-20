@@ -83,6 +83,16 @@ test("asset service supports multi-folder projects and non-destructive project r
   assert.match(server, /\/api\/assets\/delete/);
   assert.match(server, /\/api\/text/);
   assert.match(server, /\/api\/assets\/prompt/);
+  assert.match(server, /syncCodexProductionProjects/);
+  assert.match(server, /\/api\/codex-project-sync/);
+});
+
+test("Codex-synchronized production projects are visibly identified", async () => {
+  const source = await readFile(new URL("app.js", consoleRoot), "utf8");
+  const styles = await readFile(new URL("ui-v3.css", consoleRoot), "utf8");
+  assert.match(source, /project\.codexSync\?\.projectId/);
+  assert.match(source, /Codex 同步/);
+  assert.match(styles, /\.project-sync-badge/);
 });
 
 test("embedded and service-served asset manager builds stay synchronized", async () => {

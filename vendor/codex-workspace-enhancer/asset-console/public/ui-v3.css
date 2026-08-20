@@ -46,9 +46,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .project-avatar { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: var(--soft); font-weight: 750; }
 .project-item.active .project-avatar { background: var(--accent); color: white; }
 .project-copy { min-width: 0; }
-.project-copy strong, .project-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-copy strong { font-size: 13px; }
-.project-copy small { margin-top: 3px; color: #9298a1; font-size: 10px; }
+.project-copy small { display: flex; align-items: center; gap: 5px; min-width: 0; margin-top: 3px; color: #9298a1; font-size: 10px; }
+.project-copy small > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-sync-badge { flex: none; padding: 1px 5px; border: 1px solid rgba(49, 94, 251, 0.2); border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 8px; font-style: normal; font-weight: 750; letter-spacing: 0.01em; }
 .project-chevron { color: #a9adb5; font-size: 18px; }
 .project-folders-panel { padding-top: 2px; border-top: 1px solid var(--line); }
 .folder-list { display: grid; gap: 4px; margin: 5px 0 14px; }
