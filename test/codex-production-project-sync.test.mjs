@@ -91,9 +91,9 @@ test("requires production intent for generic media folders and never cross-links
 });
 
 test("reconciliation creates stable synchronized projects and preserves manual edits", () => {
-  const firstRoot = "/projects/drama/assets";
-  const secondRoot = "/projects/drama/audio";
-  const manualRoot = "/projects/drama/manual-references";
+  const firstRoot = path.resolve("/projects/drama/assets");
+  const secondRoot = path.resolve("/projects/drama/audio");
+  const manualRoot = path.resolve("/projects/drama/manual-references");
   const candidate = {
     codexProjectId: "codex-drama",
     name: "短剧制作",
@@ -125,7 +125,7 @@ test("reconciliation creates stable synchronized projects and preserves manual e
 });
 
 test("an existing manual project is linked instead of duplicated", () => {
-  const root = "/projects/animation";
+  const root = path.resolve("/projects/animation");
   const projects = [{ id: "manual-animation", name: "动画资产", path: root, folders: [root], scanRoots: ["."] }];
   const result = reconcileCodexProjects(projects, [{
     codexProjectId: "codex-animation",
