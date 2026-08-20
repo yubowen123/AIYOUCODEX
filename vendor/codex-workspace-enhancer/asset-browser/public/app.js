@@ -1,3 +1,5 @@
+import { defaultManualSmartGroup, mergeManualTags } from "./asset-metadata-ui.js";
+
 const state = {
   system: { platform: "", name: "", pathSeparator: "/" },
   projects: [],
@@ -16,6 +18,7 @@ const state = {
   action: null,
   actionAsset: null,
   textAsset: null,
+  previewAsset: null,
   refreshTimer: null,
   visibleLimit: 120,
 };
@@ -30,6 +33,8 @@ const els = Object.fromEntries([
   "toggleTextEditButton", "saveTextButton", "textSaveState", "assetActionDialog", "assetActionForm",
   "assetActionTitle", "assetActionFields", "assetActionError", "confirmAssetAction", "settingsDialog",
   "settingsForm", "tagManager", "newTagInput", "addTagButton", "taxonomyManager", "toastRegion",
+  "mediaPreviewDialog", "mediaPreviewTitle", "mediaPreviewFormat", "mediaPreviewLayout", "mediaPreviewStage",
+  "mediaPromptPanel", "mediaPromptMeta", "mediaPromptText", "mediaNegativePromptGroup", "mediaNegativePromptText", "mediaPromptReferences",
 ].map((id) => [id, document.getElementById(id)]));
 
 function escapeHtml(value) {
@@ -132,7 +137,8 @@ function renderProjects() {
     button.className = `project-item ${project.id === state.selectedProject ? "active" : ""}`;
     button.dataset.projectId = project.id;
     const initial = [...String(project.name || "项")][0] || "项";
-    button.innerHTML = `<span class="project-avatar">${escapeHtml(initial)}</span><span class="project-copy"><strong>${escapeHtml(project.name)}</strong><small>${project.folders?.length || 0} 个文件夹</small></span><span class="project-chevron">›</span>`;
+    const syncBadge = project.codexSync?.projectId ? `<em class="project-sync-badge" title="由 Codex 制作型项目自动同步">Codex 同步</em>` : "";
+    button.innerHTML = `<span class="project-avatar">${escapeHtml(initial)}</span><span class="project-copy"><strong>${escapeHtml(project.name)}</strong><small><span>${project.folders?.length || 0} 个文件夹</span>${syncBadge}</small></span><span class="project-chevron">›</span>`;
     button.addEventListener("click", () => selectProject(project.id));
     els.localProjectList.append(button);
   }
@@ -199,7 +205,13 @@ function commonCardMarkup(asset, typeLabel) {
   const autoTags = (asset.autoTags || []).slice(0, 2).map((tag) => `<span class="asset-tag automatic">${escapeHtml(tag)}</span>`).join("");
   const tags = manualTags || autoTags || `<span class="asset-tag muted">${escapeHtml(asset.category)}</span>`;
   const sourceLabel = asset.classificationSource === "manual" ? "人工确认" : "本地规则 · 0 Token";
-  return `<header class="asset-card-header"><div><span class="asset-format">${escapeHtml(typeLabel)}</span><h3 title="${escapeHtml(asset.name)}">${escapeHtml(asset.title)}</h3></div><details class="asset-menu"><summary aria-label="管理 ${escapeHtml(asset.name)}">•••</summary><div><button data-action="metadata" type="button">分类与标签</button><button data-action="rename" type="button">重命名</button><button data-action="move" type="button">移动到项目</button><button data-action="delete" type="button" class="danger">永久删除</button></div></details></header><div class="asset-meta"><span>${formatBytes(asset.size)}</span><span>${formatDate(asset.mtimeMs)}</span></div><div class="classification-line" title="${escapeHtml(asset.classificationReason || "")}"><span>${escapeHtml(asset.category)}</span><span>${escapeHtml(sourceLabel)} · ${Number(asset.confidence) || 0}%</span></div><div class="asset-tags">${tags}</div>`;
+  const reviewActions = asset.smartGroup === "review"
+    ? `<div class="review-actions" aria-label="人工复核 ${escapeHtml(asset.name)}"><button data-action="manual-category" type="button">手动分类</button><button data-action="manual-tags" type="button">手动标签</button></div>`
+    : "";
+  const promptBadge = asset.promptAssociation?.available
+    ? `<span class="prompt-link-badge" title="双击查看资产与关联提示词">⌘ 已关联提示词</span>`
+    : "";
+  return `<header class="asset-card-header"><div><span class="asset-format">${escapeHtml(typeLabel)}</span><h3 title="${escapeHtml(asset.name)}">${escapeHtml(asset.title)}</h3></div><details class="asset-menu"><summary aria-label="管理 ${escapeHtml(asset.name)}">•••</summary><div><button data-action="metadata" type="button">分类与标签</button><button data-action="rename" type="button">重命名</button><button data-action="move" type="button">移动到项目</button><button data-action="delete" type="button" class="danger">永久删除</button></div></details></header><div class="asset-meta"><span>${formatBytes(asset.size)}</span><span>${formatDate(asset.mtimeMs)}</span>${promptBadge}</div><div class="classification-line" title="${escapeHtml(asset.classificationReason || "")}"><span>${escapeHtml(asset.category)}</span><span>${escapeHtml(sourceLabel)} · ${Number(asset.confidence) || 0}%</span></div><div class="asset-tags">${tags}</div>${reviewActions}`;
 }
 
 function renderTextCard(asset) {
@@ -223,7 +235,10 @@ function renderImageCard(asset) {
   card.innerHTML = `<figure class="media-frame"><img src="${asset.mediaUrl}" alt="${escapeHtml(asset.title)}" loading="lazy"><figcaption class="dimension-label">读取尺寸…</figcaption></figure>${commonCardMarkup(asset, asset.extension || "IMAGE")}`;
   const image = card.querySelector("img");
   image.addEventListener("load", () => { card.querySelector(".dimension-label").textContent = `${image.naturalWidth} × ${image.naturalHeight}`; });
-  image.addEventListener("dblclick", () => openMediaLightbox(image));
+  card.addEventListener("dblclick", (event) => {
+    if (event.target.closest("button, details, .review-actions")) return;
+    openMediaAsset(asset);
+  });
   return card;
 }
 
@@ -241,6 +256,11 @@ function renderAudioCard(asset) {
   card.addEventListener("mouseenter", start);
   card.addEventListener("mouseleave", stop);
   play.addEventListener("click", (event) => { event.stopPropagation(); audio.paused ? start() : stop(); });
+  card.addEventListener("dblclick", (event) => {
+    if (event.target.closest("button, details, .review-actions")) return;
+    stop();
+    openMediaAsset(asset);
+  });
   return card;
 }
 
@@ -258,15 +278,49 @@ function renderVideoCard(asset) {
     event.stopPropagation();
     if (video.requestFullscreen) video.requestFullscreen();
   });
+  card.addEventListener("dblclick", (event) => {
+    if (event.target.closest("button, details, .review-actions")) return;
+    video.pause();
+    openMediaAsset(asset);
+  });
   return card;
 }
 
-function openMediaLightbox(source) {
-  const overlay = document.createElement("div");
-  overlay.className = "media-lightbox";
-  overlay.innerHTML = `<button type="button" aria-label="关闭">×</button><img src="${source.src}" alt="${escapeHtml(source.alt)}">`;
-  overlay.addEventListener("click", () => overlay.remove());
-  document.body.append(overlay);
+function renderMediaPreview(asset) {
+  if (asset.kind === "image") return `<img src="${asset.mediaUrl}" alt="${escapeHtml(asset.title)}">`;
+  if (asset.kind === "video") return `<video src="${asset.mediaUrl}" controls autoplay playsinline></video>`;
+  return `<div class="audio-preview-visual"><span aria-hidden="true">◉</span><strong>${escapeHtml(asset.title)}</strong><small>${escapeHtml(asset.extension || "AUDIO")} · ${formatBytes(asset.size)}</small></div><audio src="${asset.mediaUrl}" controls autoplay></audio>`;
+}
+
+async function openMediaAsset(asset) {
+  state.previewAsset = asset;
+  els.mediaPreviewTitle.textContent = asset.title;
+  els.mediaPreviewFormat.textContent = asset.extension || asset.kind.toUpperCase();
+  els.mediaPreviewStage.innerHTML = renderMediaPreview(asset);
+  els.mediaPromptPanel.hidden = true;
+  els.mediaPreviewLayout.classList.remove("has-prompt");
+  els.mediaPromptMeta.replaceChildren();
+  els.mediaPromptText.textContent = "";
+  els.mediaNegativePromptText.textContent = "";
+  els.mediaPromptReferences.replaceChildren();
+  els.mediaPreviewDialog.showModal();
+  if (!asset.promptAssociation?.available) return;
+  try {
+    const association = await api(`/api/assets/prompt?id=${encodeURIComponent(asset.id)}`);
+    if (state.previewAsset?.id !== asset.id || !els.mediaPreviewDialog.open) return;
+    const meta = [association.generator, association.model].filter(Boolean);
+    els.mediaPromptMeta.innerHTML = `${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}${association.threadId ? `<span title="${escapeHtml(association.threadId)}">Codex 任务</span>` : ""}`;
+    els.mediaPromptText.textContent = association.prompt || "（未登记提示词）";
+    els.mediaNegativePromptGroup.hidden = !association.negativePrompt;
+    els.mediaNegativePromptText.textContent = association.negativePrompt || "";
+    const references = Array.isArray(association.references) ? association.references : [];
+    els.mediaPromptReferences.hidden = !references.length;
+    if (references.length) els.mediaPromptReferences.innerHTML = `<h4>参考资产</h4><ul>${references.map((item) => `<li title="${escapeHtml(item)}">${escapeHtml(item)}</li>`).join("")}</ul>`;
+    els.mediaPromptPanel.hidden = false;
+    els.mediaPreviewLayout.classList.add("has-prompt");
+  } catch (error) {
+    showToast(error.message, "error");
+  }
 }
 
 function visibleAssets() {
@@ -480,13 +534,26 @@ function assetById(id) {
   return state.assets.find((asset) => asset.id === id);
 }
 
+function openManualReviewAction(event) {
+  if (event.button !== 0 || els.assetActionDialog.open) return false;
+  const actionButton = event.target.closest('[data-action="manual-category"], [data-action="manual-tags"]');
+  if (!actionButton) return false;
+  const asset = assetById(actionButton.closest("[data-asset-id]")?.dataset.assetId);
+  if (!asset) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  openAssetAction(actionButton.dataset.action, asset);
+  return true;
+}
+
 function openAssetAction(action, asset) {
   state.action = action;
   state.actionAsset = asset;
   els.assetActionError.textContent = "";
   els.confirmAssetAction.className = "primary-button";
-  const titles = { rename: "重命名文件", move: "移动到项目", delete: "永久删除文件", metadata: "分类与标签" };
+  const titles = { rename: "重命名文件", move: "移动到项目", delete: "永久删除文件", metadata: "分类与标签", "manual-category": "手动分类", "manual-tags": "手动标签" };
   els.assetActionTitle.textContent = titles[action];
+  els.confirmAssetAction.textContent = action === "manual-category" ? "保存分类" : action === "manual-tags" ? "保存标签" : "确认";
   if (action === "rename") {
     els.assetActionFields.innerHTML = `<label>新文件名<input name="name" value="${escapeHtml(asset.name)}" required></label><p class="field-hint">文件格式不能在重命名时改变。</p>`;
   } else if (action === "move") {
@@ -498,12 +565,21 @@ function openAssetAction(action, asset) {
   } else {
     const categories = state.settings.taxonomy?.[asset.kind] || [];
     const categoryOptions = categories.map((category) => `<option value="${escapeHtml(category)}" ${category === asset.category ? "selected" : ""}>${escapeHtml(category)}</option>`).join("");
-    const tags = state.settings.tags.map((tag) => `<label class="check-chip"><input type="checkbox" name="tags" value="${escapeHtml(tag)}" ${asset.tags.includes(tag) ? "checked" : ""}><span>${escapeHtml(tag)}</span></label>`).join("") || "<p class=\"field-hint\">请先在设置中添加标签。</p>";
-    const groupOptions = [["asset", "正式资产"], ["review", "待确认"], ["noise", "干扰项"]].map(([value, label]) => `<option value="${value}" ${value === asset.smartGroup ? "selected" : ""}>${label}</option>`).join("");
+    const availableTags = [...new Set([...(state.settings.tags || []), ...(asset.tags || [])])];
+    const tags = availableTags.map((tag) => `<label class="check-chip"><input type="checkbox" name="tags" value="${escapeHtml(tag)}" ${(asset.tags || []).includes(tag) ? "checked" : ""}><span>${escapeHtml(tag)}</span></label>`).join("") || "<p class=\"field-hint\">暂无预设标签，可在下方直接输入。</p>";
+    const selectedGroup = defaultManualSmartGroup(asset, action);
+    const groupOptions = [["asset", "正式资产"], ["review", "待确认"], ["noise", "干扰项"]].map(([value, label]) => `<option value="${value}" ${value === selectedGroup ? "selected" : ""}>${label}</option>`).join("");
     const sourceLabel = asset.classificationSource === "manual" ? "人工确认" : "本地规则 · 0 Token";
-    els.assetActionFields.innerHTML = `<div class="classification-callout"><strong>${escapeHtml(sourceLabel)} · 置信度 ${Number(asset.confidence) || 0}%</strong><span>${escapeHtml(asset.classificationReason || "")}</span></div><label>智能分组<select name="smartGroup">${groupOptions}</select></label><label>子分类<select name="category">${categoryOptions}</select></label><fieldset><legend>标签</legend><div class="check-chip-grid">${tags}</div></fieldset>`;
+    const classificationFields = action === "manual-tags"
+      ? `<input type="hidden" name="smartGroup" value="${escapeHtml(selectedGroup)}"><input type="hidden" name="category" value="${escapeHtml(asset.category)}">`
+      : `<label>智能分组<select name="smartGroup">${groupOptions}</select></label><label>子分类<select name="category">${categoryOptions}</select></label>`;
+    const tagFields = action === "manual-category"
+      ? `${(asset.tags || []).map((tag) => `<input type="hidden" name="tags" value="${escapeHtml(tag)}">`).join("")}<input type="hidden" name="customTags" value="">`
+      : `<fieldset><legend>标签</legend><div class="check-chip-grid">${tags}</div></fieldset><label>新增标签<input name="customTags" type="text" placeholder="多个标签用逗号、分号或换行分隔" autocomplete="off"></label>`;
+    els.assetActionFields.innerHTML = `<div class="classification-callout"><strong>${escapeHtml(sourceLabel)} · 置信度 ${Number(asset.confidence) || 0}%</strong><span>${escapeHtml(asset.classificationReason || "")}</span></div>${classificationFields}${tagFields}`;
   }
   els.assetActionDialog.showModal();
+  requestAnimationFrame(() => els.assetActionFields.querySelector(action === "manual-tags" ? "[name=customTags]" : action === "manual-category" ? "[name=category]" : "select, input")?.focus());
 }
 
 async function submitAssetAction(event) {
@@ -523,8 +599,9 @@ async function submitAssetAction(event) {
       await api("/api/assets/delete", { method: "DELETE", body: JSON.stringify({ assetId: asset.id, confirmName: form.get("confirmName") }) });
       showToast("真实文件已永久删除");
     } else {
-      await api("/api/assets/metadata", { method: "PATCH", body: JSON.stringify({ assetId: asset.id, smartGroup: form.get("smartGroup"), category: form.get("category"), tags: form.getAll("tags") }) });
-      showToast("分类和标签已保存");
+      const tags = mergeManualTags(form.getAll("tags"), form.get("customTags"));
+      await api("/api/assets/metadata", { method: "PATCH", body: JSON.stringify({ assetId: asset.id, smartGroup: form.get("smartGroup"), category: form.get("category"), tags }) });
+      showToast(state.action === "manual-category" ? "人工分类已保存" : state.action === "manual-tags" ? "人工标签已保存" : "分类和标签已保存");
     }
     els.assetActionDialog.close();
     await loadLibrary({ quiet: true });
@@ -596,10 +673,12 @@ function bindEvents() {
   els.librarySearchInput.addEventListener("input", () => { state.query = els.librarySearchInput.value; resetAssetWindow(); });
   els.librarySortSelect.addEventListener("change", () => { state.sort = els.librarySortSelect.value; resetAssetWindow(); });
   els.assetColumnRange.addEventListener("input", () => setColumns(els.assetColumnRange.value, true));
+  els.assetGrid.addEventListener("pointerdown", openManualReviewAction, true);
   els.assetGrid.addEventListener("click", (event) => {
     const actionButton = event.target.closest("[data-action]");
     if (!actionButton) return;
     event.preventDefault(); event.stopPropagation();
+    if (["manual-category", "manual-tags"].includes(actionButton.dataset.action) && event.detail !== 0) return;
     const asset = assetById(actionButton.closest("[data-asset-id]")?.dataset.assetId);
     if (asset) openAssetAction(actionButton.dataset.action, asset);
   });
@@ -612,6 +691,11 @@ function bindEvents() {
     state.settings.tags.push(tag); els.newTagInput.value = ""; renderSettings();
   });
   els.settingsForm.addEventListener("submit", saveSettings);
+  els.mediaPreviewDialog.addEventListener("close", () => {
+    els.mediaPreviewStage.querySelectorAll("audio, video").forEach((media) => media.pause());
+    els.mediaPreviewStage.replaceChildren();
+    state.previewAsset = null;
+  });
   document.querySelectorAll("[data-close-dialog]").forEach((button) => button.addEventListener("click", () => document.getElementById(button.dataset.closeDialog)?.close()));
   document.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {

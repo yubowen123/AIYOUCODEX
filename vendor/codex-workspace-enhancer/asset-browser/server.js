@@ -16,6 +16,12 @@ import { buildImageSequenceProfiles, classifyLocalAsset } from "./asset-smart-cl
 import { readImageDimensions } from "./image-dimensions.js";
 import { createAssetScanCoordinator } from "./asset-scan-coordinator.js";
 import { filterLibraryResult } from "./asset-library-filter.js";
+import { CodexPromptAssociationStore } from "./codex-prompt-associations.js";
+import {
+  CodexProductionProjectSync,
+  normalizeCodexSyncMetadata,
+  reconcileCodexProjects,
+} from "./codex-production-project-sync.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicRoot = path.join(__dirname, "public");
@@ -23,6 +29,7 @@ const configPath = path.resolve(process.env.ASSET_BROWSER_CONFIG || path.join(__
 const ledgerPath = path.resolve(process.env.ASSET_BROWSER_LEDGER || path.join(__dirname, ".asset-download-ledger.json"));
 const generationRegistryPath = path.resolve(process.env.GENERATION_TICKETS || path.join(__dirname, ".generation-tickets.json"));
 const generationBindingsPath = path.resolve(process.env.GENERATION_THREAD_BINDINGS || path.join(__dirname, ".thread-project-bindings.json"));
+const promptAssociationRegistryPath = path.resolve(process.env.CODEX_PROMPT_ASSOCIATIONS || path.join(path.dirname(generationRegistryPath), ".codex-prompt-associations.json"));
 const duplicateLedgerPath = path.resolve(process.env.DUPLICATE_CLEANUP_LEDGER || path.join(__dirname, ".duplicate-cleanup-ledger.json"));
 const duplicateQuarantinePath = path.resolve(process.env.DUPLICATE_QUARANTINE || path.join(__dirname, "duplicate-quarantine"));
 const rhythmControlRegistryPath = path.resolve(process.env.RHYTHM_CONTROL_REGISTRY || path.join(__dirname, ".rhythm-control-tracks.json"));
@@ -58,10 +65,21 @@ const generationPipeline = new GenerationPipeline({
   registryPath: generationRegistryPath,
   bindingsPath: generationBindingsPath
 });
+const promptAssociations = new CodexPromptAssociationStore({
+  registryPath: promptAssociationRegistryPath,
+  sessionsRoot: process.env.CODEX_SESSIONS_ROOT || path.join(os.homedir(), ".codex", "sessions"),
+  generatedImagesRoot: process.env.CODEX_GENERATED_IMAGES_ROOT || path.join(os.homedir(), ".codex", "generated_images"),
+});
+const codexProductionProjects = new CodexProductionProjectSync({
+  globalStatePath: process.env.CODEX_GLOBAL_STATE || path.join(os.homedir(), ".codex", ".codex-global-state.json"),
+  sessionIndexPath: process.env.CODEX_SESSION_INDEX || path.join(os.homedir(), ".codex", "session_index.jsonl"),
+});
 const duplicateCleaner = new ExactDuplicateCleaner({ ledgerPath: duplicateLedgerPath });
 const promptLibrary = new PromptLibrary({ root: promptLibraryRoot });
 const threeDWorkbench = new ThreeDWorkbench({ registryPath: threeDRegistryPath, skillRoot: img2threejsSkillRoot });
 let automationBusy = false;
+let promptAssociationSyncBusy = false;
+let codexProjectSyncStatus = { state: "idle", lastRunAt: "", candidates: 0, created: 0, updated: 0, error: "" };
 let configUpdateQueue = Promise.resolve();
 
 function sendJson(res, data, status = 200) {
@@ -209,7 +227,8 @@ async function loadConfig() {
         name: project.name || project.id,
         path: path.resolve(project.path || normalizeProjectFolders(project)[0] || "."),
         scanRoots: normalizeScanRoots(project.scanRoots),
-        folders: normalizeProjectFolders(project)
+        folders: normalizeProjectFolders(project),
+        codexSync: normalizeCodexSyncMetadata(project.codexSync),
       })).filter((project) => project.id && project.folders.length),
       system: systemCapabilities(),
       automation: normalizeAutomation(config.automation),
@@ -240,7 +259,8 @@ async function saveConfig(config) {
       name: project.name || project.id,
       path: path.resolve(project.path),
       scanRoots: normalizeScanRoots(project.scanRoots),
-      folders: normalizeProjectFolders(project)
+      folders: normalizeProjectFolders(project),
+      ...(normalizeCodexSyncMetadata(project.codexSync) ? { codexSync: normalizeCodexSyncMetadata(project.codexSync) } : {}),
     })),
     automation: normalizeAutomation(config.automation),
     deduplication: normalizeDeduplication(config.deduplication, { defaultQuarantinePath: duplicateQuarantinePath }),
@@ -436,6 +456,7 @@ async function listProjects() {
       path: project.path,
       scanRoots: project.scanRoots,
       folders: project.folders,
+      codexSync: project.codexSync || null,
       exists: (await Promise.all(project.folders.map((folder) => exists(folder)))).every(Boolean)
     });
   }
@@ -667,12 +688,30 @@ async function updateProject(projectId, body = {}) {
   const { result } = await updateConfig((config) => {
     const project = config.projects.find((item) => item.id === projectId);
     if (!project) throw new Error(`项目不存在：${projectId}`);
-    if (String(body.name || "").trim()) project.name = String(body.name).trim();
+    const requestedName = String(body.name || "").trim();
+    const codexSync = normalizeCodexSyncMetadata(project.codexSync);
+    if (requestedName) {
+      if (codexSync && requestedName !== project.name) codexSync.userCustomizedName = true;
+      project.name = requestedName;
+    }
     if (requestedFolders) {
+      if (codexSync) {
+        const requested = new Set(requestedFolders);
+        const managed = new Set(codexSync.managedFolders);
+        codexSync.excludedFolders = [...new Set([
+          ...codexSync.excludedFolders.filter((folder) => !requested.has(folder)),
+          ...codexSync.managedFolders.filter((folder) => !requested.has(folder)),
+        ])];
+        for (const folder of requested) {
+          if (managed.has(folder)) codexSync.excludedFolders = codexSync.excludedFolders.filter((excluded) => excluded !== folder);
+        }
+        codexSync.userCustomizedFolders = true;
+      }
       project.folders = requestedFolders;
       project.path = requestedFolders[0];
       project.scanRoots = ["."];
     }
+    if (codexSync) project.codexSync = codexSync;
     return project;
   });
   await ensureWatchers();
@@ -1452,6 +1491,9 @@ async function buildLibraryAsset(filePath, project, config, assignment, classifi
   const stats = await fs.stat(filePath);
   const kind = libraryAssetKind(filePath);
   const dimensions = kind === "image" ? await readImageDimensions(filePath).catch(() => null) : null;
+  const promptAssociation = ["image", "video", "audio"].includes(kind)
+    ? await promptAssociations.summary(filePath)
+    : { available: false };
   const metadata = config.assetMetadata?.[filePath] || {};
   const assetRef = encodeAssetRef(filePath);
   const classification = classifyLocalAsset({
@@ -1485,6 +1527,7 @@ async function buildLibraryAsset(filePath, project, config, assignment, classifi
     mtime: new Date(stats.mtimeMs).toISOString(),
     directory: path.dirname(filePath),
     assigned: Boolean(assignment),
+    promptAssociation,
     editable: kind === "text" && ![".doc", ".rtf"].includes(path.extname(filePath).toLowerCase()),
     preview: kind === "text" ? await readTextPreview(filePath) : "",
     mediaUrl: `/media?id=${encodeURIComponent(assetRef)}`,
@@ -1546,6 +1589,16 @@ async function assignAssetToProject(body = {}) {
   return { assetId: encodeAssetRef(filePath), targetProjectId: target.id, movedFile: false };
 }
 
+async function clearAssetProjectAssignment(body = {}) {
+  const config = await loadConfig();
+  const { filePath } = await resolveManagedAsset(config, body.assetId);
+  const previousProjectId = config.assetAssignments[filePath] || "";
+  if (!previousProjectId) return { assetId: encodeAssetRef(filePath), removed: false };
+  await updateConfig((draft) => { delete draft.assetAssignments[filePath]; });
+  notifyClients("asset-change");
+  return { assetId: encodeAssetRef(filePath), removed: true, previousProjectId };
+}
+
 async function renameLibraryAsset(body = {}) {
   const config = await loadConfig();
   const { filePath } = await resolveManagedAsset(config, body.assetId);
@@ -1556,7 +1609,27 @@ async function renameLibraryAsset(body = {}) {
   const nextPath = path.join(path.dirname(filePath), nextName);
   if (path.extname(nextPath).toLowerCase() !== currentExt.toLowerCase()) throw new Error("重命名不能改变文件格式");
   if (await exists(nextPath)) throw new Error("同名文件已经存在");
-  await fs.rename(filePath, nextPath);
+  const currentStem = filePath.slice(0, -currentExt.length);
+  const nextStem = nextPath.slice(0, -currentExt.length);
+  const renameMappings = [{ source: filePath, destination: nextPath }];
+  for (const suffix of [".prompt.md", ".meta.json"]) {
+    const source = `${currentStem}${suffix}`;
+    const destination = `${nextStem}${suffix}`;
+    if (!await exists(source)) continue;
+    if (await exists(destination)) throw new Error(`同名关联文件已经存在：${path.basename(destination)}`);
+    renameMappings.push({ source, destination });
+  }
+  const renamed = [];
+  try {
+    for (const mapping of renameMappings) {
+      await fs.rename(mapping.source, mapping.destination);
+      renamed.push(mapping);
+    }
+  } catch (error) {
+    for (const mapping of renamed.reverse()) await fs.rename(mapping.destination, mapping.source).catch(() => {});
+    throw error;
+  }
+  await promptAssociations.relocate(filePath, nextPath);
   await updateConfig((draft) => {
     if (draft.assetAssignments[filePath]) {
       draft.assetAssignments[nextPath] = draft.assetAssignments[filePath];
@@ -1576,6 +1649,10 @@ async function deleteLibraryAsset(body = {}) {
   const { filePath } = await resolveManagedAsset(config, body.assetId);
   if (String(body.confirmName || "") !== path.basename(filePath)) throw new Error("永久删除需要输入完整文件名确认");
   await fs.rm(filePath, { force: false });
+  const extension = path.extname(filePath);
+  const stem = filePath.slice(0, -extension.length);
+  for (const suffix of [".prompt.md", ".meta.json"]) await fs.rm(`${stem}${suffix}`, { force: true });
+  await promptAssociations.remove(filePath);
   await updateConfig((draft) => {
     delete draft.assetAssignments[filePath];
     delete draft.assetMetadata[filePath];
@@ -1959,6 +2036,91 @@ async function checkAutomationSchedule() {
   }
 }
 
+function projectForPromptAssociation(association, config, bindings) {
+  const boundProjectId = bindings?.bindings?.[association.threadId]?.projectId;
+  const bound = config.projects.find((project) => project.id === boundProjectId);
+  if (bound) return bound;
+  if (association.cwd) {
+    const cwdMatches = config.projects
+      .filter((project) => project.folders.some((folder) => isPathInside(folder, association.cwd)))
+      .sort((a, b) => Math.max(...b.folders.map((folder) => folder.length)) - Math.max(...a.folders.map((folder) => folder.length)));
+    if (cwdMatches[0]) return cwdMatches[0];
+  }
+  return config.projects.find((project) => project.id === "pending-review") || null;
+}
+
+async function syncCodexProductionProjects(associations) {
+  const startedAt = new Date().toISOString();
+  try {
+    const candidates = await codexProductionProjects.discover({ associations });
+    const snapshot = await loadConfig();
+    const preview = reconcileCodexProjects(snapshot.projects, candidates, { now: startedAt });
+    if (!preview.changed) {
+      codexProjectSyncStatus = {
+        state: "ready",
+        lastRunAt: startedAt,
+        candidates: candidates.length,
+        created: 0,
+        updated: 0,
+        error: "",
+      };
+      return { ...codexProjectSyncStatus, changed: false };
+    }
+    const { result } = await updateConfig((config) => {
+      const reconciliation = reconcileCodexProjects(config.projects, candidates, { now: startedAt });
+      if (reconciliation.changed) config.projects = reconciliation.projects;
+      return reconciliation;
+    });
+    if (result.changed) {
+      await ensureWatchers();
+      notifyClients("project-change");
+    }
+    codexProjectSyncStatus = {
+      state: "ready",
+      lastRunAt: startedAt,
+      candidates: candidates.length,
+      created: result.created.length,
+      updated: result.updated.length,
+      error: "",
+    };
+    return { ...codexProjectSyncStatus, changed: result.changed };
+  } catch (error) {
+    codexProjectSyncStatus = {
+      ...codexProjectSyncStatus,
+      state: "error",
+      lastRunAt: startedAt,
+      error: error.message || String(error),
+    };
+    throw error;
+  }
+}
+
+async function syncCodexPromptAssociations() {
+  if (promptAssociationSyncBusy) return;
+  promptAssociationSyncBusy = true;
+  try {
+    const synced = await promptAssociations.syncCodexSessions();
+    const projectSync = await syncCodexProductionProjects(synced.associations);
+    const [config, bindings] = await Promise.all([loadConfig(), generationPipeline.readBindings()]);
+    const assignments = {};
+    for (const association of synced.importedAssociations) {
+      if (!await exists(association.assetPath) || config.assetAssignments[association.assetPath]) continue;
+      const alreadyScannedBy = config.projects.find((project) => project.folders.some((folder) => isPathInside(folder, association.assetPath)));
+      if (alreadyScannedBy) continue;
+      const project = projectForPromptAssociation(association, config, bindings);
+      if (project) assignments[association.assetPath] = project.id;
+    }
+    if (Object.keys(assignments).length) {
+      await updateConfig((draft) => Object.assign(draft.assetAssignments, assignments));
+    }
+    if (synced.imported || Object.keys(assignments).length || projectSync.changed) notifyClients("asset-change");
+  } catch (error) {
+    console.warn("Codex prompt association:", error.message);
+  } finally {
+    promptAssociationSyncBusy = false;
+  }
+}
+
 function notifyClients(event = "asset-change") {
   const payload = JSON.stringify({ event, at: new Date().toISOString() });
   for (const client of sseClients) {
@@ -2153,6 +2315,11 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/api/codex-project-sync" && req.method === "GET") {
+      sendJson(res, codexProjectSyncStatus);
+      return;
+    }
+
     if (url.pathname === "/api/projects" && req.method === "POST") {
       const body = await readRequestBody(req);
       const project = await addProject(body);
@@ -2237,8 +2404,32 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/api/assets/prompt" && req.method === "GET") {
+      const config = await loadConfig();
+      const { filePath } = await resolveManagedAsset(config, url.searchParams.get("id") || "");
+      const association = await promptAssociations.get(filePath);
+      if (!association) throw new Error("该资产没有关联提示词");
+      sendJson(res, association);
+      return;
+    }
+
+    if (url.pathname === "/api/assets/prompt" && req.method === "POST") {
+      const body = await readRequestBody(req);
+      const config = await loadConfig();
+      const { filePath } = await resolveManagedAsset(config, body.assetId);
+      const association = await promptAssociations.register({ ...body, assetPath: filePath });
+      notifyClients("asset-change");
+      sendJson(res, { ok: true, association });
+      return;
+    }
+
     if (url.pathname === "/api/assets/assign" && req.method === "POST") {
       sendJson(res, { ok: true, result: await assignAssetToProject(await readRequestBody(req)) });
+      return;
+    }
+
+    if (url.pathname === "/api/assets/assign" && req.method === "DELETE") {
+      sendJson(res, { ok: true, result: await clearAssetProjectAssignment(await readRequestBody(req)) });
       return;
     }
 
@@ -2526,6 +2717,8 @@ setTimeout(runDuplicateSweep, 8000).unref();
 setInterval(runDuplicateSweep, 6 * 60 * 60 * 1000).unref();
 setTimeout(checkAutomationSchedule, 3000).unref();
 setInterval(checkAutomationSchedule, 5000).unref();
+setTimeout(syncCodexPromptAssociations, 1200).unref();
+setInterval(syncCodexPromptAssociations, 8000).unref();
 
 setInterval(() => {
   for (const client of sseClients) {

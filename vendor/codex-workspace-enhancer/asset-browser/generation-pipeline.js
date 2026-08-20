@@ -4,6 +4,7 @@ import path from "node:path";
 
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif"]);
 const VIDEO_EXTS = new Set([".mp4", ".mov", ".m4v", ".webm", ".mkv"]);
+const AUDIO_EXTS = new Set([".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".oga", ".opus"]);
 const TEMP_EXTS = new Set([".crdownload", ".part", ".partial", ".tmp", ".download"]);
 
 function pad(value, size = 2) {
@@ -48,7 +49,12 @@ function assetKind(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (IMAGE_EXTS.has(ext)) return "image";
   if (VIDEO_EXTS.has(ext)) return "video";
+  if (AUDIO_EXTS.has(ext)) return "audio";
   return "other";
+}
+
+function kindLabel(kind) {
+  return { image: "图片", video: "视频", audio: "音频" }[kind] || "资产";
 }
 
 function isTemporary(filePath) {
@@ -192,10 +198,10 @@ function defaultDestination(config, input, project, profile, date) {
   }
 
   const basePath = cleanRelative(input.basePath ?? profile?.basePath ?? "", "项目基础目录");
-  const kindLabel = input.kind === "video" ? "视频" : "图片";
+  const assetLabel = kindLabel(input.kind);
   const tail = (profile?.id === "pending-review" || project.id === "pending-review")
-    ? path.join(date, kindLabel)
-    : path.join("生成资产", date, kindLabel);
+    ? path.join(date, assetLabel)
+    : path.join("生成资产", date, assetLabel);
   return cleanRelative(path.join(basePath, tail), "生成资产目录");
 }
 
@@ -232,7 +238,7 @@ function promptMarkdown(ticket, output, project) {
   return `# 生成提示词与结果记录
 
 - 项目：${project.name || project.id}
-- 类型：${ticket.kind === "video" ? "视频" : "图片"}
+- 类型：${kindLabel(ticket.kind)}
 - 生成工具：${ticket.generator || "未登记"}
 - 模型：${ticket.model || "未登记"}
 - 集数：${ticket.episode || "-"}
@@ -443,7 +449,7 @@ export class GenerationPipeline {
   async create(input, config) {
     return await this.withLock(async () => {
       const now = new Date();
-      const kind = input.kind === "video" ? "video" : "image";
+      const kind = ["image", "video", "audio"].includes(input.kind) ? input.kind : "image";
       const resolution = await this.resolveRouting({ ...input, kind }, config);
       const { project, profile } = resolution;
       const destinationRelativePath = defaultDestination(config, { ...input, kind }, project, profile, localDateParts(now).date);
@@ -457,7 +463,7 @@ export class GenerationPipeline {
         profileId: profile?.id || "",
         profileName: profile?.name || "",
         kind,
-        generator: cleanSegment(input.generator, kind === "video" ? "tapnow" : "codex-image"),
+        generator: cleanSegment(input.generator, { video: "tapnow", audio: "codex-audio", image: "codex-image" }[kind]),
         model: String(input.model || "").trim(),
         episode: String(input.episode || "").trim(),
         scene: String(input.scene || "").trim(),
