@@ -139,6 +139,10 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .asset-tag { max-width: 92px; overflow: hidden; padding: 4px 7px; border-radius: 999px; background: #f0f2f5; color: #6d747e; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .asset-tag.muted { color: #8d939c; }
 .asset-tag.automatic { border: 1px solid rgba(49, 94, 251, 0.12); background: #f0f4ff; color: #5670ca; }
+.review-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: -2px 14px 13px; }
+.review-actions button { min-height: 30px; border: 1px solid rgba(185, 119, 0, 0.22); border-radius: 9px; background: rgba(255, 246, 226, 0.78); color: #946300; cursor: pointer; font-size: 9px; font-weight: 750; transition: border-color 140ms ease, background 140ms ease, transform 140ms ease; }
+.review-actions button:hover { border-color: rgba(185, 119, 0, 0.42); background: #fff2d3; transform: translateY(-1px); }
+.review-actions button:focus-visible { outline: 2px solid rgba(49, 94, 251, 0.45); outline-offset: 2px; }
 .card-hint { padding: 0 14px 12px; color: #a0a5ad; font-size: 8px; }
 
 .text-card { height: 300px; display: flex; flex-direction: column; }

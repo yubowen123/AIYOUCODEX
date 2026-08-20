@@ -40,6 +40,19 @@ test("local asset manager exposes zero-token smart groups and manual overrides",
   assert.match(source, /form\.get\("smartGroup"\)/);
 });
 
+test("review cards expose direct manual category and tag actions", async () => {
+  const html = await readFile(new URL("index.html", consoleRoot), "utf8");
+  const source = await readFile(new URL("app.js", consoleRoot), "utf8");
+  assert.match(html, /<script type="module" src="\/app\.js"><\/script>/);
+  assert.match(source, /asset\.smartGroup === "review"/);
+  assert.match(source, /data-action="manual-category"/);
+  assert.match(source, /data-action="manual-tags"/);
+  assert.match(source, /addEventListener\("pointerdown"/);
+  assert.match(source, /openManualReviewAction/);
+  assert.match(source, /mergeManualTags/);
+  assert.match(source, /defaultManualSmartGroup/);
+});
+
 test("asset service supports multi-folder projects and non-destructive project reassignment", async () => {
   const server = await readFile(new URL("server.js", browserRoot), "utf8");
   assert.match(server, /textExts/);
@@ -58,7 +71,7 @@ test("asset service supports multi-folder projects and non-destructive project r
 });
 
 test("embedded and service-served asset manager builds stay synchronized", async () => {
-  for (const file of ["index.html", "app.js", "ui-v3.css"]) {
+  for (const file of ["index.html", "app.js", "asset-metadata-ui.js", "ui-v3.css"]) {
     const embedded = await readFile(new URL(file, consoleRoot), "utf8");
     const served = await readFile(new URL(`public/${file}`, browserRoot), "utf8");
     assert.equal(embedded, served, `${file} differs between the embedded and service builds`);
