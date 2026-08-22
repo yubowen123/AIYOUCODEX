@@ -61,6 +61,7 @@ test("macOS runtime keeps the existing exact process, quit, and open behavior", 
   const child = { unref() {} };
   const runtime = createDesktopAppRuntime({
     platform: "darwin",
+    home: "/Users/example",
     execFileAsync: async (command, args) => {
       calls.push({ command, args });
       if (command === "/bin/ps") {
@@ -80,4 +81,13 @@ test("macOS runtime keeps the existing exact process, quit, and open behavior", 
   assert.equal(calls[0].command, "/bin/ps");
   assert.equal(calls[1].command, "/usr/bin/osascript");
   assert.equal(calls[2].command, "/usr/bin/open");
+  assert.deepEqual(calls[2].args, [
+    "-na",
+    "/Applications/ChatGPT.app",
+    "--args",
+    "--user-data-dir=/Users/example/Library/Application Support/Codex",
+    "--remote-debugging-port=9231",
+    "--remote-allow-origins=http://127.0.0.1:9231",
+    "--enable-features=LocalNetworkAccessForSubframeNavigationsWarningOnly",
+  ]);
 });

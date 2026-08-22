@@ -87,17 +87,40 @@ test("desktop app recovery targets only the exact ChatGPT or Codex main process"
   assert.equal(state.parseDesktopAppProcess("42 /Applications/Other.app/Contents/MacOS/Other"), null);
 });
 
-test("desktop app recovery launches the app with the complete debugging arguments", async () => {
+test("desktop app recovery launches the app with the user profile and complete debugging arguments", async () => {
   const state = await import("../lib/injector-state.mjs");
   assert.equal(typeof state.desktopAppLaunchArgs, "function");
-  assert.deepEqual(state.desktopAppLaunchArgs("/Applications/ChatGPT.app", 9231), [
+  assert.deepEqual(state.desktopAppLaunchArgs(
+    "/Applications/ChatGPT.app",
+    9231,
+    "/Users/example/Library/Application Support/Codex",
+  ), [
     "-na",
     "/Applications/ChatGPT.app",
     "--args",
+    "--user-data-dir=/Users/example/Library/Application Support/Codex",
     "--remote-debugging-port=9231",
     "--remote-allow-origins=http://127.0.0.1:9231",
     "--enable-features=LocalNetworkAccessForSubframeNavigationsWarningOnly",
   ]);
+});
+
+test("desktop app recovery retries a launched app that never exposes the debugging target", async () => {
+  const state = await import("../lib/injector-state.mjs");
+  const recovery = new state.DesktopAppRecovery({ launchRetryMs: 10_000 });
+  const app = {
+    pid: 22323,
+    appPath: "/Applications/ChatGPT.app",
+    bundleId: "com.openai.codex",
+  };
+
+  recovery.pending = { phase: "launching", appPath: app.appPath };
+  recovery.markLaunched(1_000);
+  assert.equal(recovery.next({ targetAvailable: false, app, now: 9_000 }), null);
+  assert.deepEqual(recovery.next({ targetAvailable: false, app, now: 12_000 }), {
+    type: "quit",
+    app,
+  });
 });
 
 test("Windows desktop app recovery ignores Electron helpers and selects the main process", async () => {
