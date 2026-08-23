@@ -24,7 +24,7 @@ test("the CDP bridge accepts only service ensure and native Skill composer prefi
   assert.match(source, /const hostBindingName = "__codexTaskboardHostV1"/);
   assert.match(runtimeSource, /request\.action === "ensure"/);
   assert.match(runtimeSource, /request\.action === "prefill-task-composer"/);
-  assert.match(runtimeSource, /request\.instruction\.length <= 1_024/);
+  assert.match(runtimeSource, /request\.instruction\.length <= 16_000/);
   assert.match(runtimeSource, /request\.skillPath\.length <= 1_024/);
   assert.match(source, /function prefillTaskComposerViaCdp/);
   assert.match(source, /cdp\.send\("Input\.insertText", \{ text: "\$" \}\)/);
@@ -33,6 +33,9 @@ test("the CDP bridge accepts only service ensure and native Skill composer prefi
   assert.match(source, /\[skill-mention-name\]/);
   assert.match(source, /skill-mention-path/);
   assert.match(source, /cdp\.send\("Input\.insertText", \{ text: instruction \}\)/);
+  assert.match(source, /function submitTaskComposerViaCdp/);
+  assert.match(source, /if \(!request\.autoSubmit\) return result/);
+  assert.match(source, /sendButton\.click\(\)/);
   assert.match(source, /Runtime\.bindingCalled/);
   assert.match(runtimeSource, /params\.executionContextId/);
   assert.match(source, /hostResponse/);

@@ -21,7 +21,7 @@
   const HOST_HEARTBEAT_NAME = "__codexTaskboardHostHeartbeatV1";
   const REATTACH_DELAY_MS = 160;
   const FRAME_READY_TIMEOUT_MS = 12_000;
-  const HOST_REQUEST_TIMEOUT_MS = 12_000;
+  const HOST_REQUEST_TIMEOUT_MS = 22_000;
   const HOST_HEARTBEAT_MAX_AGE_MS = 8_000;
   const MACOS_TITLEBAR_SAFE_LEFT = 80;
   const FRAME_REFRESH_PARAM = "__codex_taskboard_refresh";
@@ -722,14 +722,19 @@
           focusComposerNonce: Date.now(),
         },
       });
-      await requestHostTaskComposerPrefill({
+      const autoSubmit = payload.autoSubmit === true;
+      const prepared = await requestHostTaskComposerPrefill({
         instruction,
         skillDisplayName,
         skillName,
         skillPath,
+        autoSubmit,
       });
-      await waitForPreparedComposer(identifier, skillPath);
-      postToFrame({ type: "taskboard:thread-prepared", payload: { taskId } });
+      if (!autoSubmit) await waitForPreparedComposer(identifier, skillPath);
+      postToFrame({
+        type: "taskboard:thread-prepared",
+        payload: { taskId, submitted: prepared?.submitted === true },
+      });
     } catch (error) {
       postToFrame({
         type: "taskboard:thread-create-error",
@@ -1065,12 +1070,14 @@
     skillDisplayName,
     skillName,
     skillPath,
+    autoSubmit = false,
   }) {
     return requestHost("prefill-task-composer", {
       instruction,
       skillDisplayName,
       skillName,
       skillPath,
+      autoSubmit,
     });
   }
 

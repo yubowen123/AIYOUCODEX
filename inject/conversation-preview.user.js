@@ -3314,10 +3314,10 @@
     return latest;
   }
 
-  function virtualFolderSourceItems(project) {
-    if (!project?.virtual) return [];
-    let sourceIndex = 0;
+  function virtualFolderSourceItems(excludedIds = new Set(), sourceIndexOffset = 0) {
+    let sourceIndex = sourceIndexOffset;
     return Array.from(searchCatalogByProject, ([id, sourceEntries]) => {
+      if (excludedIds.has(id)) return null;
       const catalogEntries = sourceEntries
         .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId)))
         .sort((left, right) => Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
@@ -3338,7 +3338,7 @@
         lastUsed,
         active: false,
       };
-    }).filter((item) => item.id && item.label);
+    }).filter((item) => item?.id && item?.label);
   }
 
   function nativeFolderSources() {
@@ -3672,6 +3672,7 @@
     let panel = root.parentElement.querySelector(`[data-codex-sidebar-virtual-folder-panel="${CSS.escape(item.id)}"]`);
     if (!panel) {
       panel = document.createElement("section");
+      panel.id = `codex-sidebar-folder-panel-${item.id}`;
       panel.dataset.codexSidebarVirtualFolderPanel = item.id;
       panel.setAttribute("role", "region");
       panel.setAttribute("aria-labelledby", `codex-sidebar-folder-tag-${item.id}`);
@@ -3934,8 +3935,8 @@
       panel.removeAttribute("data-codex-sidebar-folder-panel-id");
     });
     for (const item of folderSources.values()) {
-      item.folder.removeAttribute("id");
-      item.folder.removeAttribute("aria-labelledby");
+      item.folder?.removeAttribute("id");
+      item.folder?.removeAttribute("aria-labelledby");
     }
     folderSources = new Map();
     folderTogglePending = new Map();
@@ -3945,8 +3946,18 @@
   function ensureFolderSwitcher() {
     const project = sectionSources.get("项目");
     const nativeSources = nativeFolderSources();
-    const virtualItems = virtualFolderSourceItems(project);
-    const sources = nativeSources || (virtualItems.length ? { listRoot: project.section, items: virtualItems, virtual: true } : null);
+    if (nativeSources && requestCompleteNativeFolderList(nativeSources)) return;
+    const nativeIds = new Set(nativeSources?.items.map((item) => item.id) || []);
+    const virtualItems = virtualFolderSourceItems(nativeIds, nativeSources?.items.length || 0);
+    const sources = nativeSources
+      ? {
+          listRoot: nativeSources.listRoot,
+          items: [...nativeSources.items, ...virtualItems],
+          sourceMode: virtualItems.length ? "hybrid" : "native",
+        }
+      : virtualItems.length
+        ? { listRoot: project?.section, items: virtualItems, sourceMode: "virtual" }
+        : null;
     const host = project?.virtual ? project.section : project?.heading?.parentElement;
     if (!project || !sources || !host) {
       if (document.getElementById(FOLDER_SWITCHER_ID)) {
@@ -3960,26 +3971,25 @@
       return;
     }
     folderSourcesMissingSince = 0;
-    if (!sources.virtual && requestCompleteNativeFolderList(sources)) return;
     let root = document.getElementById(FOLDER_SWITCHER_ID);
     const signature = sources.items.map((item) => item.id).join("\n");
     const needsRebuild = root?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN
       || root?.parentElement !== host
       || root?.dataset.sourceIds !== signature
-      || root?.dataset.sourceMode !== (sources.virtual ? "virtual" : "native")
-      || sources.items.some((item) => sources.virtual
+      || root?.dataset.sourceMode !== sources.sourceMode
+      || sources.items.some((item) => item.virtual
         ? !folderSources.get(item.id)?.virtual
         : folderSources.get(item.id)?.row !== item.row);
     if (needsRebuild) {
       clearFolderEnhancement();
       root = createFolderSwitcher();
       root.dataset.sourceIds = signature;
-      root.dataset.sourceMode = sources.virtual ? "virtual" : "native";
+      root.dataset.sourceMode = sources.sourceMode;
       if (project.virtual) host.insertBefore(root, host.firstChild);
       else host.insertBefore(root, project.heading.nextElementSibling);
       folderSources = new Map(sources.items.map((item) => [item.id, item]));
       if (!activeFolderId || (activeFolderId !== ALL_FOLDER_ID && !folderSources.has(activeFolderId))) {
-        activeFolderId = sources.virtual
+        activeFolderId = sources.sourceMode === "virtual"
           ? ALL_FOLDER_ID
           : sources.items.find((item) => item.active)?.id || rankedFolders(sources.items, "")[0]?.id || null;
       }

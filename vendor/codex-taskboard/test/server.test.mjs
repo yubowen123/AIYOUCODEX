@@ -1025,6 +1025,32 @@ test("device workspaces come from this machine's Codex project roots", async () 
   });
 });
 
+test("device projects preserve Codex display names for every local project", async () => {
+  const baseUrl = await startServer(async (directory) => {
+    const codexStatePath = path.join(directory, "codex-state.json");
+    await writeFile(codexStatePath, JSON.stringify({
+      "local-projects": {
+        "project-management": { name: "管理优化", rootPaths: ["/Users/alice/management"] },
+        "g-p-super-creator": {
+          name: "我将成为超级创作者",
+          rootPaths: ["/Users/alice/.codex/.chatgpt-projects/g-p-super-creator"],
+        },
+      },
+    }));
+    return { codexStatePath };
+  });
+  const result = await request(baseUrl, "/api/device-projects");
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.body.projects, [
+    { id: "project-management", name: "管理优化", workspacePath: "/Users/alice/management" },
+    {
+      id: "g-p-super-creator",
+      name: "我将成为超级创作者",
+      workspacePath: "/Users/alice/.codex/.chatgpt-projects/g-p-super-creator",
+    },
+  ]);
+});
+
 test("accepts private LAN requests and rejects public Host and Origin headers", async () => {
   const baseUrl = await startServer(undefined, { host: "0.0.0.0" });
 

@@ -256,7 +256,7 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.doesNotMatch(webApp, /taskboard:thread-created/);
   assert.match(
     webApp,
-    /const instruction = `e-taskboard Addressing the issues mentioned in \$\{task\.identifier\}`/,
+    /: `e-taskboard Addressing the issues mentioned in \$\{task\.identifier\}`/,
   );
   assert.match(
     webApp,
@@ -266,6 +266,9 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.match(webApp, /skillDisplayName: "Manage Taskboard"/);
   assert.match(webApp, /skillPath: manageTaskboardSkillPath/);
   assert.match(webApp, /instruction,/);
+  assert.match(webApp, /autoSubmit: options\?\.autoSubmit === true/);
+  assert.match(webApp, /buildTaskExecutionPrompt/);
+  assert.match(webApp, /openTaskInThread\(task, \{ suggestion, autoSubmit: true \}\)/);
   assert.match(webApp, /type: "taskboard:create-thread"/);
   assert.match(webApp, /type: "taskboard:open-thread", payload: \{ threadId \}/);
 });

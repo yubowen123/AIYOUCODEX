@@ -304,6 +304,7 @@ test("cloud-only local capability routes return an explicit companion requiremen
 
   for (const pathname of [
     "/api/device-workspaces",
+    "/api/device-projects",
     "/api/workflow-capabilities",
     "/api/projects/alpha/development-contexts",
   ]) {

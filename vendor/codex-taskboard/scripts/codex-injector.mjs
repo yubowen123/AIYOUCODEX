@@ -975,6 +975,69 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
   throw new Error("Timed out while writing the issue instruction into the Codex composer");
 }
 
+async function submitTaskComposerViaCdp(cdp, executionContextId, request) {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    const submission = await cdp.send("Runtime.evaluate", {
+      expression: `(() => {
+        const instruction = ${JSON.stringify(request.instruction)};
+        const editor = Array.from(document.querySelectorAll(
+          '[data-codex-composer="true"][contenteditable="true"]'
+        )).find((candidate) => candidate.getClientRects().length > 0);
+        if (!editor || !(editor.textContent || "").includes(instruction)) {
+          return { ready: false, submitted: false };
+        }
+        const scope = editor.closest("form") || editor.parentElement?.parentElement || document;
+        const visibleButtons = Array.from(scope.querySelectorAll("button")).filter((button) => (
+          button.getClientRects().length > 0 && !button.disabled
+        ));
+        const sendButton = visibleButtons.find((button) => {
+          const label = [
+            button.getAttribute("aria-label"),
+            button.getAttribute("title"),
+            button.getAttribute("data-testid"),
+            button.textContent,
+          ].filter(Boolean).join(" ").trim().toLocaleLowerCase();
+          return /(?:^|\\s)(?:发送|send(?: message)?)(?:$|\\s)/i.test(label)
+            || /send-button|composer-send/.test(label);
+        });
+        if (!sendButton) return { ready: true, submitted: false };
+        sendButton.click();
+        return { ready: true, submitted: true };
+      })()`,
+      contextId: executionContextId,
+      returnByValue: true,
+    });
+    if (submission.result.value?.submitted) break;
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
+
+  while (Date.now() < deadline) {
+    const verified = await cdp.send("Runtime.evaluate", {
+      expression: `(() => {
+        const instruction = ${JSON.stringify(request.instruction)};
+        const editor = Array.from(document.querySelectorAll(
+          '[data-codex-composer="true"][contenteditable="true"]'
+        )).find((candidate) => candidate.getClientRects().length > 0);
+        const instructionCleared = !editor || !(editor.textContent || "").includes(instruction);
+        const stopVisible = Array.from(document.querySelectorAll("button")).some((button) => {
+          if (button.getClientRects().length === 0) return false;
+          const label = (button.getAttribute("aria-label") || "")
+            + " "
+            + (button.getAttribute("title") || "");
+          return /停止|stop/i.test(label);
+        });
+        return instructionCleared || stopVisible;
+      })()`,
+      contextId: executionContextId,
+      returnByValue: true,
+    });
+    if (verified.result.value === true) return { submitted: true };
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
+  throw new Error("Codex 已填入建议，但发送按钮没有完成提交");
+}
+
 async function sendHostResponse(cdp, executionContextId, response) {
   await cdp.send("Runtime.evaluate", {
     expression: `window.__codexTaskboardInjection__?.hostResponse(${JSON.stringify(response)})`,
@@ -1007,9 +1070,11 @@ async function installTaskboardHostBinding(cdp, supervisor) {
           return result;
         })()
       ),
-      prefill: (request, executionContextId) => (
-        prefillTaskComposerViaCdp(cdp, executionContextId, request)
-      ),
+      prefill: async (request, executionContextId) => {
+        const result = await prefillTaskComposerViaCdp(cdp, executionContextId, request);
+        if (!request.autoSubmit) return result;
+        return { ...result, ...await submitTaskComposerViaCdp(cdp, executionContextId, request) };
+      },
       sendResponse: (executionContextId, response) => (
         sendHostResponse(cdp, executionContextId, response)
       ),

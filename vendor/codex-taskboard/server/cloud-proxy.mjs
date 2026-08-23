@@ -5,6 +5,7 @@ import { normalizeCloudUrl } from "./cloud-config.mjs";
 const LOCAL_COMPANION_ROUTES = new Set([
   "/health",
   "/api/meta",
+  "/api/device-projects",
   "/api/device-workspaces",
   "/api/workflow-capabilities",
   "/api/local/cloud-session",

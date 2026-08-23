@@ -922,7 +922,7 @@ kbd {
   flex: 0 0 auto;
   flex-direction: column;
   gap: 6px;
-  min-height: 126px;
+  min-height: 272px;
   padding: 10px;
   overflow: hidden;
   border: var(--border-hairline) solid var(--border);
@@ -1028,6 +1028,82 @@ kbd {
   -webkit-line-clamp: 2;
 }
 
+.project-swimlane-guidance {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  padding-top: 2px;
+}
+
+.project-swimlane-description,
+.project-swimlane-next {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.project-swimlane-description > span,
+.project-swimlane-next strong {
+  color: var(--text-tertiary);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.035em;
+}
+
+.project-swimlane-description p,
+.project-swimlane-next p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 9px;
+  line-height: 13px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.project-swimlane-next {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+}
+
+.project-swimlane-next p strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.project-swimlane-stage {
+  padding: 2px 5px;
+  border: var(--border-hairline) solid color-mix(in srgb, var(--accent) 20%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface));
+  color: var(--accent);
+  font-size: 8px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.project-swimlane-suggestions {
+  display: flex;
+  min-width: 0;
+  gap: 4px;
+}
+
+.project-swimlane-suggestions > span {
+  min-width: 0;
+  flex: 1 1 0;
+  padding: 3px 5px;
+  overflow: hidden;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-tertiary);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .project-swimlane-card-footer {
   position: relative;
   z-index: 2;
@@ -1131,7 +1207,7 @@ kbd {
 }
 
 .project-swimlane-skeleton span {
-  height: 126px;
+  height: 272px;
   border: var(--border-hairline) solid var(--border);
   border-radius: 9px;
   background: linear-gradient(100deg, var(--surface) 30%, var(--surface-hover) 45%, var(--surface) 60%);
@@ -4827,6 +4903,92 @@ kbd {
 .detail-open-thread-action svg {
   width: 16px;
   height: 16px;
+}
+
+.detail-next-actions {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-muted) 68%, var(--surface));
+}
+
+.detail-next-actions > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.detail-next-actions h2 {
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.detail-stage-badge {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.detail-next-actions > p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.detail-suggestion-buttons {
+  display: grid;
+  gap: 5px;
+}
+
+.detail-suggestion-buttons button {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  min-height: 32px;
+  gap: 6px;
+  padding: 5px 7px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 9px;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.detail-suggestion-buttons button:hover:not(:disabled),
+.detail-suggestion-buttons button:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  outline: 0;
+}
+
+.detail-suggestion-buttons button:disabled {
+  opacity: 0.55;
+}
+
+.detail-suggestion-buttons svg {
+  width: 13px;
+  height: 13px;
+  color: var(--accent);
+}
+
+.detail-next-actions small {
+  color: var(--text-quaternary);
+  font-size: 8px;
+  line-height: 1.35;
 }
 
 .issue-properties h2 {

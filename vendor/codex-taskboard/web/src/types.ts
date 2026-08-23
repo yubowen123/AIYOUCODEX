@@ -175,6 +175,12 @@ export interface Project {
   updatedAt: string;
 }
 
+export interface DeviceProject {
+  id: string;
+  name: string;
+  workspacePath: string | null;
+}
+
 export interface ProjectProfile {
   projectId: string;
   displayName: string | null;

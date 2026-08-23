@@ -9,6 +9,7 @@ import type {
   Attachment,
   Comment,
   DevelopmentScan,
+  DeviceProject,
   IssueRelationType,
   Project,
   ProjectProfile,
@@ -234,6 +235,16 @@ export async function listDeviceWorkspaces(signal?: AbortSignal): Promise<Record
     return data.workspaces;
   } catch (error) {
     if (error instanceof ApiError && error.code === "LOCAL_COMPANION_REQUIRED") return {};
+    throw error;
+  }
+}
+
+export async function listDeviceProjects(signal?: AbortSignal): Promise<DeviceProject[]> {
+  try {
+    const data = await request<{ projects: DeviceProject[] }>("/api/device-projects", { signal });
+    return data.projects;
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "LOCAL_COMPANION_REQUIRED") return [];
     throw error;
   }
 }

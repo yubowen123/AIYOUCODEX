@@ -40,8 +40,10 @@ test("custom Taskboard retains the six-lane project management implementation", 
   assert.match(app, /project-folder-filter/);
   assert.match(
     app,
-    /profile\?\.workspacePath\s*\?\? project\.workspacePath\s*\?\? deviceWorkspacePaths\[codexProjectId\]/,
+    /profile\?\.workspacePath\s*\?\? deviceWorkspacePaths\[codexProjectId\][\s\S]*?\?\? deviceProject\?\.workspacePath[\s\S]*?\?\? project\.workspacePath/,
   );
+  assert.match(app, /listDeviceProjects\(signal\)/);
+  assert.match(swimlane, /taskGuidance\(task\)/);
   assert.match(app, /saveSelectedProjectProfile/);
   assert.match(profilePanel, /项目描述/);
   assert.match(profilePanel, /下一步规划/);

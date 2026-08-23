@@ -83,7 +83,8 @@ test("priority-only Codex sidebars retain virtual tabs, project search, and fold
   assert.match(source, /data-codex-sidebar-priority-native-hidden/);
   assert.match(source, /data-codex-sidebar-virtual-section/);
   assert.match(source, /function ensureVirtualPinnedRows\(\)/);
-  assert.match(source, /function virtualFolderSourceItems\(project\)/);
+  assert.match(source, /function virtualFolderSourceItems\(excludedIds = new Set\(\), sourceIndexOffset = 0\)/);
+  assert.match(source, /sourceMode: virtualItems\.length \? "hybrid" : "native"/);
 });
 
 test("virtual folder catalog rows participate in card-view enhancement", () => {

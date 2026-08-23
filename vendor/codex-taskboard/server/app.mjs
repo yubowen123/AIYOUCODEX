@@ -1465,6 +1465,7 @@ export function createTaskboardServer(options = {}) {
         assertLoopbackRequest(request);
       }
       const isMachineCapabilityRoute = pathname === "/api/meta"
+        || pathname === "/api/device-projects"
         || pathname === "/api/device-workspaces"
         || pathname === "/api/workflow-capabilities"
         || /^\/api\/projects\/[^/]+\/development-contexts$/.test(pathname);
@@ -1683,6 +1684,16 @@ export function createTaskboardServer(options = {}) {
         }
         return sendJson(response, 200, {
           workspaces: await readCodexProjectWorkspaces(resolved.codexStatePath),
+        });
+      }
+
+      if (pathname === "/api/device-projects") {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "GET /api/device-projects does not accept query parameters");
+        }
+        return sendJson(response, 200, {
+          projects: await readCodexProjects(resolved.codexStatePath),
         });
       }
 
