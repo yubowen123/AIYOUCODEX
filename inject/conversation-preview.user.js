@@ -1600,7 +1600,9 @@
       if (sectionPanel?.hidden) return false;
       if (row.closest('[data-codex-sidebar-recent-native-hidden="true"]')) return false;
       if (row.hasAttribute("data-codex-sidebar-all-project-row")) {
-        return Boolean(row.closest(`#${ALL_PROJECTS_PANEL_ID}`));
+        return Boolean(row.closest(
+          `#${ALL_PROJECTS_PANEL_ID}, [data-codex-sidebar-virtual-folder-panel]`,
+        ));
       }
       const folderPanel = row.closest("[data-codex-sidebar-folder-panel]");
       return !folderPanel?.hidden;

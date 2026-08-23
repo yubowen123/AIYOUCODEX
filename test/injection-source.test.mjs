@@ -86,6 +86,13 @@ test("priority-only Codex sidebars retain virtual tabs, project search, and fold
   assert.match(source, /function virtualFolderSourceItems\(project\)/);
 });
 
+test("virtual folder catalog rows participate in card-view enhancement", () => {
+  assert.match(
+    source,
+    /#\$\{ALL_PROJECTS_PANEL_ID\}, \[data-codex-sidebar-virtual-folder-panel\]/,
+  );
+});
+
 test("running Taskboard threads receive a reduced-motion-safe blue border glow", () => {
   assert.match(source, /data-codex-project-running/);
   assert.match(source, /codex-running-border-flow/);
