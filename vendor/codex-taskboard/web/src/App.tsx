@@ -31,15 +31,19 @@ import {
   listDevelopmentContexts,
   listDeviceWorkspaces,
   listProjects,
+  listProjectProfiles,
   listTasks,
   moveTask as moveTaskRequest,
   organizeProjectHistory as organizeProjectHistoryRequest,
   removeTaskRelation,
   restoreTask as restoreTaskRequest,
   setCurrentUserActor,
+  saveProjectProfile as saveProjectProfileRequest,
   uploadAttachment,
   updateTask as updateTaskRequest,
 } from "./api";
+// @ts-expect-error Shared runtime utilities are covered by focused node tests.
+import { projectUrgency, workspaceMatchesFilter } from "../../shared/project-metadata.mjs";
 import {
   actorForAssigneeTarget,
   assigneeTargetForActor,
@@ -54,6 +58,7 @@ import {
 } from "./components/InlineMediaComposer";
 import { LinearIcon } from "./components/LinearIcon";
 import { ProjectAutomationMenu } from "./components/ProjectAutomationMenu";
+import { ProjectProfilePanel } from "./components/ProjectProfilePanel";
 import { ProjectSwimlaneBoard } from "./components/ProjectSwimlaneBoard";
 import { TaskContextMenu } from "./components/TaskContextMenu";
 import { TaskDetail } from "./components/TaskDetail";
@@ -80,6 +85,7 @@ import {
   type HostContext,
   type IssueRelationType,
   type Project,
+  type ProjectProfile,
   type Task,
   type TaskboardMetadata,
   type TaskDraft,
@@ -719,6 +725,9 @@ export function App() {
   const [taskboardMetadata, setTaskboardMetadata] = useState<TaskboardMetadata | null>(null);
   const [localAiChatAvailable, setLocalAiChatAvailable] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectProfiles, setProjectProfiles] = useState<ProjectProfile[]>([]);
+  const [projectProfileSaving, setProjectProfileSaving] = useState(false);
+  const [projectFolderFilter, setProjectFolderFilter] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projectActivityTasks, setProjectActivityTasks] = useState<Task[]>([]);
@@ -795,6 +804,10 @@ export function App() {
   }, []);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+  const projectProfilesById = useMemo(
+    () => new Map(projectProfiles.map((profile) => [profile.projectId, profile])),
+    [projectProfiles],
+  );
   const currentUser = hostContext?.user ?? DEFAULT_USER_ACTOR;
   const selectedDeviceWorkspacePath = deviceWorkspacePaths[selectedProjectId];
   const selectedProjectAutomation = projectAutomations[selectedProjectId];
@@ -855,35 +868,66 @@ export function App() {
     const persistedById = new Map(projects.map((project) => [project.id, project]));
     const seen = new Set<string>();
     const choices: ProjectChoice[] = [];
-    for (const project of hostContext?.projects ?? []) {
-      if (!project.id || !project.name || seen.has(project.id)) continue;
+    const hostProjects = new Map((hostContext?.projects ?? []).map((project) => [project.id, project]));
+    const matchedCodexIds = new Set(projectProfiles.flatMap((profile) => (
+      profile.codexProjectId ? [profile.codexProjectId] : []
+    )));
+    for (const project of projects) {
+      if (seen.has(project.id)) continue;
+      const profile = projectProfilesById.get(project.id);
       seen.add(project.id);
       choices.push({
         id: project.id,
-        name: persistedById.get(project.id)?.name ?? project.name,
+        name: profile?.displayName || project.name,
+        issueCount: project.issueCount,
+        inCodex: Boolean(profile?.codexProjectId || hostProjects.has(project.id)),
+        persisted: true,
+      });
+    }
+    for (const project of hostContext?.projects ?? []) {
+      if (!project.id || !project.name || seen.has(project.id) || matchedCodexIds.has(project.id)) continue;
+      seen.add(project.id);
+      choices.push({
+        id: project.id,
+        name: project.name,
         issueCount: persistedById.get(project.id)?.issueCount ?? 0,
         inCodex: true,
         persisted: persistedById.has(project.id),
       });
     }
-    for (const project of projects) {
-      if (seen.has(project.id)) continue;
-      choices.push({
-        id: project.id,
-        name: project.name,
-        issueCount: project.issueCount,
-        inCodex: false,
-        persisted: true,
-      });
-    }
     return choices.sort((left, right) => (
       Number(favoriteProjectIds.has(right.id)) - Number(favoriteProjectIds.has(left.id))
     ));
-  }, [favoriteProjectIds, hostContext?.projects, projects]);
+  }, [favoriteProjectIds, hostContext?.projects, projectProfiles, projectProfilesById, projects]);
   const projectNames = useMemo(
     () => new Map(projectChoices.map((project) => [project.id, project.name])),
     [projectChoices],
   );
+  const projectWorkspacePaths = useMemo(() => new Map(projects.map((project) => {
+    const profile = projectProfilesById.get(project.id);
+    const codexProjectId = profile?.codexProjectId ?? project.id;
+    return [
+      project.id,
+      profile?.workspacePath
+        ?? project.workspacePath
+        ?? deviceWorkspacePaths[codexProjectId]
+        ?? deviceWorkspacePaths[project.id]
+        ?? "",
+    ];
+  })), [deviceWorkspacePaths, projectProfilesById, projects]);
+  const projectFolderOptions = useMemo(() => [...new Set(
+    [...projectWorkspacePaths.values()].filter(Boolean),
+  )].sort((left, right) => left.localeCompare(right, "zh-CN")), [projectWorkspacePaths]);
+  const visibleProjectActivityTasks = useMemo(() => projectActivityTasks.filter((task) => (
+    workspaceMatchesFilter(projectWorkspacePaths.get(task.projectId), projectFolderFilter)
+  )), [projectActivityTasks, projectFolderFilter, projectWorkspacePaths]);
+  const projectUrgencies = useMemo(() => new Map(projects.map((project) => [
+    project.id,
+    projectUrgency(
+      projectActivityTasks.filter((task) => task.projectId === project.id),
+      projectProfilesById.get(project.id)?.urgencyOverride ?? null,
+    ).value,
+  ])), [projectActivityTasks, projectProfilesById, projects]);
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
   const writeProjectAutomation = useCallback((
@@ -1254,8 +1298,9 @@ export function App() {
     setProjectsLoading(true);
     setLoadError(null);
     try {
-      const [nextProjects, metadata, workspaces] = await Promise.all([
+      const [nextProjects, nextProfiles, metadata, workspaces] = await Promise.all([
         listProjects(signal),
+        listProjectProfiles(signal),
         getTaskboardMetadata(signal),
         listDeviceWorkspaces(signal),
       ]);
@@ -1278,6 +1323,7 @@ export function App() {
         return next;
       });
       setProjects(nextProjects);
+      setProjectProfiles(nextProfiles);
       setSelectedProjectId((current) => {
         const fromQuery = new URLSearchParams(window.location.search).get("project");
         const remembered = embedded ? null : window.localStorage.getItem(LAST_PROJECT_KEY);
@@ -1306,6 +1352,29 @@ export function App() {
       setLoadError(errorMessage(error));
     }
   }, []);
+
+  async function saveSelectedProjectProfile(input: Pick<
+    ProjectProfile,
+    "displayName" | "codexProjectId" | "workspacePath" | "description" | "nextPlan" | "urgencyOverride"
+  >) {
+    if (!selectedProject) return;
+    setProjectProfileSaving(true);
+    setActionError(null);
+    try {
+      const saved = await saveProjectProfileRequest(selectedProject.id, input);
+      setProjectProfiles((current) => [
+        ...current.filter((profile) => profile.projectId !== saved.projectId),
+        saved,
+      ]);
+      if (saved.workspacePath) rememberDeviceWorkspacePath(selectedProject.id, saved.workspacePath);
+      setAnnouncement("项目档案已保存，紧急状态、匹配与文件夹筛选已同步。");
+    } catch (error) {
+      setActionError(errorMessage(error));
+      throw error;
+    } finally {
+      setProjectProfileSaving(false);
+    }
+  }
 
   const refreshTasks = useCallback(async (
     projectId: string,
@@ -2119,7 +2188,9 @@ export function App() {
   }
 
   const contextName = workspaceName(hostContext?.workspacePath);
-  const headerProjectName = selectedProject?.name ?? "任务面板";
+  const headerProjectName = selectedProject
+    ? projectProfilesById.get(selectedProject.id)?.displayName || selectedProject.name
+    : "任务面板";
   const appShellStyle = embedded
     ? { "--codex-titlebar-left-inset": `${hostContext?.titlebarLeftInset ?? 0}px` } as CSSProperties
     : undefined;
@@ -2167,7 +2238,7 @@ export function App() {
                 onClick={() => changeProject(project.id)}
               >
                 <span className="project-dot" aria-hidden="true" />
-                <span>{project.name}</span>
+                <span>{projectProfilesById.get(project.id)?.displayName || project.name}</span>
               </button>
             ))}
           </div>
@@ -2402,6 +2473,18 @@ export function App() {
           </div>}
         </div>}
 
+        {selectedProjectId && selectedProject && !detailTask && boardView === "issues" && (
+          <ProjectProfilePanel
+            project={selectedProject}
+            profile={projectProfilesById.get(selectedProject.id) ?? null}
+            tasks={tasks}
+            codexProjects={hostContext?.projects ?? []}
+            workspacePaths={deviceWorkspacePaths}
+            saving={projectProfileSaving}
+            onSave={saveSelectedProjectProfile}
+          />
+        )}
+
         {(loadError || actionError) && (
           <div className="error-banner" role="alert">
             <span className="error-mark" aria-hidden="true"><LinearIcon name="alert" /></span>
@@ -2422,18 +2505,31 @@ export function App() {
         {!selectedProjectId ? (
           <section className="project-home">
             <div className="project-home-heading">
-              <span>任务面板</span>
-              <h1>项目总览</h1>
-              <p>在六个泳道中直接查看并推进全部项目议题。</p>
+              <div>
+                <span>任务面板</span>
+                <h1>项目总览</h1>
+                <p>在六个泳道中直接查看并推进全部项目议题。</p>
+              </div>
+              <label className="project-folder-filter">
+                <LinearIcon name="folder" />
+                <span>项目文件夹</span>
+                <select value={projectFolderFilter} onChange={(event) => setProjectFolderFilter(event.target.value)}>
+                  <option value="">全部文件夹</option>
+                  {projectFolderOptions.map((workspacePath) => (
+                    <option key={workspacePath} value={workspacePath}>{workspaceName(workspacePath)}</option>
+                  ))}
+                </select>
+              </label>
             </div>
             <section className="project-swimlane-section" aria-labelledby="project-swimlane-heading">
               <div className="project-group-heading project-swimlane-heading">
                 <h2 id="project-swimlane-heading">全部议题</h2>
-                <span>{projectActivityTasks.length}</span>
+                <span>{visibleProjectActivityTasks.length}</span>
               </div>
               <ProjectSwimlaneBoard
-                tasks={projectActivityTasks}
+                tasks={visibleProjectActivityTasks}
                 projectNames={projectNames}
+                projectUrgencies={projectUrgencies}
                 loading={projectActivityLoading}
                 movingTaskId={movingTaskId}
                 onOpenTask={openProjectSwimlaneTask}

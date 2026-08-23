@@ -175,6 +175,17 @@ export interface Project {
   updatedAt: string;
 }
 
+export interface ProjectProfile {
+  projectId: string;
+  displayName: string | null;
+  codexProjectId: string | null;
+  workspacePath: string | null;
+  description: string;
+  nextPlan: string;
+  urgencyOverride: TaskPriority | null;
+  updatedAt: string;
+}
+
 export interface TaskRelationSummary {
   id: string;
   identifier: string;
@@ -258,7 +269,7 @@ export interface HostContext {
   threadId?: string;
   theme?: "light" | "dark";
   projectId?: string;
-  projects?: Array<{ id: string; name: string }>;
+  projects?: Array<{ id: string; name: string; workspacePath?: string }>;
   titlebarLeftInset?: number;
   sidebarCollapsed?: boolean;
 }

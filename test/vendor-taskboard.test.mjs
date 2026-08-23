@@ -30,11 +30,22 @@ test("vendored Taskboard is the pinned custom project-management snapshot", asyn
 test("custom Taskboard retains the six-lane project management implementation", async () => {
   const app = await readFile(new URL("web/src/App.tsx", root), "utf8");
   const swimlane = await readFile(new URL("web/src/components/ProjectSwimlaneBoard.tsx", root), "utf8");
+  const profilePanel = await readFile(new URL("web/src/components/ProjectProfilePanel.tsx", root), "utf8");
   const injection = await readFile(new URL("inject/codex-taskboard.user.js", root), "utf8");
   assert.match(app, /<ProjectSwimlaneBoard/);
   assert.match(swimlane, /跨项目六泳道看板/);
   assert.match(swimlane, /project-swimlane-resize-handle/);
   assert.match(swimlane, /onMoveTask/);
+  assert.match(swimlane, /projectUrgencies/);
+  assert.match(app, /project-folder-filter/);
+  assert.match(
+    app,
+    /profile\?\.workspacePath\s*\?\? project\.workspacePath\s*\?\? deviceWorkspacePaths\[codexProjectId\]/,
+  );
+  assert.match(app, /saveSelectedProjectProfile/);
+  assert.match(profilePanel, /项目描述/);
+  assert.match(profilePanel, /下一步规划/);
+  assert.match(profilePanel, /匹配 Codex 项目/);
   assert.match(injection, /const ENTRY_LABEL = "项目管理"/);
 });
 

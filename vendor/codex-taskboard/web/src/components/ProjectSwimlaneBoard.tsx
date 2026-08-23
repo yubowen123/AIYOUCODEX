@@ -48,6 +48,7 @@ function laneForStatus(status: TaskStatus): ProjectSwimlane {
 interface ProjectSwimlaneBoardProps {
   tasks: Task[];
   projectNames: Map<string, string>;
+  projectUrgencies: Map<string, TaskPriority>;
   loading: boolean;
   movingTaskId: string | null;
   onOpenTask: (task: Task) => void;
@@ -58,6 +59,7 @@ interface ProjectSwimlaneBoardProps {
 export function ProjectSwimlaneBoard({
   tasks,
   projectNames,
+  projectUrgencies,
   loading,
   movingTaskId,
   onOpenTask,
@@ -163,6 +165,7 @@ export function ProjectSwimlaneBoard({
                 ) : laneTasks.length > 0 ? laneTasks.map((task) => {
                   const currentLane = laneForStatus(task.status);
                   const projectName = projectNames.get(task.projectId) ?? task.projectId;
+                  const projectUrgency = projectUrgencies.get(task.projectId) ?? "none";
                   const moving = movingTaskId === task.id;
                   return (
                     <article
@@ -189,6 +192,13 @@ export function ProjectSwimlaneBoard({
                           {projectName.slice(0, 1).toUpperCase()}
                         </span>
                         <strong title={projectName}>{projectName}</strong>
+                        <span
+                          className={`project-card-urgency urgency-${projectUrgency}`}
+                          title={`项目紧急状态：${PRIORITY_LABELS[projectUrgency]}`}
+                        >
+                          <LinearPriorityIcon priority={projectUrgency} />
+                          {PRIORITY_LABELS[projectUrgency]}
+                        </span>
                         <ActorAvatar actor={task.assignee} className="project-swimlane-assignee" />
                       </div>
                       <span className="project-swimlane-identifier">{task.identifier}</span>

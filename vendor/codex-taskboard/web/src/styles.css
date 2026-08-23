@@ -473,7 +473,14 @@ kbd {
   margin-inline: auto;
 }
 
-.project-home-heading > span {
+.project-home-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.project-home-heading > div > span {
   color: var(--text-tertiary);
   font-size: 10px;
   font-weight: 550;
@@ -493,6 +500,239 @@ kbd {
   color: var(--text-tertiary);
   font-size: 12px;
 }
+
+.project-folder-filter {
+  display: grid;
+  min-width: 220px;
+  grid-template-columns: 16px 1fr;
+  align-items: center;
+  gap: 2px 8px;
+  padding: 8px 10px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+.project-folder-filter > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.project-folder-filter > span {
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.project-folder-filter select {
+  min-width: 0;
+  grid-column: 2;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-weight: 550;
+}
+
+.project-profile-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+  gap: 12px;
+  margin: 10px 16px 0;
+  flex: 0 0 auto;
+}
+
+.project-profile-summary,
+.project-progress-card {
+  min-width: 0;
+  padding: 13px 15px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--card-shadow);
+}
+
+.project-profile-heading,
+.project-profile-heading > div,
+.project-progress-card > div:first-child {
+  display: flex;
+  align-items: center;
+}
+
+.project-profile-heading {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.project-profile-heading > div {
+  min-width: 0;
+  gap: 9px;
+}
+
+.project-profile-eyebrow {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.project-profile-heading h2 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-profile-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-muted);
+}
+
+.project-profile-edit:hover { background: var(--surface-hover); }
+.project-profile-edit svg { width: 13px; height: 13px; }
+
+.project-profile-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  margin-top: 9px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.project-profile-path {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-profile-path svg { flex: 0 0 auto; width: 12px; height: 12px; }
+
+.project-urgency-badge,
+.project-card-urgency {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  color: var(--text-tertiary);
+}
+
+.project-urgency-badge {
+  padding: 3px 7px;
+  background: var(--surface-muted);
+  font-weight: 550;
+}
+
+.project-urgency-badge svg,
+.project-card-urgency svg { width: 12px; height: 12px; }
+.project-urgency-badge small { color: inherit; font-size: 8px; font-weight: 450; opacity: .76; }
+.urgency-urgent { color: var(--danger); }
+.urgency-high { color: #e88422; }
+.urgency-medium { color: var(--warning); }
+.urgency-low { color: var(--success); }
+
+.project-profile-copy {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 9px;
+}
+
+.project-profile-copy > div { min-width: 0; }
+.project-profile-copy span { color: var(--text-tertiary); font-size: 9px; }
+.project-profile-copy p {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-progress-card > div:first-child { justify-content: space-between; }
+.project-progress-card > div:first-child span { color: var(--text-tertiary); font-size: 10px; }
+.project-progress-card strong { font-size: 19px; font-weight: 620; }
+.project-progress-track {
+  height: 6px;
+  margin-top: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+.project-progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+.project-progress-card p { margin: 10px 0 0; color: var(--text-tertiary); font-size: 9px; line-height: 1.7; }
+
+.project-profile-modal-backdrop {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.38);
+  -webkit-app-region: no-drag;
+}
+
+.project-profile-modal {
+  display: grid;
+  width: min(560px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  gap: 11px;
+  padding: 18px;
+  overflow: auto;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 13px;
+  background: var(--surface-raised);
+  box-shadow: var(--dialog-shadow);
+}
+
+.project-profile-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.project-profile-modal-header span { color: var(--text-tertiary); font-size: 9px; }
+.project-profile-modal-header h2 { margin: 2px 0 0; font-size: 16px; }
+.project-profile-modal-header button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: var(--surface-muted);
+}
+.project-profile-modal-header svg { width: 13px; height: 13px; }
+.project-profile-modal > label { display: grid; gap: 5px; color: var(--text-secondary); font-size: 10px; }
+.project-profile-modal input,
+.project-profile-modal select,
+.project-profile-modal textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 8px;
+  outline: 0;
+  background: var(--surface);
+}
+.project-profile-modal textarea { resize: vertical; }
+.project-profile-modal input:focus,
+.project-profile-modal select:focus,
+.project-profile-modal textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.project-profile-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 3px; }
+.project-profile-modal-actions button { padding: 7px 13px; border: var(--border-hairline) solid var(--border); border-radius: 8px; background: var(--surface-muted); }
+.project-profile-modal-actions button.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
 
 .project-swimlane-section {
   display: flex;
@@ -748,6 +988,16 @@ kbd {
   color: var(--text-secondary);
   font-size: 10px;
   font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-card-urgency {
+  max-width: 72px;
+  padding: 2px 5px;
+  overflow: hidden;
+  background: var(--surface-muted);
+  font-size: 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -8846,6 +9096,30 @@ kbd {
 }
 
 @media (max-width: 760px) {
+  .project-profile-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-progress-card {
+    display: grid;
+    grid-template-columns: 100px minmax(0, 1fr);
+    align-items: center;
+    gap: 0 12px;
+  }
+
+  .project-progress-card > p {
+    grid-column: 1 / -1;
+  }
+
+  .project-home-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .project-folder-filter {
+    width: 100%;
+  }
+
   .project-activity-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -8923,6 +9197,22 @@ kbd {
 }
 
 @media (max-width: 620px) {
+  .project-profile-panel {
+    margin-right: 8px;
+    margin-left: 8px;
+  }
+
+  .project-profile-copy {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .project-profile-meta {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
   .project-activity-grid {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -11,6 +11,7 @@ import type {
   DevelopmentScan,
   IssueRelationType,
   Project,
+  ProjectProfile,
   ProjectOrganizationResult,
   ProjectOrganizationSource,
   Task,
@@ -89,6 +90,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
   const data = await request<{ projects: Project[] }>("/api/projects", { signal });
   return data.projects;
+}
+
+export async function listProjectProfiles(signal?: AbortSignal): Promise<ProjectProfile[]> {
+  const data = await request<{ profiles: ProjectProfile[] }>("/api/local/project-profiles", { signal });
+  return data.profiles;
+}
+
+export async function saveProjectProfile(
+  projectId: string,
+  input: Pick<
+    ProjectProfile,
+    "displayName" | "codexProjectId" | "workspacePath" | "description" | "nextPlan" | "urgencyOverride"
+  >,
+): Promise<ProjectProfile> {
+  const data = await request<{ profile: ProjectProfile }>(
+    `/api/local/project-profiles/${encodeURIComponent(projectId)}`,
+    { method: "PUT", body: JSON.stringify(input) },
+  );
+  return data.profile;
 }
 
 export async function getTaskboardMetadata(signal?: AbortSignal): Promise<TaskboardMetadata> {
