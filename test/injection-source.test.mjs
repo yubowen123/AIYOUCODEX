@@ -94,6 +94,21 @@ test("virtual folder catalog rows participate in card-view enhancement", () => {
   );
 });
 
+test("native project folders merge catalog-only conversations and sort them by real activity", () => {
+  assert.match(source, /function reconcileNativeFolderCatalog\(item\)/);
+  assert.match(source, /createCatalogThreadRow\(entry, "folder"\)/);
+  assert.match(source, /desired\.sort\(\(left, right\) => right\.time - left\.time/);
+  assert.match(source, /if \(selected\) reconcileNativeFolderCatalog\(item\)/);
+});
+
+test("new native conversations replace catalog placeholders without duplicate cards", () => {
+  assert.match(source, /function isTemporaryThreadId\(value\)/);
+  assert.match(source, /startsWith\("client-new-thread:"\)/);
+  assert.match(source, /const temporaryNativeCatalogId = new Map\(\)/);
+  assert.match(source, /nativeAliasByCatalogId\.get\(threadId\)/);
+  assert.match(source, /temporaryNativeCatalogId\.has\(threadId\)/);
+});
+
 test("running Taskboard threads receive a reduced-motion-safe blue border glow", () => {
   assert.match(source, /data-codex-project-running/);
   assert.match(source, /codex-running-border-flow/);

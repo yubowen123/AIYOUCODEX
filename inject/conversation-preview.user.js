@@ -3365,7 +3365,8 @@
         .map((thread) => thread.getAttribute("data-app-action-sidebar-thread-title") || "")
         .filter(Boolean);
       const catalogEntries = (searchCatalogByProject.get(id) || [])
-        .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId)));
+        .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId)))
+        .sort((left, right) => Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
       const catalogTitles = catalogEntries.map((entry) => entry.title);
       const catalogLastUsed = catalogEntries.reduce((latest, entry) => {
         const time = Date.parse(entry.updatedAt || "");
@@ -3454,6 +3455,14 @@
 
   function normalizedThreadId(value) {
     return String(value || "").trim().replace(/^(?:local|cloud):/i, "").toLocaleLowerCase();
+  }
+
+  function normalizedThreadTitle(value) {
+    return String(value || "").trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  }
+
+  function isTemporaryThreadId(value) {
+    return normalizedThreadId(value).startsWith("client-new-thread:");
   }
 
   function catalogMatchesForFolder(item, query = folderSearchQuery) {
@@ -3614,6 +3623,9 @@
       row.dataset.codexSidebarInterruptedRow = "true";
       row.dataset.codexSidebarInterruptedKind = entry.interruptionKind || "passive";
       row.dataset.codexSidebarInterruptedUpdatedAt = entry.updatedAt || "";
+    } else if (kind === "folder") {
+      row.dataset.codexSidebarFolderCatalogRow = "true";
+      row.dataset.codexSidebarFolderCatalogUpdatedAt = entry.updatedAt || "";
     } else {
       row.dataset.codexSidebarAllProjectRow = "true";
       row.dataset.codexSidebarAllProjectId = entry.projectId;
@@ -3637,6 +3649,99 @@
     row.appendChild(titleHost);
     item.appendChild(row);
     return item;
+  }
+
+  function reconcileNativeFolderCatalog(item) {
+    if (!item?.folder || !item?.catalogEntries?.length) return;
+    const projectList = item.folder.querySelector(
+      `[data-app-action-sidebar-project-list-id="${CSS.escape(item.id)}"]`,
+    );
+    const list = projectList?.querySelector('[role="list"]');
+    if (!list) return;
+
+    const currentItems = Array.from(list.children).filter((child) => child.getAttribute("role") === "listitem");
+    const nativeById = new Map();
+    const generatedById = new Map();
+    const nativeRows = [];
+    for (const listItem of currentItems) {
+      const row = listItem.querySelector(ROW_SELECTOR);
+      const threadId = normalizedThreadId(row?.getAttribute("data-app-action-sidebar-thread-id"));
+      if (!threadId) continue;
+      if (row.dataset.codexSidebarFolderCatalogRow === "true") generatedById.set(threadId, listItem);
+      else {
+        nativeById.set(threadId, listItem);
+        nativeRows.push({
+          listItem,
+          row,
+          threadId,
+          title: normalizedThreadTitle(row.getAttribute("data-app-action-sidebar-thread-title")),
+        });
+      }
+    }
+
+    // Codex initially renders a newly created conversation with a client-new-thread id,
+    // then persists it under a UUID. The catalog can see that UUID before React replaces
+    // the temporary row, so compare the exact title only for temporary ids during this
+    // hand-off. Permanent conversations continue to be matched strictly by id.
+    const catalogEntriesByTitle = new Map();
+    for (const entry of item.catalogEntries) {
+      const title = normalizedThreadTitle(entry.title);
+      if (!title) continue;
+      const entries = catalogEntriesByTitle.get(title) || [];
+      entries.push(entry);
+      catalogEntriesByTitle.set(title, entries);
+    }
+    for (const entries of catalogEntriesByTitle.values()) {
+      entries.sort((left, right) => Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
+    }
+    const temporaryNativeCatalogId = new Map();
+    const nativeAliasByCatalogId = new Map();
+    const claimedCatalogIds = new Set();
+    for (const native of nativeRows) {
+      if (!isTemporaryThreadId(native.threadId) || !native.title) continue;
+      const candidate = (catalogEntriesByTitle.get(native.title) || []).find((entry) => {
+        const catalogId = normalizedThreadId(entry.threadId);
+        return catalogId && !claimedCatalogIds.has(catalogId);
+      });
+      const catalogId = normalizedThreadId(candidate?.threadId);
+      if (!catalogId) continue;
+      claimedCatalogIds.add(catalogId);
+      temporaryNativeCatalogId.set(native.threadId, catalogId);
+      if (!nativeById.has(catalogId)) nativeAliasByCatalogId.set(catalogId, native.listItem);
+    }
+
+    const catalogById = new Map();
+    const desired = item.catalogEntries.flatMap((entry, sourceIndex) => {
+      const threadId = normalizedThreadId(entry.threadId);
+      if (!threadId || pinnedThreadIds.has(threadId) || catalogById.has(threadId)) return [];
+      catalogById.set(threadId, entry);
+      const listItem = nativeById.get(threadId)
+        || nativeAliasByCatalogId.get(threadId)
+        || generatedById.get(threadId)
+        || createCatalogThreadRow(entry, "folder");
+      const row = listItem.querySelector(ROW_SELECTOR);
+      if (row) row.dataset.codexSidebarFolderCatalogUpdatedAt = entry.updatedAt || "";
+      const time = Date.parse(entry.updatedAt || "");
+      return [{ listItem, time: Number.isFinite(time) ? time : 0, sourceIndex }];
+    });
+
+    for (const [threadId, listItem] of nativeById) {
+      if (catalogById.has(threadId) || temporaryNativeCatalogId.has(threadId)) continue;
+      const row = listItem.querySelector(ROW_SELECTOR);
+      const previewTime = Date.parse(previewForRow(row)?.updatedAt || "");
+      desired.push({
+        listItem,
+        time: Number.isFinite(previewTime) ? previewTime : 0,
+        sourceIndex: desired.length,
+      });
+    }
+    desired.sort((left, right) => right.time - left.time || left.sourceIndex - right.sourceIndex);
+
+    const otherChildren = Array.from(list.children).filter((child) => child.getAttribute("role") !== "listitem");
+    const desiredChildren = [...desired.map((entry) => entry.listItem), ...otherChildren];
+    const unchanged = desiredChildren.length === list.children.length
+      && desiredChildren.every((child, index) => list.children[index] === child);
+    if (!unchanged) list.replaceChildren(...desiredChildren);
   }
 
   function createAllProjectRow(entry) {
@@ -3872,6 +3977,7 @@
       // This completes recent-use sorting and project-title search even when
       // Codex originally rendered a populated folder in its collapsed state.
       setNativeFolderExpanded(item);
+      if (selected) reconcileNativeFolderCatalog(item);
     }
 
     const entries = allProjectEntries();

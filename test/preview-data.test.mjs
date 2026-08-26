@@ -217,6 +217,54 @@ test("repository search catalog includes every indexed thread assigned to a save
   }]);
 });
 
+test("repository infers current Codex project membership from the session workspace and keeps real activity order", async () => {
+  const codexHome = await mkdtemp(path.join(os.tmpdir(), "codex-workspace-project-catalog-test-"));
+  const sessions = path.join(codexHome, "sessions", "2026", "08", "24");
+  const recentId = "019fd731-e839-7393-a59e-e5a1b04f55c2";
+  const olderId = "019f0d8f-9645-75a0-87f7-6e5cf6328ba6";
+  await mkdir(sessions, { recursive: true });
+  const session = (id, timestamp, message) => [
+    JSON.stringify({
+      timestamp: "2026-08-06T13:10:00Z",
+      type: "session_meta",
+      payload: { id, cwd: "/Users/test/Documents/为创新而生" },
+    }),
+    JSON.stringify({
+      timestamp,
+      type: "event_msg",
+      payload: { type: "user_message", message },
+    }),
+  ].join("\n");
+  await writeFile(path.join(sessions, `rollout-${recentId}.jsonl`), session(recentId, "2026-08-24T13:47:39Z", "继续创建全流程剧本 Skill"));
+  await writeFile(path.join(sessions, `rollout-${olderId}.jsonl`), session(olderId, "2026-08-20T04:56:16Z", "继续整理知识卡片"));
+  await writeFile(path.join(codexHome, "session_index.jsonl"), [
+    JSON.stringify({ id: olderId, thread_name: "创建知识卡片技能", updated_at: "2026-08-20T04:56:16Z" }),
+    JSON.stringify({ id: recentId, thread_name: "创建全流程剧本生成Skill", updated_at: "2026-08-06T13:10:12Z" }),
+  ].join("\n"));
+  await writeFile(path.join(codexHome, ".codex-global-state.json"), JSON.stringify({
+    "local-projects": {
+      innovation: {
+        id: "innovation",
+        name: "为创新而生",
+        rootPaths: ["/Users/test/Documents/为创新而生"],
+      },
+      home: {
+        id: "home",
+        name: "个人目录",
+        rootPaths: ["/Users/test"],
+      },
+    },
+    "thread-project-assignments": {},
+  }));
+
+  const catalog = await new PreviewRepository({ codexHome }).readSearchCatalog();
+  assert.deepEqual(catalog.map(({ title, projectId, projectName }) => ({ title, projectId, projectName })), [
+    { title: "创建全流程剧本生成Skill", projectId: "innovation", projectName: "为创新而生" },
+    { title: "创建知识卡片技能", projectId: "innovation", projectName: "为创新而生" },
+  ]);
+  assert.equal(catalog[0].updatedAt, "2026-08-24T13:47:39.000Z");
+});
+
 test("repository recent catalog covers assigned and unassigned threads in global activity order", async () => {
   const codexHome = await mkdtemp(path.join(os.tmpdir(), "codex-recent-catalog-test-"));
   const sessions = path.join(codexHome, "sessions", "2026", "08", "12");
