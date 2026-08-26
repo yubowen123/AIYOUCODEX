@@ -117,6 +117,18 @@ test("folder reconciliation never removes React-owned rows during the first mess
   assert.doesNotMatch(source, /list\.replaceChildren\(\.\.\.desiredChildren\)/);
 });
 
+test("folder cards collapse short retry bursts and keep native controls on a full bottom row", () => {
+  assert.match(source, /const FOLDER_DUPLICATE_WINDOW_MS = 15 \* 60 \* 1000/);
+  assert.match(source, /function dedupeFolderCatalogEntries\(sourceEntries\)/);
+  assert.match(source, /entry\.dedupeKey/);
+  assert.match(source, /data-codex-sidebar-semantic-duplicate-hidden/);
+  assert.match(source, /\[data-codex-sidebar-semantic-duplicate-hidden\]\s*\{/);
+  assert.doesNotMatch(source, /\[data-codex-sidebar-semantic-duplicate-hidden="true"\]/);
+  assert.match(source, /control\.style\.order = String\(desired\.length \+ index\)/);
+  assert.match(source, /data-codex-sidebar-folder-control-item/);
+  assert.match(source, /grid-column: 1 \/ -1 !important/);
+});
+
 test("running Taskboard threads receive a reduced-motion-safe blue border glow", () => {
   assert.match(source, /data-codex-project-running/);
   assert.match(source, /codex-running-border-flow/);

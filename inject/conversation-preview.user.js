@@ -54,6 +54,7 @@
   const VIEW_STORAGE_KEY = "codex-conversation-preview:view-mode";
   const THREAD_STATUS_STORAGE_KEY = "codex-conversation-preview:thread-statuses";
   const NATIVE_ANCHOR_GRACE_MS = 1_800;
+  const FOLDER_DUPLICATE_WINDOW_MS = 15 * 60 * 1000;
   const STATUS_BUTTON_CLASS = "codex-conversation-status-button";
   const STATUS_MENU_ID = "codex-conversation-status-menu";
   const SUMMARY_CLASS = "codex-conversation-core-summary";
@@ -236,8 +237,15 @@
       [data-codex-sidebar-pinned-outside-hidden="true"] {
         display: none !important;
       }
-      [data-codex-sidebar-native-alias-hidden="true"] {
+      [data-codex-sidebar-native-alias-hidden] {
         display: none !important;
+      }
+      [data-codex-sidebar-semantic-duplicate-hidden] {
+        display: none !important;
+      }
+      [data-codex-sidebar-folder-control-item="true"] {
+        grid-column: 1 / -1 !important;
+        width: 100% !important;
       }
       html:not([data-codex-conversation-view="card"]) [data-codex-sidebar-folder-catalog-list="true"] {
         display: flex !important;
@@ -3325,9 +3333,8 @@
     let sourceIndex = sourceIndexOffset;
     return Array.from(searchCatalogByProject, ([id, sourceEntries]) => {
       if (excludedIds.has(id)) return null;
-      const catalogEntries = sourceEntries
-        .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId)))
-        .sort((left, right) => Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
+      const { entries: catalogEntries } = dedupeFolderCatalogEntries(sourceEntries
+        .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId))));
       const label = catalogEntries.find((entry) => entry.projectName)?.projectName || id;
       const lastUsed = catalogEntries.reduce((latest, entry) => {
         const time = Date.parse(entry.updatedAt || "");
@@ -3371,9 +3378,9 @@
         )))
         .map((thread) => thread.getAttribute("data-app-action-sidebar-thread-title") || "")
         .filter(Boolean);
-      const catalogEntries = (searchCatalogByProject.get(id) || [])
-        .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId)))
-        .sort((left, right) => Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
+      const rawCatalogEntries = (searchCatalogByProject.get(id) || [])
+        .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId)));
+      const { entries: catalogEntries, suppressedIds: duplicateThreadIds } = dedupeFolderCatalogEntries(rawCatalogEntries);
       const catalogTitles = catalogEntries.map((entry) => entry.title);
       const catalogLastUsed = catalogEntries.reduce((latest, entry) => {
         const time = Date.parse(entry.updatedAt || "");
@@ -3390,6 +3397,7 @@
         sourceIndex,
         threadTitles,
         catalogEntries,
+        duplicateThreadIds,
         searchText: [label, ...threadTitles, ...catalogTitles].join(" "),
         lastUsed: Math.max(folderLastUsed(folder), catalogLastUsed),
         active: Boolean(folder.querySelector('[aria-current="page"], [data-app-action-sidebar-thread-active="true"]')),
@@ -3470,6 +3478,28 @@
 
   function isTemporaryThreadId(value) {
     return normalizedThreadId(value).startsWith("client-new-thread:");
+  }
+
+  function dedupeFolderCatalogEntries(sourceEntries) {
+    const entries = [...sourceEntries]
+      .sort((left, right) => Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
+    const visible = [];
+    const suppressedIds = new Set();
+    const newestByKey = new Map();
+    for (const entry of entries) {
+      const threadId = normalizedThreadId(entry.threadId);
+      const title = normalizedThreadTitle(entry.title);
+      const key = String(entry.dedupeKey || "").trim() || (title ? `title:${title}` : "");
+      const time = Date.parse(entry.updatedAt || "");
+      const newest = key ? newestByKey.get(key) : null;
+      if (threadId && newest && Number.isFinite(time) && newest.time - time <= FOLDER_DUPLICATE_WINDOW_MS) {
+        suppressedIds.add(threadId);
+        continue;
+      }
+      visible.push(entry);
+      if (key && Number.isFinite(time)) newestByKey.set(key, { time, threadId });
+    }
+    return { entries: visible, suppressedIds };
   }
 
   function catalogMatchesForFolder(item, query = folderSearchQuery) {
@@ -3670,8 +3700,16 @@
     const nativeById = new Map();
     const generatedById = new Map();
     const nativeRows = [];
+    const nativeControlItems = [];
+    const duplicateThreadIds = item.duplicateThreadIds instanceof Set
+      ? item.duplicateThreadIds
+      : new Set(item.duplicateThreadIds || []);
     for (const listItem of currentItems) {
       const row = listItem.querySelector(ROW_SELECTOR);
+      if (!row) {
+        nativeControlItems.push(listItem);
+        continue;
+      }
       const threadId = normalizedThreadId(row?.getAttribute("data-app-action-sidebar-thread-id"));
       if (!threadId) continue;
       if (row.dataset.codexSidebarFolderCatalogRow === "true") generatedById.set(threadId, listItem);
@@ -3733,7 +3771,9 @@
     });
 
     for (const [threadId, listItem] of nativeById) {
-      if (catalogById.has(threadId) || temporaryNativeCatalogId.has(threadId)) continue;
+      if (catalogById.has(threadId)
+        || temporaryNativeCatalogId.has(threadId)
+        || duplicateThreadIds.has(threadId)) continue;
       const row = listItem.querySelector(ROW_SELECTOR);
       const previewTime = Date.parse(previewForRow(row)?.updatedAt || "");
       desired.push({
@@ -3760,7 +3800,16 @@
       const catalogId = temporaryNativeCatalogId.get(native.threadId);
       const aliasIsVisible = catalogId && nativeAliasByCatalogId.get(catalogId) === native.listItem;
       native.listItem.toggleAttribute("data-codex-sidebar-native-alias-hidden", Boolean(catalogId && !aliasIsVisible));
+      native.listItem.toggleAttribute(
+        "data-codex-sidebar-semantic-duplicate-hidden",
+        duplicateThreadIds.has(native.threadId),
+      );
     }
+
+    nativeControlItems.forEach((control, index) => {
+      control.dataset.codexSidebarFolderControlItem = "true";
+      control.style.order = String(desired.length + index);
+    });
 
     for (const listItem of currentItems) {
       const row = listItem.querySelector(ROW_SELECTOR);

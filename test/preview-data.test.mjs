@@ -6,11 +6,25 @@ import test from "node:test";
 
 import {
   cleanPreviewText,
+  conversationDedupeKey,
   coreSummary,
   parseInterruptionLines,
   parsePreviewLines,
   PreviewRepository,
 } from "../lib/preview-data.mjs";
+
+test("catalog dedupe keys identify repeated installs by their actual Skill target", () => {
+  assert.equal(conversationDedupeKey({
+    title: "安装 Ark skills",
+    recentInput: "安装这个 https://arkdocs.tos-cn-beijing.volces.com/skills/ skills",
+    recentOutput: "Skill：sd25-pe（Seedance 2.5 Prompt Optimizer）已安装完成",
+  }), "install-skill:sd25-pe");
+  assert.equal(conversationDedupeKey({
+    title: "安装 sd25-pe 技能",
+    recentInput: "npx --yes skills@latest add URL --skill sd25-pe --yes",
+  }), "install-skill:sd25-pe");
+  assert.equal(conversationDedupeKey({ title: "创建短视频剧本解析Skill" }), "");
+});
 
 test("interruption parsing distinguishes explicit aborts, unfinished runs, and completed turns", () => {
   const event = (timestamp, type) => JSON.stringify({ timestamp, type: "event_msg", payload: { type } });
