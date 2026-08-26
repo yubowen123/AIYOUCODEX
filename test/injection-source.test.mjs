@@ -109,6 +109,14 @@ test("new native conversations replace catalog placeholders without duplicate ca
   assert.match(source, /temporaryNativeCatalogId\.has\(threadId\)/);
 });
 
+test("folder reconciliation never removes React-owned rows during the first message send", () => {
+  assert.match(source, /list\.dataset\.codexSidebarFolderCatalogList = "true"/);
+  assert.match(source, /listItem\.style\.order = String\(index\)/);
+  assert.match(source, /data-codex-sidebar-native-alias-hidden/);
+  assert.match(source, /row\?\.dataset\.codexSidebarFolderCatalogRow !== "true"/);
+  assert.doesNotMatch(source, /list\.replaceChildren\(\.\.\.desiredChildren\)/);
+});
+
 test("running Taskboard threads receive a reduced-motion-safe blue border glow", () => {
   assert.match(source, /data-codex-project-running/);
   assert.match(source, /codex-running-border-flow/);

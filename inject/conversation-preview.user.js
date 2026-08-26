@@ -236,6 +236,13 @@
       [data-codex-sidebar-pinned-outside-hidden="true"] {
         display: none !important;
       }
+      [data-codex-sidebar-native-alias-hidden="true"] {
+        display: none !important;
+      }
+      html:not([data-codex-conversation-view="card"]) [data-codex-sidebar-folder-catalog-list="true"] {
+        display: flex !important;
+        flex-direction: column;
+      }
       html[data-codex-conversation-view="card"] [data-codex-conversation-card-grid="true"] > [data-codex-conversation-card-item="true"],
       html[data-codex-conversation-view="card"] [data-codex-conversation-card-grid="true"] > [data-codex-conversation-card-item="true"] > *,
       html[data-codex-conversation-view="card"] [data-codex-conversation-card-grid="true"] > [data-codex-conversation-card-item="true"] > * > *:not(.${STATUS_BUTTON_CLASS}) {
@@ -3737,11 +3744,29 @@
     }
     desired.sort((left, right) => right.time - left.time || left.sourceIndex - right.sourceIndex);
 
-    const otherChildren = Array.from(list.children).filter((child) => child.getAttribute("role") !== "listitem");
-    const desiredChildren = [...desired.map((entry) => entry.listItem), ...otherChildren];
-    const unchanged = desiredChildren.length === list.children.length
-      && desiredChildren.every((child, index) => list.children[index] === child);
-    if (!unchanged) list.replaceChildren(...desiredChildren);
+    // Never move or remove Codex-owned list items. React replaces the temporary
+    // new-thread row while the first message is being sent; mutating that native
+    // child list can make React remove a node that no longer exists and abort the
+    // send. CSS order keeps the visual activity sort without changing ownership.
+    list.dataset.codexSidebarFolderCatalogList = "true";
+    const desiredItems = new Set();
+    desired.forEach(({ listItem }, index) => {
+      desiredItems.add(listItem);
+      listItem.style.order = String(index);
+      if (!listItem.isConnected) list.appendChild(listItem);
+    });
+
+    for (const native of nativeRows) {
+      const catalogId = temporaryNativeCatalogId.get(native.threadId);
+      const aliasIsVisible = catalogId && nativeAliasByCatalogId.get(catalogId) === native.listItem;
+      native.listItem.toggleAttribute("data-codex-sidebar-native-alias-hidden", Boolean(catalogId && !aliasIsVisible));
+    }
+
+    for (const listItem of currentItems) {
+      const row = listItem.querySelector(ROW_SELECTOR);
+      if (row?.dataset.codexSidebarFolderCatalogRow !== "true" || desiredItems.has(listItem)) continue;
+      listItem.remove();
+    }
   }
 
   function createAllProjectRow(entry) {
