@@ -32,6 +32,7 @@ test("Asset Console uses product-owned cross-platform state paths", () => {
   assert.equal(mac.stateRoot, "/Users/demo/Library/Application Support/Codex Sidebar Enhancer Data/Asset Console");
   assert.equal(mac.tokenPath, `${mac.stateRoot}/.api-token`);
   assert.equal(mac.configPath, `${mac.stateRoot}/asset-browser.config.json`);
+  assert.equal(mac.assetLibraryIndexPath, `${mac.stateRoot}/.asset-library-index.json`);
 
   const windows = createAssetConsoleRuntime({
     root: "C:\\Enhancer",
@@ -54,6 +55,7 @@ test("the managed runtime starts the Asset Console alongside the sidebar and pro
   const assetConsole = plan.children.find((child) => child.name === "asset-console");
   assert.equal(assetConsole.env.ASSET_BROWSER_CONFIG, plan.assetConsole.configPath);
   assert.equal(assetConsole.env.ASSET_BROWSER_TOKEN_FILE, plan.assetConsole.tokenPath);
+  assert.equal(assetConsole.env.ASSET_LIBRARY_INDEX, plan.assetConsole.assetLibraryIndexPath);
   assert.equal(assetConsole.env.PORT, String(plan.assetConsole.port));
 });
 

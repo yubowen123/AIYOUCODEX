@@ -28,6 +28,19 @@ test("local asset cards implement media-specific interactions", async () => {
   assert.match(source, /saveTextAsset/);
 });
 
+test("local asset manager reads a persistent index and reserves full scans for the repair button", async () => {
+  const source = await readFile(new URL("app.js", consoleRoot), "utf8");
+  const server = await readFile(new URL("server.js", browserRoot), "utf8");
+  assert.match(source, /正在读取索引/);
+  assert.match(source, /loadLibrary\(\{ force: true \}\)/);
+  assert.match(source, /query\.set\("rescan", "1"\)/);
+  assert.match(server, /PersistentAssetIndex/);
+  assert.match(server, /scheduleAssetIndexUpdate/);
+  assert.match(server, /cachedLibraryResponse/);
+  assert.match(server, /MAX_LIBRARY_RESPONSE_CACHE_ENTRIES = 4/);
+  assert.match(server, /url\.searchParams\.get\("rescan"\) === "1"/);
+});
+
 test("local asset manager exposes zero-token smart groups and manual overrides", async () => {
   const html = await readFile(new URL("index.html", consoleRoot), "utf8");
   const source = await readFile(new URL("app.js", consoleRoot), "utf8");

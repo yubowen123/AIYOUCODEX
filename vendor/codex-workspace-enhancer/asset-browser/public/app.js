@@ -374,7 +374,7 @@ function renderAssets() {
     : "关联本地文件夹后，系统会自动识别并分类资产。";
 }
 
-async function loadLibrary({ quiet = false } = {}) {
+async function loadLibrary({ quiet = false, force = false } = {}) {
   const project = selectedProject();
   if (!project) {
     state.assets = [];
@@ -385,10 +385,12 @@ async function loadLibrary({ quiet = false } = {}) {
     return;
   }
   state.busy = true;
-  els.scanState.textContent = "正在扫描…";
+  els.scanState.textContent = force ? "正在重新扫描…" : "正在读取索引…";
   els.scanState.classList.add("busy");
   try {
-    const data = await api(`/api/library?project=${encodeURIComponent(project.id)}`);
+    const query = new URLSearchParams({ project: project.id });
+    if (force) query.set("rescan", "1");
+    const data = await api(`/api/library?${query}`);
     state.assets = data.assets || [];
     state.counts = data.counts || state.counts;
     state.smartCounts = data.smartCounts || state.smartCounts;
@@ -396,11 +398,17 @@ async function loadLibrary({ quiet = false } = {}) {
     state.visibleLimit = 120;
     setColumns(state.settings.columns);
     els.workspaceTitle.textContent = project.name;
-    els.scanState.textContent = `已同步 ${formatDate(Date.now())}`;
+    els.scanState.textContent = data.index?.mode === "initial-scan"
+      ? "索引已建立"
+      : data.index?.mode === "manual-rescan"
+        ? "重新扫描完成"
+        : `增量同步 ${formatDate(data.index?.updatedAt || Date.now())}`;
     renderSmartGroupTabs(); updateKindCounts(); renderCategoryChips(); renderAssets();
-    if (!quiet) showToast(`已扫描 ${state.assets.length} 个资产`);
+    if (!quiet) showToast(force
+      ? `已重新扫描 ${state.assets.length} 个资产`
+      : `已从持久索引加载 ${state.assets.length} 个资产`);
   } catch (error) {
-    els.scanState.textContent = "扫描失败";
+    els.scanState.textContent = force ? "重新扫描失败" : "索引读取失败";
     showToast(error.message, "error");
   } finally {
     state.busy = false;
@@ -653,7 +661,7 @@ function bindEvents() {
   els.emptyCreateProjectButton.addEventListener("click", () => openProjectDialog());
   els.editProjectButton.addEventListener("click", () => openProjectDialog(selectedProject()));
   els.projectForm.addEventListener("submit", saveProject);
-  els.refreshLibraryButton.addEventListener("click", () => loadLibrary());
+  els.refreshLibraryButton.addEventListener("click", () => loadLibrary({ force: true }));
   els.settingsButton.addEventListener("click", () => { renderSettings(); els.settingsDialog.showModal(); });
   els.smartGroupTabs.addEventListener("click", (event) => {
     const button = event.target.closest("[data-smart-group]");
