@@ -7,7 +7,7 @@ export async function readTargets(port = 9231) {
 export function selectMainCodexTarget(targets) {
   return targets.find((target) =>
     target.type === "page"
-      && target.title === "Codex"
+      && ["Codex", "ChatGPT"].includes(target.title)
       && target.url === "app://-/index.html"
       && target.webSocketDebuggerUrl,
   );
