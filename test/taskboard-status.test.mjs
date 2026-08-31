@@ -40,7 +40,7 @@ test("Taskboard status fails closed while the bundled runtime is still starting"
 test("custom Taskboard root URL is trusted only with the enhancer marker and pinned version", () => {
   const descriptor = {
     managedBy: "codex-sidebar-enhancer",
-    version: "0.1.0-codexoptimiz.20260813",
+    version: "0.2.0-codexoptimiz.20260831",
     url: "http://127.0.0.1:47823/",
   };
   assert.equal(trustedTaskboardRuntimeBaseUrl(descriptor), "http://127.0.0.1:47823");

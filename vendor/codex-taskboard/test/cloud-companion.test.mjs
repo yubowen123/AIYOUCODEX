@@ -262,6 +262,7 @@ test("cloud routing keeps machine-specific capability endpoints in the local com
     "/health",
     "/api/meta",
     "/api/device-workspaces",
+    "/api/device-projects",
     "/api/workflow-capabilities",
     "/api/projects/portfolio/development-contexts",
     "/api/local/cloud-session",
@@ -566,7 +567,8 @@ test("cloud mode exposes machine capabilities only to loopback while local mode 
   try {
     for (const pathname of [
       "/api/meta",
-      "/api/device-workspaces",
+    "/api/device-workspaces",
+    "/api/device-projects",
       "/api/workflow-capabilities",
       "/api/projects/portfolio/development-contexts",
     ]) {

@@ -18,6 +18,7 @@ import {
   type AutomationModel,
   type AutomationReasoningEffort,
 } from "../../shared/taskboard-automation-options.mjs";
+import { buildTaskExecutionPrompt } from "../../shared/task-guidance.mjs";
 import {
   ApiError,
   addTaskRelation,
@@ -29,17 +30,22 @@ import {
   getTaskboardMetadata,
   listAllTasks,
   listDevelopmentContexts,
+  listDeviceProjects,
   listDeviceWorkspaces,
   listProjects,
+  listProjectProfiles,
   listTasks,
   moveTask as moveTaskRequest,
   organizeProjectHistory as organizeProjectHistoryRequest,
   removeTaskRelation,
   restoreTask as restoreTaskRequest,
   setCurrentUserActor,
+  saveProjectProfile as saveProjectProfileRequest,
   uploadAttachment,
   updateTask as updateTaskRequest,
 } from "./api";
+// @ts-expect-error Shared runtime utilities are covered by focused node tests.
+import { projectUrgency, workspaceMatchesFilter } from "../../shared/project-metadata.mjs";
 import {
   actorForAssigneeTarget,
   assigneeTargetForActor,
@@ -54,6 +60,7 @@ import {
 } from "./components/InlineMediaComposer";
 import { LinearIcon } from "./components/LinearIcon";
 import { ProjectAutomationMenu } from "./components/ProjectAutomationMenu";
+import { ProjectProfilePanel } from "./components/ProjectProfilePanel";
 import { ProjectSwimlaneBoard } from "./components/ProjectSwimlaneBoard";
 import { TaskContextMenu } from "./components/TaskContextMenu";
 import { TaskDetail } from "./components/TaskDetail";
@@ -77,9 +84,11 @@ import {
   TASK_STATUSES,
   type ActorIdentity,
   type DevelopmentScan,
+  type DeviceProject,
   type HostContext,
   type IssueRelationType,
   type Project,
+  type ProjectProfile,
   type Task,
   type TaskboardMetadata,
   type TaskDraft,
@@ -121,6 +130,13 @@ interface ProjectChoice {
   issueCount: number;
   inCodex: boolean;
   persisted: boolean;
+  workspacePath?: string | null;
+}
+
+interface ProjectFolderOption {
+  value: string;
+  label: string;
+  codexProjectId: string | null;
 }
 
 interface ProjectActivityCompletion {
@@ -539,6 +555,10 @@ function workspaceName(path?: string): string | null {
   return parts.at(-1) ?? path;
 }
 
+function normalizedWorkspaceKey(path?: string | null): string {
+  return String(path || "").trim().replace(/[\\/]+$/, "").replace(/\\/g, "/").toLocaleLowerCase();
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
@@ -719,6 +739,9 @@ export function App() {
   const [taskboardMetadata, setTaskboardMetadata] = useState<TaskboardMetadata | null>(null);
   const [localAiChatAvailable, setLocalAiChatAvailable] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectProfiles, setProjectProfiles] = useState<ProjectProfile[]>([]);
+  const [projectProfileSaving, setProjectProfileSaving] = useState(false);
+  const [projectFolderFilter, setProjectFolderFilter] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projectActivityTasks, setProjectActivityTasks] = useState<Task[]>([]);
@@ -754,6 +777,7 @@ export function App() {
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [favoriteProjectIds, setFavoriteProjectIds] = useState(readFavoriteProjectIds);
   const [deviceWorkspacePaths, setDeviceWorkspacePaths] = useState(readDeviceWorkspacePaths);
+  const [deviceProjects, setDeviceProjects] = useState<DeviceProject[]>([]);
   const [projectAutomations, setProjectAutomations] = useState(readProjectAutomations);
   const [automationPending, setAutomationPending] = useState(false);
   const [automationError, setAutomationError] = useState<string | null>(null);
@@ -795,6 +819,10 @@ export function App() {
   }, []);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+  const projectProfilesById = useMemo(
+    () => new Map(projectProfiles.map((profile) => [profile.projectId, profile])),
+    [projectProfiles],
+  );
   const currentUser = hostContext?.user ?? DEFAULT_USER_ACTOR;
   const selectedDeviceWorkspacePath = deviceWorkspacePaths[selectedProjectId];
   const selectedProjectAutomation = projectAutomations[selectedProjectId];
@@ -855,35 +883,106 @@ export function App() {
     const persistedById = new Map(projects.map((project) => [project.id, project]));
     const seen = new Set<string>();
     const choices: ProjectChoice[] = [];
-    for (const project of hostContext?.projects ?? []) {
-      if (!project.id || !project.name || seen.has(project.id)) continue;
+    const hostProjects = new Map((hostContext?.projects ?? []).map((project) => [project.id, project]));
+    const matchedCodexIds = new Set(projectProfiles.flatMap((profile) => (
+      profile.codexProjectId ? [profile.codexProjectId] : []
+    )));
+    for (const project of projects) {
+      if (seen.has(project.id)) continue;
+      const profile = projectProfilesById.get(project.id);
       seen.add(project.id);
       choices.push({
         id: project.id,
-        name: persistedById.get(project.id)?.name ?? project.name,
-        issueCount: persistedById.get(project.id)?.issueCount ?? 0,
-        inCodex: true,
-        persisted: persistedById.has(project.id),
+        name: profile?.displayName || project.name,
+        issueCount: project.issueCount,
+        inCodex: Boolean(profile?.codexProjectId || hostProjects.has(project.id)),
+        persisted: true,
+        workspacePath: profile?.workspacePath ?? project.workspacePath,
       });
     }
-    for (const project of projects) {
-      if (seen.has(project.id)) continue;
+    for (const project of hostContext?.projects ?? []) {
+      if (!project.id || !project.name || seen.has(project.id) || matchedCodexIds.has(project.id)) continue;
+      seen.add(project.id);
       choices.push({
         id: project.id,
         name: project.name,
-        issueCount: project.issueCount,
-        inCodex: false,
-        persisted: true,
+        issueCount: persistedById.get(project.id)?.issueCount ?? 0,
+        inCodex: true,
+        persisted: persistedById.has(project.id),
+        workspacePath: project.workspacePath ?? deviceWorkspacePaths[project.id] ?? null,
+      });
+    }
+    for (const project of deviceProjects) {
+      if (!project.id || !project.name || seen.has(project.id) || matchedCodexIds.has(project.id)) continue;
+      seen.add(project.id);
+      choices.push({
+        id: project.id,
+        name: project.name,
+        issueCount: persistedById.get(project.id)?.issueCount ?? 0,
+        inCodex: true,
+        persisted: persistedById.has(project.id),
+        workspacePath: project.workspacePath,
       });
     }
     return choices.sort((left, right) => (
       Number(favoriteProjectIds.has(right.id)) - Number(favoriteProjectIds.has(left.id))
     ));
-  }, [favoriteProjectIds, hostContext?.projects, projects]);
+  }, [deviceProjects, deviceWorkspacePaths, favoriteProjectIds, hostContext?.projects, projectProfiles, projectProfilesById, projects]);
   const projectNames = useMemo(
     () => new Map(projectChoices.map((project) => [project.id, project.name])),
     [projectChoices],
   );
+  const projectWorkspacePaths = useMemo(() => new Map(projects.map((project) => {
+    const profile = projectProfilesById.get(project.id);
+    const codexProjectId = profile?.codexProjectId ?? project.id;
+    const deviceProject = deviceProjects.find((candidate) => candidate.id === codexProjectId);
+    return [
+      project.id,
+      profile?.workspacePath
+        ?? deviceWorkspacePaths[codexProjectId]
+        ?? deviceProject?.workspacePath
+        ?? deviceWorkspacePaths[project.id]
+        ?? project.workspacePath
+        ?? "",
+    ];
+  })), [deviceProjects, deviceWorkspacePaths, projectProfilesById, projects]);
+  const projectFolderOptions = useMemo<ProjectFolderOption[]>(() => {
+    const options = new Map<string, ProjectFolderOption>();
+    for (const project of deviceProjects) {
+      if (!project.workspacePath) continue;
+      const key = normalizedWorkspaceKey(project.workspacePath);
+      if (!key || options.has(key)) continue;
+      options.set(key, {
+        value: project.workspacePath,
+        label: project.name,
+        codexProjectId: project.id,
+      });
+    }
+    for (const [projectId, workspacePath] of projectWorkspacePaths) {
+      if (!workspacePath) continue;
+      const key = normalizedWorkspaceKey(workspacePath);
+      if (!key || options.has(key)) continue;
+      options.set(key, {
+        value: workspacePath,
+        label: projectNames.get(projectId) ?? workspaceName(workspacePath) ?? workspacePath,
+        codexProjectId: projectProfilesById.get(projectId)?.codexProjectId ?? projectId,
+      });
+    }
+    return [...options.values()].sort((left, right) => left.label.localeCompare(right.label, "zh-CN"));
+  }, [deviceProjects, projectNames, projectProfilesById, projectWorkspacePaths]);
+  const visibleProjectActivityTasks = useMemo(() => projectActivityTasks.filter((task) => {
+    const workspacePath = task.sourceWorkspacePath
+      ?? (task.sourceProjectId ? deviceWorkspacePaths[task.sourceProjectId] : undefined)
+      ?? projectWorkspacePaths.get(task.projectId);
+    return workspaceMatchesFilter(workspacePath, projectFolderFilter);
+  }), [deviceWorkspacePaths, projectActivityTasks, projectFolderFilter, projectWorkspacePaths]);
+  const projectUrgencies = useMemo(() => new Map(projects.map((project) => [
+    project.id,
+    projectUrgency(
+      projectActivityTasks.filter((task) => task.projectId === project.id),
+      projectProfilesById.get(project.id)?.urgencyOverride ?? null,
+    ).value,
+  ])), [projectActivityTasks, projectProfilesById, projects]);
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
   const writeProjectAutomation = useCallback((
@@ -1254,10 +1353,12 @@ export function App() {
     setProjectsLoading(true);
     setLoadError(null);
     try {
-      const [nextProjects, metadata, workspaces] = await Promise.all([
+      const [nextProjects, nextProfiles, metadata, workspaces, nextDeviceProjects] = await Promise.all([
         listProjects(signal),
+        listProjectProfiles(signal),
         getTaskboardMetadata(signal),
         listDeviceWorkspaces(signal),
+        listDeviceProjects(signal),
       ]);
       setTaskboardMetadata((current) => (
         current
@@ -1278,6 +1379,8 @@ export function App() {
         return next;
       });
       setProjects(nextProjects);
+      setProjectProfiles(nextProfiles);
+      setDeviceProjects(nextDeviceProjects);
       setSelectedProjectId((current) => {
         const fromQuery = new URLSearchParams(window.location.search).get("project");
         const remembered = embedded ? null : window.localStorage.getItem(LAST_PROJECT_KEY);
@@ -1306,6 +1409,29 @@ export function App() {
       setLoadError(errorMessage(error));
     }
   }, []);
+
+  async function saveSelectedProjectProfile(input: Pick<
+    ProjectProfile,
+    "displayName" | "codexProjectId" | "workspacePath" | "description" | "nextPlan" | "urgencyOverride"
+  >) {
+    if (!selectedProject) return;
+    setProjectProfileSaving(true);
+    setActionError(null);
+    try {
+      const saved = await saveProjectProfileRequest(selectedProject.id, input);
+      setProjectProfiles((current) => [
+        ...current.filter((profile) => profile.projectId !== saved.projectId),
+        saved,
+      ]);
+      if (saved.workspacePath) rememberDeviceWorkspacePath(selectedProject.id, saved.workspacePath);
+      setAnnouncement("项目档案已保存，紧急状态、匹配与文件夹筛选已同步。");
+    } catch (error) {
+      setActionError(errorMessage(error));
+      throw error;
+    } finally {
+      setProjectProfileSaving(false);
+    }
+  }
 
   const refreshTasks = useCallback(async (
     projectId: string,
@@ -1958,19 +2084,30 @@ export function App() {
     window.parent.postMessage({ type: "taskboard:expand-sidebar" }, "*");
   }
 
-  function openTaskInThread(task: Task) {
+  function openTaskInThread(task: Task, options?: { suggestion?: string; autoSubmit?: boolean }) {
     if (!manageTaskboardSkillPath) {
       setActionError("任务面板还没有读取到 manage-taskboard Skill 路径，请刷新后重试。");
       return;
     }
+    const profile = projectProfilesById.get(task.projectId);
+    const projectName = task.sourceProjectName ?? projectNames.get(task.projectId) ?? task.projectId;
     const worktreePath = task.developmentContext?.type === "worktree"
       ? task.developmentContext.path
       : null;
     const workspacePath = worktreePath
+      ?? task.sourceWorkspacePath
+      ?? projectWorkspacePaths.get(task.projectId)
       ?? selectedDeviceWorkspacePath
       ?? developmentScan.workspacePath
       ?? hostContext?.workspacePath;
-    const instruction = `e-taskboard Addressing the issues mentioned in ${task.identifier}`;
+    const instruction = options?.suggestion
+      ? buildTaskExecutionPrompt({
+          task,
+          projectName,
+          workspacePath,
+          suggestion: options.suggestion,
+        })
+      : `e-taskboard Addressing the issues mentioned in ${task.identifier}`;
     const prompt = `[$manage-taskboard](${manageTaskboardSkillPath}) ${instruction}`;
 
     if (!embedded || window.parent === window) {
@@ -1981,7 +2118,12 @@ export function App() {
       return;
     }
     if (openingThreadTaskId) return;
-    const codexProject = hostContext?.projects?.find((project) => project.id === selectedProject?.id);
+    const codexProjectId = task.sourceProjectId
+      ?? profile?.codexProjectId
+      ?? deviceProjects.find((project) => project.id === task.projectId)?.id
+      ?? deviceProjects.find((project) => normalizedWorkspaceKey(project.workspacePath) === normalizedWorkspaceKey(workspacePath))?.id
+      ?? hostContext?.projects?.find((project) => project.id === task.projectId)?.id
+      ?? hostContext?.projects?.find((project) => normalizedWorkspaceKey(project.workspacePath) === normalizedWorkspaceKey(workspacePath))?.id;
     setOpeningThreadTaskId(task.id);
     setActionError(null);
     window.parent.postMessage({
@@ -1993,12 +2135,17 @@ export function App() {
         skillName: "manage-taskboard",
         skillDisplayName: "Manage Taskboard",
         skillPath: manageTaskboardSkillPath,
-        codexProjectId: codexProject?.id ?? (selectedProject?.id === "local" ? hostContext?.projectId : selectedProject?.id),
-        projectName: selectedProject?.name,
+        codexProjectId: codexProjectId ?? (task.projectId === "local" ? hostContext?.projectId : task.projectId),
+        projectName,
         workspacePath,
         workspaceLabel: worktreePath ? workspaceName(worktreePath) : undefined,
+        autoSubmit: options?.autoSubmit === true,
       },
     }, "*");
+  }
+
+  function executeTaskSuggestion(task: Task, suggestion: string) {
+    openTaskInThread(task, { suggestion, autoSubmit: true });
   }
 
   function changeProject(projectId: string) {
@@ -2061,7 +2208,7 @@ export function App() {
           project = await createProjectRequest({
             id: choice.id,
             name: choice.name,
-            workspacePath: null,
+            workspacePath: choice.workspacePath ?? null,
           });
           setProjects((current) => [...current, project!]);
         } catch (error) {
@@ -2119,7 +2266,9 @@ export function App() {
   }
 
   const contextName = workspaceName(hostContext?.workspacePath);
-  const headerProjectName = selectedProject?.name ?? "任务面板";
+  const headerProjectName = selectedProject
+    ? projectProfilesById.get(selectedProject.id)?.displayName || selectedProject.name
+    : "任务面板";
   const appShellStyle = embedded
     ? { "--codex-titlebar-left-inset": `${hostContext?.titlebarLeftInset ?? 0}px` } as CSSProperties
     : undefined;
@@ -2167,7 +2316,7 @@ export function App() {
                 onClick={() => changeProject(project.id)}
               >
                 <span className="project-dot" aria-hidden="true" />
-                <span>{project.name}</span>
+                <span>{projectProfilesById.get(project.id)?.displayName || project.name}</span>
               </button>
             ))}
           </div>
@@ -2402,6 +2551,18 @@ export function App() {
           </div>}
         </div>}
 
+        {selectedProjectId && selectedProject && !detailTask && boardView === "issues" && (
+          <ProjectProfilePanel
+            project={selectedProject}
+            profile={projectProfilesById.get(selectedProject.id) ?? null}
+            tasks={tasks}
+            codexProjects={hostContext?.projects ?? []}
+            workspacePaths={deviceWorkspacePaths}
+            saving={projectProfileSaving}
+            onSave={saveSelectedProjectProfile}
+          />
+        )}
+
         {(loadError || actionError) && (
           <div className="error-banner" role="alert">
             <span className="error-mark" aria-hidden="true"><LinearIcon name="alert" /></span>
@@ -2422,18 +2583,31 @@ export function App() {
         {!selectedProjectId ? (
           <section className="project-home">
             <div className="project-home-heading">
-              <span>任务面板</span>
-              <h1>项目总览</h1>
-              <p>在六个泳道中直接查看并推进全部项目议题。</p>
+              <div>
+                <span>任务面板</span>
+                <h1>项目总览</h1>
+                <p>在六个泳道中直接查看并推进全部项目议题。</p>
+              </div>
+              <label className="project-folder-filter">
+                <LinearIcon name="folder" />
+                <span>项目文件夹</span>
+                <select value={projectFolderFilter} onChange={(event) => setProjectFolderFilter(event.target.value)}>
+                  <option value="">全部文件夹</option>
+                  {projectFolderOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
             </div>
             <section className="project-swimlane-section" aria-labelledby="project-swimlane-heading">
               <div className="project-group-heading project-swimlane-heading">
                 <h2 id="project-swimlane-heading">全部议题</h2>
-                <span>{projectActivityTasks.length}</span>
+                <span>{visibleProjectActivityTasks.length}</span>
               </div>
               <ProjectSwimlaneBoard
-                tasks={projectActivityTasks}
+                tasks={visibleProjectActivityTasks}
                 projectNames={projectNames}
+                projectUrgencies={projectUrgencies}
                 loading={projectActivityLoading}
                 movingTaskId={movingTaskId}
                 onOpenTask={openProjectSwimlaneTask}
@@ -2464,6 +2638,7 @@ export function App() {
             )}
             onOpenThread={openThread}
             onOpenInThread={openTaskInThread}
+            onExecuteSuggestion={executeTaskSuggestion}
             openingThread={openingThreadTaskId === detailTask.id}
             onError={setActionError}
             onAnnounce={setAnnouncement}

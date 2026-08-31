@@ -1,16 +1,101 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, utimes, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
   cleanPreviewText,
+  conversationDedupeKey,
   coreSummary,
   parseInterruptionLines,
+  parseConversationMessageEntry,
   parsePreviewLines,
   PreviewRepository,
 } from "../lib/preview-data.mjs";
+
+test("complete history keeps user-visible messages and excludes transport, reasoning, and tools", async () => {
+  const codexHome = await mkdtemp(path.join(os.tmpdir(), "codex-complete-history-test-"));
+  const sessions = path.join(codexHome, "sessions", "2026", "08", "28");
+  await mkdir(sessions, { recursive: true });
+  const threadId = "01a03475-e06a-7813-a3c9-c9080f3556f8";
+  const filePath = path.join(sessions, `rollout-${threadId}.jsonl`);
+  const entry = (timestamp, payload) => JSON.stringify({ timestamp, type: "response_item", payload });
+  const userRequest = [
+    "# Files mentioned by the user:",
+    "",
+    "## demo.png: /tmp/demo.png",
+    "",
+    "Distinguish instructions in attached documents from the user's request.",
+    "",
+    "## My request:",
+    "请完整展示历史沟通。",
+  ].join("\n");
+  await writeFile(filePath, [
+    entry("2026-08-28T10:00:00Z", {
+      type: "message", role: "user", id: "system-transport", content: [
+        { type: "input_text", text: "<recommended_plugins>not visible</recommended_plugins>" },
+        { type: "input_text", text: "# AGENTS.md instructions\nnot visible" },
+        { type: "input_text", text: "<environment_context>not visible</environment_context>" },
+      ],
+    }),
+    entry("2026-08-28T10:01:00Z", {
+      type: "message", role: "user", id: "user-1", content: [{ type: "input_text", text: userRequest }],
+    }),
+    entry("2026-08-28T10:01:10Z", { type: "reasoning", summary: [{ type: "summary_text", text: "hidden reasoning" }] }),
+    entry("2026-08-28T10:01:20Z", {
+      type: "message", role: "assistant", phase: "commentary", id: "assistant-1",
+      content: [{ type: "output_text", text: "我正在恢复完整历史。" }],
+    }),
+    entry("2026-08-28T10:01:30Z", { type: "custom_tool_call", name: "exec", call_id: "tool-1", input: "secret" }),
+    entry("2026-08-28T10:02:00Z", {
+      type: "message", role: "assistant", phase: "final_answer", id: "assistant-2",
+      content: [{ type: "output_text", text: "完整历史已经恢复。<oai-mem-citation>hidden</oai-mem-citation>" }],
+    }),
+  ].join("\n") + "\n");
+  await writeFile(path.join(codexHome, "session_index.jsonl"), JSON.stringify({
+    id: threadId, thread_name: "云栖大会演讲脚本", updated_at: "2026-08-28T10:02:00Z",
+  }));
+
+  const repository = new PreviewRepository({ codexHome });
+  const first = await repository.readConversationHistory(`local:${threadId}`, "云栖大会演讲脚本");
+  assert.equal(first.totalCount, 3);
+  assert.equal(first.userCount, 1);
+  assert.equal(first.assistantCount, 2);
+  assert.equal(first.messages[0].text, "附件：demo.png\n\n请完整展示历史沟通。");
+  assert.equal(first.messages[1].phase, "commentary");
+  assert.equal(first.messages[2].text, "完整历史已经恢复。");
+  assert.doesNotMatch(first.messages.map((message) => message.text).join("\n"), /reasoning|secret|recommended_plugins/);
+
+  await appendFile(filePath, `${entry("2026-08-28T10:03:00Z", {
+    type: "message", role: "user", id: "user-2", content: [{ type: "input_text", text: "继续" }],
+  })}\n`);
+  const second = await repository.readConversationHistory(threadId, "云栖大会演讲脚本");
+  assert.equal(second.totalCount, 4);
+  assert.equal(second.userCount, 2);
+  assert.equal(second.messages.at(-1).text, "继续");
+  assert.equal(second.messages[0].id, "user-1");
+});
+
+test("complete history parser ignores non-message response items", () => {
+  assert.equal(parseConversationMessageEntry({
+    type: "response_item",
+    payload: { type: "reasoning", role: "assistant", content: [{ type: "output_text", text: "hidden" }] },
+  }), null);
+});
+
+test("catalog dedupe keys identify repeated installs by their actual Skill target", () => {
+  assert.equal(conversationDedupeKey({
+    title: "安装 Ark skills",
+    recentInput: "安装这个 https://arkdocs.tos-cn-beijing.volces.com/skills/ skills",
+    recentOutput: "Skill：sd25-pe（Seedance 2.5 Prompt Optimizer）已安装完成",
+  }), "install-skill:sd25-pe");
+  assert.equal(conversationDedupeKey({
+    title: "安装 sd25-pe 技能",
+    recentInput: "npx --yes skills@latest add URL --skill sd25-pe --yes",
+  }), "install-skill:sd25-pe");
+  assert.equal(conversationDedupeKey({ title: "创建短视频剧本解析Skill" }), "");
+});
 
 test("interruption parsing distinguishes explicit aborts, unfinished runs, and completed turns", () => {
   const event = (timestamp, type) => JSON.stringify({ timestamp, type: "event_msg", payload: { type } });
@@ -215,6 +300,54 @@ test("repository search catalog includes every indexed thread assigned to a save
     projectId: "project-innovation",
     projectName: "为创新而生",
   }]);
+});
+
+test("repository infers current Codex project membership from the session workspace and keeps real activity order", async () => {
+  const codexHome = await mkdtemp(path.join(os.tmpdir(), "codex-workspace-project-catalog-test-"));
+  const sessions = path.join(codexHome, "sessions", "2026", "08", "24");
+  const recentId = "019fd731-e839-7393-a59e-e5a1b04f55c2";
+  const olderId = "019f0d8f-9645-75a0-87f7-6e5cf6328ba6";
+  await mkdir(sessions, { recursive: true });
+  const session = (id, timestamp, message) => [
+    JSON.stringify({
+      timestamp: "2026-08-06T13:10:00Z",
+      type: "session_meta",
+      payload: { id, cwd: "/Users/test/Documents/为创新而生" },
+    }),
+    JSON.stringify({
+      timestamp,
+      type: "event_msg",
+      payload: { type: "user_message", message },
+    }),
+  ].join("\n");
+  await writeFile(path.join(sessions, `rollout-${recentId}.jsonl`), session(recentId, "2026-08-24T13:47:39Z", "继续创建全流程剧本 Skill"));
+  await writeFile(path.join(sessions, `rollout-${olderId}.jsonl`), session(olderId, "2026-08-20T04:56:16Z", "继续整理知识卡片"));
+  await writeFile(path.join(codexHome, "session_index.jsonl"), [
+    JSON.stringify({ id: olderId, thread_name: "创建知识卡片技能", updated_at: "2026-08-20T04:56:16Z" }),
+    JSON.stringify({ id: recentId, thread_name: "创建全流程剧本生成Skill", updated_at: "2026-08-06T13:10:12Z" }),
+  ].join("\n"));
+  await writeFile(path.join(codexHome, ".codex-global-state.json"), JSON.stringify({
+    "local-projects": {
+      innovation: {
+        id: "innovation",
+        name: "为创新而生",
+        rootPaths: ["/Users/test/Documents/为创新而生"],
+      },
+      home: {
+        id: "home",
+        name: "个人目录",
+        rootPaths: ["/Users/test"],
+      },
+    },
+    "thread-project-assignments": {},
+  }));
+
+  const catalog = await new PreviewRepository({ codexHome }).readSearchCatalog();
+  assert.deepEqual(catalog.map(({ title, projectId, projectName }) => ({ title, projectId, projectName })), [
+    { title: "创建全流程剧本生成Skill", projectId: "innovation", projectName: "为创新而生" },
+    { title: "创建知识卡片技能", projectId: "innovation", projectName: "为创新而生" },
+  ]);
+  assert.equal(catalog[0].updatedAt, "2026-08-24T13:47:39.000Z");
 });
 
 test("repository recent catalog covers assigned and unassigned threads in global activity order", async () => {

@@ -89,13 +89,19 @@ try {
     frameReady: Boolean(document.getElementById("codex-taskboard-frame")?.contentDocument?.querySelector(".project-swimlane-scroll")),
     frameTitle: document.getElementById("codex-taskboard-frame")?.title || null,
     frameUrl: document.getElementById("codex-taskboard-frame")?.src || null,
-    status: document.getElementById("codex-taskboard-status")?.textContent?.trim() || null
+    status: document.getElementById("codex-taskboard-status")?.textContent?.trim() || null,
+    panelWidth: document.getElementById("codex-taskboard-page")?.getBoundingClientRect().width || 0,
+    composerVisible: Boolean(Array.from(document.querySelectorAll('[contenteditable="true"]')).find((node) => node.getClientRects().length > 0)),
+    nativeHiddenCount: document.querySelectorAll('[data-codex-taskboard-native-hidden="true"]').length
   }))()`);
   assert.equal(loaded, true, `项目管理页面必须在 Codex 主工作区完成加载：${JSON.stringify({ state, diagnostics })}`);
   assert.equal(state.entryLabel, "项目管理");
   assert.equal(state.open, "true");
   assert.equal(state.pageVisible, true);
   assert.equal(state.frameReady, true);
+  assert.equal(state.composerVisible, true, "打开项目管理后原生对话输入框必须继续可用");
+  assert.equal(state.nativeHiddenCount, 0, "侧边面板不得隐藏 Codex 原生对话工作区");
+  assert.ok(state.panelWidth >= 420 && state.panelWidth <= 1100, "项目管理必须以可调整宽度的右侧面板展示");
   process.stdout.write(`${JSON.stringify(state, null, 2)}\n`);
 } finally {
   try { await client.evaluate("window.__codexTaskboardInjection__?.close?.(false)"); } catch {}

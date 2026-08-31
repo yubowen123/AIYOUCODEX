@@ -22,12 +22,14 @@ test("each device stores an independent workspace path for every project", () =>
   assert.match(appSource, /const DEVICE_WORKSPACE_PATHS_KEY = "taskboard\.deviceWorkspacePaths\.v1"/);
   assert.match(appSource, /function readDeviceWorkspacePaths\(\)/);
   assert.match(appSource, /rememberDeviceWorkspacePath/);
-  assert.match(appSource, /const \[nextProjects, metadata, workspaces\] = await Promise\.all\(\[/);
+  assert.match(appSource, /const \[nextProjects, nextProfiles, metadata, workspaces, nextDeviceProjects\] = await Promise\.all\(\[/);
   assert.match(appSource, /listDeviceWorkspaces\(signal\)/);
+  assert.match(appSource, /listDeviceProjects\(signal\)/);
   assert.match(appSource, /placeholder="设置此设备的项目目录"/);
   assert.match(appSource, /deviceWorkspacePaths\[selectedProjectId\]/);
   assert.match(apiSource, /query\.set\("workspacePath", workspacePath\)/);
   assert.match(apiSource, /\/api\/device-workspaces/);
+  assert.match(apiSource, /\/api\/device-projects/);
   assert.match(styles, /\.project-card-directory \{/);
 });
 

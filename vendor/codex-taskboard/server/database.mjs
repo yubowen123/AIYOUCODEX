@@ -121,6 +121,19 @@ function projectFromRow(row) {
   };
 }
 
+function projectProfileFromRow(row) {
+  return {
+    projectId: row.project_id,
+    displayName: row.display_name,
+    codexProjectId: row.codex_project_id,
+    workspacePath: row.workspace_path,
+    description: row.description,
+    nextPlan: row.next_plan,
+    urgencyOverride: row.urgency_override,
+    updatedAt: row.updated_at,
+  };
+}
+
 function workflowWorkspaceFromRow(row) {
   return {
     projectId: row.project_id,
@@ -281,6 +294,19 @@ export class TaskboardDatabase {
         project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
         workspace TEXT NOT NULL,
         version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS project_profiles (
+        project_id TEXT PRIMARY KEY,
+        display_name TEXT,
+        codex_project_id TEXT,
+        workspace_path TEXT,
+        description TEXT NOT NULL DEFAULT '',
+        next_plan TEXT NOT NULL DEFAULT '',
+        urgency_override TEXT CHECK (urgency_override IS NULL OR urgency_override IN (
+          'none', 'urgent', 'high', 'medium', 'low'
+        )),
         updated_at TEXT NOT NULL
       );
 
@@ -666,6 +692,53 @@ export class TaskboardDatabase {
         projects.updated_at
     `).get(id);
     return row ? projectFromRow(row) : null;
+  }
+
+  listProjectProfiles() {
+    return this.database.prepare(`
+      SELECT project_id, display_name, codex_project_id, workspace_path,
+        description, next_plan, urgency_override, updated_at
+      FROM project_profiles
+      ORDER BY project_id
+    `).all().map(projectProfileFromRow);
+  }
+
+  getProjectProfile(projectId) {
+    const row = this.database.prepare(`
+      SELECT project_id, display_name, codex_project_id, workspace_path,
+        description, next_plan, urgency_override, updated_at
+      FROM project_profiles
+      WHERE project_id = ?
+    `).get(projectId);
+    return row ? projectProfileFromRow(row) : null;
+  }
+
+  saveProjectProfile(projectId, input) {
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO project_profiles (
+        project_id, display_name, codex_project_id, workspace_path,
+        description, next_plan, urgency_override, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id) DO UPDATE SET
+        display_name = excluded.display_name,
+        codex_project_id = excluded.codex_project_id,
+        workspace_path = excluded.workspace_path,
+        description = excluded.description,
+        next_plan = excluded.next_plan,
+        urgency_override = excluded.urgency_override,
+        updated_at = excluded.updated_at
+    `).run(
+      projectId,
+      input.displayName,
+      input.codexProjectId,
+      input.workspacePath,
+      input.description,
+      input.nextPlan,
+      input.urgencyOverride,
+      timestamp,
+    );
+    return this.getProjectProfile(projectId);
   }
 
   getWorkflowWorkspace(projectId) {

@@ -209,9 +209,9 @@ function commonCardMarkup(asset, typeLabel) {
     ? `<div class="review-actions" aria-label="人工复核 ${escapeHtml(asset.name)}"><button data-action="manual-category" type="button">手动分类</button><button data-action="manual-tags" type="button">手动标签</button></div>`
     : "";
   const promptBadge = asset.promptAssociation?.available
-    ? `<span class="prompt-link-badge" title="双击查看资产与关联提示词">⌘ 已关联提示词</span>`
+    ? `<span class="prompt-link-badge" title="通过预览查看资产与关联提示词">⌘ 已关联提示词</span>`
     : "";
-  return `<header class="asset-card-header"><div><span class="asset-format">${escapeHtml(typeLabel)}</span><h3 title="${escapeHtml(asset.name)}">${escapeHtml(asset.title)}</h3></div><details class="asset-menu"><summary aria-label="管理 ${escapeHtml(asset.name)}">•••</summary><div><button data-action="metadata" type="button">分类与标签</button><button data-action="rename" type="button">重命名</button><button data-action="move" type="button">移动到项目</button><button data-action="delete" type="button" class="danger">永久删除</button></div></details></header><div class="asset-meta"><span>${formatBytes(asset.size)}</span><span>${formatDate(asset.mtimeMs)}</span>${promptBadge}</div><div class="classification-line" title="${escapeHtml(asset.classificationReason || "")}"><span>${escapeHtml(asset.category)}</span><span>${escapeHtml(sourceLabel)} · ${Number(asset.confidence) || 0}%</span></div><div class="asset-tags">${tags}</div>${reviewActions}`;
+  return `<header class="asset-card-header"><div><span class="asset-format">${escapeHtml(typeLabel)}</span><h3 title="${escapeHtml(asset.name)}">${escapeHtml(asset.title)}</h3></div><details class="asset-menu"><summary aria-label="管理 ${escapeHtml(asset.name)}">•••</summary><div><button data-action="preview" type="button">预览</button><button data-action="use-in-codex" type="button">添加到对话</button><button data-action="metadata" type="button">分类与标签</button><button data-action="rename" type="button">重命名</button><button data-action="move" type="button">移动到项目</button><button data-action="delete" type="button" class="danger">永久删除</button></div></details></header><div class="asset-meta"><span>${formatBytes(asset.size)}</span><span>${formatDate(asset.mtimeMs)}</span>${promptBadge}</div><div class="classification-line" title="${escapeHtml(asset.classificationReason || "")}"><span>${escapeHtml(asset.category)}</span><span>${escapeHtml(sourceLabel)} · ${Number(asset.confidence) || 0}%</span></div><div class="asset-tags">${tags}</div>${reviewActions}`;
 }
 
 function renderTextCard(asset) {
@@ -219,10 +219,11 @@ function renderTextCard(asset) {
   card.className = "asset-card text-card";
   card.dataset.assetId = asset.id;
   card.dataset.smartGroup = asset.smartGroup;
-  card.innerHTML = `${commonCardMarkup(asset, asset.extension || "TEXT")}<div class="text-card-preview" tabindex="0">${escapeHtml(asset.preview || "暂无可预览内容")}</div><div class="card-hint">双击放大 · 卡片内可滚动</div>`;
+  card.innerHTML = `${commonCardMarkup(asset, asset.extension || "TEXT")}<div class="text-card-preview" tabindex="0">${escapeHtml(asset.preview || "暂无可预览内容")}</div><div class="card-hint">双击添加到对话 · 卡片内可滚动</div>`;
   card.addEventListener("dblclick", (event) => {
-    if (event.target.closest(".asset-menu")) return;
-    openTextAsset(asset);
+    if (event.target.closest("button, details, .review-actions")) return;
+    event.preventDefault();
+    useAssetInCodex(asset);
   });
   return card;
 }
@@ -237,7 +238,8 @@ function renderImageCard(asset) {
   image.addEventListener("load", () => { card.querySelector(".dimension-label").textContent = `${image.naturalWidth} × ${image.naturalHeight}`; });
   card.addEventListener("dblclick", (event) => {
     if (event.target.closest("button, details, .review-actions")) return;
-    openMediaAsset(asset);
+    event.preventDefault();
+    useAssetInCodex(asset);
   });
   return card;
 }
@@ -247,7 +249,7 @@ function renderAudioCard(asset) {
   card.className = "asset-card audio-card";
   card.dataset.assetId = asset.id;
   card.dataset.smartGroup = asset.smartGroup;
-  card.innerHTML = `${commonCardMarkup(asset, asset.extension || "AUDIO")}<div class="audio-visual"><button class="audio-play" type="button" aria-label="播放">▶</button><div class="waveform" aria-hidden="true">${Array.from({ length: 34 }, (_, index) => `<i style="--h:${22 + ((index * 17) % 64)}%"></i>`).join("")}</div><span class="duration-label">--:--</span></div><audio src="${asset.mediaUrl}" preload="metadata"></audio><div class="card-hint">鼠标移入试听</div>`;
+  card.innerHTML = `${commonCardMarkup(asset, asset.extension || "AUDIO")}<div class="audio-visual"><button class="audio-play" type="button" aria-label="播放">▶</button><div class="waveform" aria-hidden="true">${Array.from({ length: 34 }, (_, index) => `<i style="--h:${22 + ((index * 17) % 64)}%"></i>`).join("")}</div><span class="duration-label">--:--</span></div><audio src="${asset.mediaUrl}" preload="metadata"></audio><div class="card-hint">鼠标移入试听 · 双击添加到对话</div>`;
   const audio = card.querySelector("audio");
   const play = card.querySelector(".audio-play");
   audio.addEventListener("loadedmetadata", () => { card.querySelector(".duration-label").textContent = formatDuration(audio.duration); });
@@ -259,7 +261,8 @@ function renderAudioCard(asset) {
   card.addEventListener("dblclick", (event) => {
     if (event.target.closest("button, details, .review-actions")) return;
     stop();
-    openMediaAsset(asset);
+    event.preventDefault();
+    useAssetInCodex(asset);
   });
   return card;
 }
@@ -269,7 +272,7 @@ function renderVideoCard(asset) {
   card.className = "asset-card video-card";
   card.dataset.assetId = asset.id;
   card.dataset.smartGroup = asset.smartGroup;
-  card.innerHTML = `<figure class="media-frame"><video src="${asset.mediaUrl}" muted loop playsinline preload="metadata"></video><div class="video-overlay"><button class="video-fullscreen" type="button">⛶ 全屏</button><span class="duration-label">--:--</span></div></figure>${commonCardMarkup(asset, asset.extension || "VIDEO")}<div class="card-hint">鼠标移入预览</div>`;
+  card.innerHTML = `<figure class="media-frame"><video src="${asset.mediaUrl}" muted loop playsinline preload="metadata"></video><div class="video-overlay"><button class="video-fullscreen" type="button">⛶ 全屏</button><span class="duration-label">--:--</span></div></figure>${commonCardMarkup(asset, asset.extension || "VIDEO")}<div class="card-hint">鼠标移入预览 · 双击添加到对话</div>`;
   const video = card.querySelector("video");
   video.addEventListener("loadedmetadata", () => { card.querySelector(".duration-label").textContent = formatDuration(video.duration); });
   card.addEventListener("mouseenter", () => video.play().catch(() => {}));
@@ -281,9 +284,15 @@ function renderVideoCard(asset) {
   card.addEventListener("dblclick", (event) => {
     if (event.target.closest("button, details, .review-actions")) return;
     video.pause();
-    openMediaAsset(asset);
+    event.preventDefault();
+    useAssetInCodex(asset);
   });
   return card;
+}
+
+function previewAsset(asset) {
+  if (asset?.kind === "text") openTextAsset(asset);
+  else if (asset) openMediaAsset(asset);
 }
 
 function renderMediaPreview(asset) {
@@ -374,7 +383,7 @@ function renderAssets() {
     : "关联本地文件夹后，系统会自动识别并分类资产。";
 }
 
-async function loadLibrary({ quiet = false } = {}) {
+async function loadLibrary({ quiet = false, force = false } = {}) {
   const project = selectedProject();
   if (!project) {
     state.assets = [];
@@ -385,10 +394,12 @@ async function loadLibrary({ quiet = false } = {}) {
     return;
   }
   state.busy = true;
-  els.scanState.textContent = "正在扫描…";
+  els.scanState.textContent = force ? "正在重新扫描…" : "正在读取索引…";
   els.scanState.classList.add("busy");
   try {
-    const data = await api(`/api/library?project=${encodeURIComponent(project.id)}`);
+    const query = new URLSearchParams({ project: project.id });
+    if (force) query.set("rescan", "1");
+    const data = await api(`/api/library?${query}`);
     state.assets = data.assets || [];
     state.counts = data.counts || state.counts;
     state.smartCounts = data.smartCounts || state.smartCounts;
@@ -396,11 +407,17 @@ async function loadLibrary({ quiet = false } = {}) {
     state.visibleLimit = 120;
     setColumns(state.settings.columns);
     els.workspaceTitle.textContent = project.name;
-    els.scanState.textContent = `已同步 ${formatDate(Date.now())}`;
+    els.scanState.textContent = data.index?.mode === "initial-scan"
+      ? "索引已建立"
+      : data.index?.mode === "manual-rescan"
+        ? "重新扫描完成"
+        : `增量同步 ${formatDate(data.index?.updatedAt || Date.now())}`;
     renderSmartGroupTabs(); updateKindCounts(); renderCategoryChips(); renderAssets();
-    if (!quiet) showToast(`已扫描 ${state.assets.length} 个资产`);
+    if (!quiet) showToast(force
+      ? `已重新扫描 ${state.assets.length} 个资产`
+      : `已从持久索引加载 ${state.assets.length} 个资产`);
   } catch (error) {
-    els.scanState.textContent = "扫描失败";
+    els.scanState.textContent = force ? "重新扫描失败" : "索引读取失败";
     showToast(error.message, "error");
   } finally {
     state.busy = false;
@@ -582,6 +599,19 @@ function openAssetAction(action, asset) {
   requestAnimationFrame(() => els.assetActionFields.querySelector(action === "manual-tags" ? "[name=customTags]" : action === "manual-category" ? "[name=category]" : "select, input")?.focus());
 }
 
+function useAssetInCodex(asset) {
+  if (!asset?.sourcePath || window.parent === window) return false;
+  window.parent.postMessage({
+    source: "asset-console",
+    action: "use-in-codex",
+    path: asset.sourcePath,
+    kind: asset.kind,
+    name: asset.name,
+  }, "*");
+  showToast("正在添加到 Codex 对话…");
+  return true;
+}
+
 async function submitAssetAction(event) {
   event.preventDefault();
   const form = new FormData(els.assetActionForm);
@@ -653,7 +683,7 @@ function bindEvents() {
   els.emptyCreateProjectButton.addEventListener("click", () => openProjectDialog());
   els.editProjectButton.addEventListener("click", () => openProjectDialog(selectedProject()));
   els.projectForm.addEventListener("submit", saveProject);
-  els.refreshLibraryButton.addEventListener("click", () => loadLibrary());
+  els.refreshLibraryButton.addEventListener("click", () => loadLibrary({ force: true }));
   els.settingsButton.addEventListener("click", () => { renderSettings(); els.settingsDialog.showModal(); });
   els.smartGroupTabs.addEventListener("click", (event) => {
     const button = event.target.closest("[data-smart-group]");
@@ -680,7 +710,9 @@ function bindEvents() {
     event.preventDefault(); event.stopPropagation();
     if (["manual-category", "manual-tags"].includes(actionButton.dataset.action) && event.detail !== 0) return;
     const asset = assetById(actionButton.closest("[data-asset-id]")?.dataset.assetId);
-    if (asset) openAssetAction(actionButton.dataset.action, asset);
+    if (asset && actionButton.dataset.action === "use-in-codex") useAssetInCodex(asset);
+    else if (asset && actionButton.dataset.action === "preview") previewAsset(asset);
+    else if (asset) openAssetAction(actionButton.dataset.action, asset);
   });
   els.assetActionForm.addEventListener("submit", submitAssetAction);
   els.toggleTextEditButton.addEventListener("click", toggleTextEditor);
@@ -700,6 +732,22 @@ function bindEvents() {
   document.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
       event.preventDefault(); els.librarySearchInput.focus();
+    }
+  });
+  window.addEventListener("message", (event) => {
+    const message = event.data;
+    if (event.source !== window.parent || message?.source !== "codex-sidebar-enhancer") return;
+    if (message.action === "search") {
+      const query = String(message.query || "").trim();
+      state.query = query;
+      els.librarySearchInput.value = query;
+      resetAssetWindow();
+      els.librarySearchInput.focus();
+    } else if (message.action === "asset-added" || message.action === "assets-added") {
+      const count = Math.max(1, Number(message.count) || 1);
+      showToast(count > 1 ? `已添加 ${count} 个资产到 Codex 对话` : "已添加到 Codex 对话");
+    } else if (message.action === "asset-add-failed") {
+      showToast("未能添加到 Codex 对话，请确认输入框可用", "error");
     }
   });
 }

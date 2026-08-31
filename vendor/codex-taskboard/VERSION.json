@@ -1,7 +1,7 @@
 {
   "name": "codex-taskboard-custom",
-  "version": "0.1.0-codexoptimiz.20260813",
-  "ref": "custom-working-tree-2026-08-13",
+  "version": "0.2.0-codexoptimiz.20260831",
+  "ref": "custom-working-tree-2026-08-31",
   "baseCommit": "677b544",
   "upstream": "https://github.com/chuspeeism/dashi-taskboard",
   "license": "Apache-2.0",
@@ -11,7 +11,8 @@
     "drag, resize, and project-aware task movement",
     "Codex conversation and current-project integration",
     "pinned and review-state project lifecycle",
-    "full-workspace embedded project management",
+    "resizable right-side project management panel with native conversation preserved",
+    "project search and native Skill composer bridge",
     "Codex local-network and CORS compatibility fixes"
   ]
 }

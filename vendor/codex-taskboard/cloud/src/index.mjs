@@ -1905,7 +1905,8 @@ async function routeApi(request, env, actor, url) {
   }
 
   if (
-    pathname === "/api/device-workspaces"
+    pathname === "/api/device-projects"
+    || pathname === "/api/device-workspaces"
     || pathname === "/api/workflow-capabilities"
     || /^\/api\/projects\/[^/]+\/development-contexts$/.test(pathname)
   ) {

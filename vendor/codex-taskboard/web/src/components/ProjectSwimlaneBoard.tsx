@@ -2,6 +2,7 @@ import { useMemo, useState, type CSSProperties, type DragEvent, type PointerEven
 import type { Task, TaskPriority, TaskStatus } from "../types";
 import { ActorAvatar } from "./ActorAvatar";
 import { LinearIcon, LinearPriorityIcon, LinearStatusIcon } from "./LinearIcon";
+import { taskGuidance } from "../../../shared/task-guidance.mjs";
 
 export type ProjectSwimlaneId = "ready" | "active" | "review" | "advance" | "done" | "canceled";
 
@@ -30,7 +31,7 @@ const PRIORITY_LABELS: Record<TaskPriority, string> = {
   low: "低优先级",
 };
 
-const DEFAULT_LANE_WIDTH = 220;
+const DEFAULT_LANE_WIDTH = 280;
 const MIN_LANE_WIDTH = 160;
 const MAX_LANE_WIDTH = 480;
 
@@ -48,6 +49,7 @@ function laneForStatus(status: TaskStatus): ProjectSwimlane {
 interface ProjectSwimlaneBoardProps {
   tasks: Task[];
   projectNames: Map<string, string>;
+  projectUrgencies: Map<string, TaskPriority>;
   loading: boolean;
   movingTaskId: string | null;
   onOpenTask: (task: Task) => void;
@@ -58,6 +60,7 @@ interface ProjectSwimlaneBoardProps {
 export function ProjectSwimlaneBoard({
   tasks,
   projectNames,
+  projectUrgencies,
   loading,
   movingTaskId,
   onOpenTask,
@@ -162,8 +165,10 @@ export function ProjectSwimlaneBoard({
                   </div>
                 ) : laneTasks.length > 0 ? laneTasks.map((task) => {
                   const currentLane = laneForStatus(task.status);
-                  const projectName = projectNames.get(task.projectId) ?? task.projectId;
+                  const projectName = task.sourceProjectName ?? projectNames.get(task.projectId) ?? task.projectId;
+                  const projectUrgency = projectUrgencies.get(task.projectId) ?? "none";
                   const moving = movingTaskId === task.id;
+                  const guidance = taskGuidance(task);
                   return (
                     <article
                       className={`project-swimlane-card priority-${task.priority}${draggedTaskId === task.id ? " is-dragging" : ""}${moving ? " is-moving" : ""}`}
@@ -189,10 +194,32 @@ export function ProjectSwimlaneBoard({
                           {projectName.slice(0, 1).toUpperCase()}
                         </span>
                         <strong title={projectName}>{projectName}</strong>
+                        <span
+                          className={`project-card-urgency urgency-${projectUrgency}`}
+                          title={`项目紧急状态：${PRIORITY_LABELS[projectUrgency]}`}
+                        >
+                          <LinearPriorityIcon priority={projectUrgency} />
+                          {PRIORITY_LABELS[projectUrgency]}
+                        </span>
                         <ActorAvatar actor={task.assignee} className="project-swimlane-assignee" />
                       </div>
                       <span className="project-swimlane-identifier">{task.identifier}</span>
                       <h3>{task.title}</h3>
+                      <div className="project-swimlane-guidance">
+                        <div className="project-swimlane-description">
+                          <span>任务描述</span>
+                          <p>{guidance.description}</p>
+                        </div>
+                        <div className="project-swimlane-next">
+                          <span className="project-swimlane-stage">{guidance.stage}</span>
+                          <p><strong>下一步</strong>{guidance.nextAction}</p>
+                        </div>
+                        <div className="project-swimlane-suggestions" aria-label="建议方向">
+                          {guidance.suggestions.slice(0, 2).map((suggestion: string) => (
+                            <span key={suggestion} title={suggestion}>{suggestion}</span>
+                          ))}
+                        </div>
+                      </div>
                       <div className="project-swimlane-card-footer">
                         <span className={`priority-icon priority-icon-${task.priority}`} title={PRIORITY_LABELS[task.priority]}>
                           <LinearPriorityIcon priority={task.priority} />

@@ -148,6 +148,7 @@ test("local asset API scans multiple folders and keeps project moves logical", a
       GENERATION_TICKETS: path.join(root, "generation.json"),
       GENERATION_THREAD_BINDINGS: path.join(root, "bindings.json"),
       CODEX_PROMPT_ASSOCIATIONS: path.join(root, "prompt-associations.json"),
+      ASSET_LIBRARY_INDEX: path.join(root, "asset-library-index.json"),
       CODEX_SESSIONS_ROOT: sessionsRoot,
       CODEX_GENERATED_IMAGES_ROOT: generatedImagesRoot,
       CODEX_GLOBAL_STATE: globalStatePath,
@@ -216,6 +217,11 @@ test("local asset API scans multiple folders and keeps project moves logical", a
     assert.ok(synchronizedProject.folders.includes(second), "manual folders must survive Codex synchronization");
 
     const initial = await request(`/api/library?project=${sourceProject.id}`);
+    assert.equal(initial.index.mode, "initial-scan");
+    assert.equal(initial.index.persistent, true);
+    const cached = await request(`/api/library?project=${sourceProject.id}`);
+    assert.equal(cached.index.mode, "persistent", "opening the library again must read the saved index");
+    assert.equal(existsSync(path.join(root, "asset-library-index.json")), true);
     assert.deepEqual(initial.counts, { all: 31, text: 2, image: 27, audio: 1, video: 1 });
     assert.deepEqual(initial.smartCounts, { asset: 5, review: 2, noise: 24 });
     assert.equal(initial.assets.find((asset) => asset.name === "hero-prompt.md").category, "提示词");
@@ -267,6 +273,38 @@ test("local asset API scans multiple folders and keeps project moves logical", a
     assert.equal(extractedFrame.category, "视频解析帧");
     assert.ok(extractedFrame.confidence >= 95);
     assert.equal(initial.assets.find((asset) => asset.name === "visual.png").smartGroup, "review");
+
+    const watchedPath = path.join(first, "incremental-note.txt");
+    await writeFile(watchedPath, "first incremental version");
+    let watchedAsset = null;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      const library = await request(`/api/library?project=${sourceProject.id}`);
+      assert.equal(library.index.mode, "persistent");
+      watchedAsset = library.assets.find((asset) => asset.name === "incremental-note.txt");
+      if (watchedAsset) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(watchedAsset, "a new file should be inserted by the watcher without a full scan");
+    const firstSize = watchedAsset.size;
+    await writeFile(watchedPath, "second incremental version with more content");
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      watchedAsset = (await request(`/api/library?project=${sourceProject.id}`)).assets
+        .find((asset) => asset.name === "incremental-note.txt");
+      if (watchedAsset?.size > firstSize) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(watchedAsset.size > firstSize, "a changed file should refresh only its indexed record");
+    await rm(watchedPath);
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      watchedAsset = (await request(`/api/library?project=${sourceProject.id}`)).assets
+        .find((asset) => asset.name === "incremental-note.txt");
+      if (!watchedAsset) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(watchedAsset, undefined, "a deleted file should disappear from the persistent index");
+
+    const repaired = await request(`/api/library?project=${sourceProject.id}&rescan=1`);
+    assert.equal(repaired.index.mode, "manual-rescan", "only the explicit repair action should traverse every folder");
 
     const prompt = initial.assets.find((asset) => asset.name === "hero-prompt.md");
     const read = await request(`/api/text?id=${encodeURIComponent(prompt.id)}`);

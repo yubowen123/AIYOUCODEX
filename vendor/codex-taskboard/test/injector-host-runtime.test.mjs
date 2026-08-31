@@ -193,6 +193,45 @@ test("a stale automation parser receives an immediate host error instead of timi
   }]);
 });
 
+test("explicit suggestion execution accepts a long grounded prompt and forwards auto-submit", async () => {
+  const responses = [];
+  const instruction = `执行建议\n${"项目上下文".repeat(1_000)}`;
+  let forwarded = null;
+  const result = await handleHostBindingPayload(
+    {
+      payload: JSON.stringify({
+        id: "host-suggestion-1",
+        action: "prefill-task-composer",
+        instruction,
+        skillName: "manage-taskboard",
+        skillDisplayName: "Manage Taskboard",
+        skillPath: "/tmp/manage-taskboard/SKILL.md",
+        autoSubmit: true,
+      }),
+      executionContextId: 21,
+    },
+    {
+      parseAutomationRequest: () => null,
+      ensure: async () => assert.fail("ensure must not run"),
+      runAutomation: async () => assert.fail("automation must not run"),
+      prefill: async (request) => {
+        forwarded = request;
+        return { prefilled: true, submitted: true };
+      },
+      sendResponse: async (_executionContextId, response) => responses.push(response),
+    },
+  );
+  assert.equal(result.accepted, true);
+  assert.equal(forwarded.autoSubmit, true);
+  assert.equal(forwarded.instruction, instruction);
+  assert.deepEqual(responses, [{
+    id: "host-suggestion-1",
+    ok: true,
+    prefilled: true,
+    submitted: true,
+  }]);
+});
+
 test("attach replaces an old runtime with the current source and restores an open page", async () => {
   const calls = [];
   const result = await reconcileInjectionRuntime({

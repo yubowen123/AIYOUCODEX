@@ -496,6 +496,41 @@ function parseProjectCreate(body) {
   return { id, name, workspacePath };
 }
 
+function isCrossPlatformAbsolutePath(value) {
+  return path.isAbsolute(value) || path.win32.isAbsolute(value);
+}
+
+function parseProjectProfile(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set([
+    "displayName",
+    "codexProjectId",
+    "workspacePath",
+    "description",
+    "nextPlan",
+    "urgencyOverride",
+  ]));
+  const workspacePath = pathField(body.workspacePath ?? null, "workspacePath");
+  if (workspacePath && !isCrossPlatformAbsolutePath(workspacePath)) {
+    throw new ApiError(400, "INVALID_FIELD", "'workspacePath' must be an absolute macOS or Windows path");
+  }
+  const urgencyOverride = stringField(body.urgencyOverride ?? null, "urgencyOverride", {
+    nullable: true,
+    maxLength: 16,
+  });
+  if (urgencyOverride !== null && !["none", "urgent", "high", "medium", "low"].includes(urgencyOverride)) {
+    throw new ApiError(400, "INVALID_FIELD", "'urgencyOverride' must be none, urgent, high, medium, low, or null");
+  }
+  return {
+    displayName: stringField(body.displayName ?? null, "displayName", { nullable: true, maxLength: 120 }),
+    codexProjectId: stringField(body.codexProjectId ?? null, "codexProjectId", { nullable: true, maxLength: 256 }),
+    workspacePath,
+    description: stringField(body.description ?? "", "description", { maxLength: 20_000 }),
+    nextPlan: stringField(body.nextPlan ?? "", "nextPlan", { maxLength: 20_000 }),
+    urgencyOverride,
+  };
+}
+
 function parseThreadId(value) {
   if (value === undefined) return undefined;
   return stringField(value, "threadId", { required: true, maxLength: 256 });
@@ -1430,6 +1465,7 @@ export function createTaskboardServer(options = {}) {
         assertLoopbackRequest(request);
       }
       const isMachineCapabilityRoute = pathname === "/api/meta"
+        || pathname === "/api/device-projects"
         || pathname === "/api/device-workspaces"
         || pathname === "/api/workflow-capabilities"
         || /^\/api\/projects\/[^/]+\/development-contexts$/.test(pathname);
@@ -1507,6 +1543,27 @@ export function createTaskboardServer(options = {}) {
         }
         await cloudConfig.setProjectWorkspace(projectId, workspacePath);
         return sendJson(response, 200, { projectId, workspacePath });
+      }
+
+      if (pathname === "/api/local/project-profiles") {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Project profile routes do not accept query parameters");
+        }
+        return sendJson(response, 200, { profiles: database.listProjectProfiles() });
+      }
+
+      const projectProfileRoute = pathname.match(/^\/api\/local\/project-profiles\/([^/]+)$/);
+      if (projectProfileRoute) {
+        if (request.method !== "PUT") return methodNotAllowed(response, ["PUT"]);
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Project profile routes do not accept query parameters");
+        }
+        const projectId = decodeRouteSegment(projectProfileRoute[1], "Project id");
+        validateProjectId(projectId);
+        const profile = database.saveProjectProfile(projectId, parseProjectProfile(await readJson(request)));
+        events.emit("project.profile.updated", { projectId, profile });
+        return sendJson(response, 200, { profile });
       }
 
       if (pathname === "/api/meta") {
@@ -1627,6 +1684,16 @@ export function createTaskboardServer(options = {}) {
         }
         return sendJson(response, 200, {
           workspaces: await readCodexProjectWorkspaces(resolved.codexStatePath),
+        });
+      }
+
+      if (pathname === "/api/device-projects") {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "GET /api/device-projects does not accept query parameters");
+        }
+        return sendJson(response, 200, {
+          projects: await readCodexProjects(resolved.codexStatePath),
         });
       }
 

@@ -14,6 +14,7 @@ import {
   updateComment,
 } from "../api";
 import { ISSUE_TYPES, TASK_STATUSES } from "../types";
+import { taskGuidance } from "../../../shared/task-guidance.mjs";
 import type {
   ActorIdentity,
   Attachment,
@@ -98,6 +99,7 @@ interface TaskDetailProps {
   ) => Promise<RelationMutationResult>;
   onOpenThread: (threadId: string) => void;
   onOpenInThread: (task: Task) => void;
+  onExecuteSuggestion: (task: Task, suggestion: string) => void;
   openingThread: boolean;
   onError: (message: string | null) => void;
   onAnnounce: (message: string) => void;
@@ -204,6 +206,7 @@ export function TaskDetail({
   onRemoveRelation,
   onOpenThread,
   onOpenInThread,
+  onExecuteSuggestion,
   openingThread,
   onError,
   onAnnounce,
@@ -245,6 +248,7 @@ export function TaskDetail({
     || workflows.some((workflow) => workflow.id === currentTask.workflowId);
   const draft = serializeInlineMedia(commentSegments);
   const commentInlineImages = inlineMediaImages(commentSegments);
+  const guidance = taskGuidance(currentTask);
 
   useEffect(() => {
     setCurrentTask(task);
@@ -978,6 +982,27 @@ export function TaskDetail({
               <LinearIcon name="conversation" />
               <span>{openingThread ? "正在打开…" : "在对话中打开"}</span>
             </button>
+            <section className="detail-next-actions" aria-labelledby="detail-next-actions-heading">
+              <div>
+                <span className="detail-stage-badge">{guidance.stage}</span>
+                <h2 id="detail-next-actions-heading">下一步建议</h2>
+              </div>
+              <p>{guidance.nextAction}</p>
+              <div className="detail-suggestion-buttons">
+                {guidance.suggestions.map((suggestion: string) => (
+                  <button
+                    type="button"
+                    key={suggestion}
+                    disabled={openingThread}
+                    onClick={() => onExecuteSuggestion(currentTask, suggestion)}
+                  >
+                    <LinearIcon name="chevronRight" />
+                    <span>{suggestion}</span>
+                  </button>
+                ))}
+              </div>
+              <small>点击后会带上完整议题与项目目录，在 Codex 中立即执行。</small>
+            </section>
             <h2>属性</h2>
             <label className="detail-property-row">
               <span className="detail-property-icon"><LinearIcon name="dashboard" /></span>

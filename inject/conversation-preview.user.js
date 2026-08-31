@@ -22,11 +22,17 @@
   const CUSTOM_SHORTCUT_HOST_ATTRIBUTE = "data-codex-custom-shortcut-host";
   const ASSET_CONSOLE_PAGE_ID = "codex-asset-console-page";
   const ASSET_CONSOLE_FRAME_ID = "codex-asset-console-frame";
+  const RECOVERED_HISTORY_FLOW_ATTRIBUTE = "data-codex-recovered-history-flow";
+  const RECOVERED_HISTORY_MESSAGE_ATTRIBUTE = "data-codex-recovered-history-message";
+  const RECOVERED_HISTORY_CONTENT_ATTRIBUTE = "data-codex-recovered-history-content";
   const SKILL_ORGANIZER_ID = "codex-skill-organizer";
   const SKILL_FAVORITES_KEY = "codex-workspace-enhancer:skill-favorites-v1";
   const SKILL_OPEN_REQUEST_STORAGE_KEY = "codex-workspace-enhancer:skill-open-request-v1";
   const SKILL_OPEN_REQUEST_TTL_MS = 15_000;
   const SKILL_NATIVE_SECTION_ATTR = "data-codex-skill-native-section";
+  const WORKSPACE_PANEL_ATTRIBUTE = "data-codex-workspace-side-panel";
+  const WORKSPACE_PANEL_WIDTH_KEY = "codex-workspace-enhancer:side-panel-width-v1";
+  const WORKSPACE_PANEL_EVENT = "codex-workspace-panel:open";
   const SHORTCUT_ICON_PRESETS = {
     link: '<path d="M10.2 13.8 13.8 10.2M8.1 15.9l-1.4 1.4a3.5 3.5 0 0 1-5-5l3-3a3.5 3.5 0 0 1 5 0M15.9 8.1l1.4-1.4a3.5 3.5 0 0 1 5 5l-3 3a3.5 3.5 0 0 1-5 0"/>',
     book: '<path d="M4 4.5h5.5A2.5 2.5 0 0 1 12 7v13a3 3 0 0 0-3-3H4zM20 4.5h-5.5A2.5 2.5 0 0 0 12 7v13a3 3 0 0 1 3-3h5z"/>',
@@ -54,6 +60,7 @@
   const VIEW_STORAGE_KEY = "codex-conversation-preview:view-mode";
   const THREAD_STATUS_STORAGE_KEY = "codex-conversation-preview:thread-statuses";
   const NATIVE_ANCHOR_GRACE_MS = 1_800;
+  const FOLDER_DUPLICATE_WINDOW_MS = 15 * 60 * 1000;
   const STATUS_BUTTON_CLASS = "codex-conversation-status-button";
   const STATUS_MENU_ID = "codex-conversation-status-menu";
   const SUMMARY_CLASS = "codex-conversation-core-summary";
@@ -87,6 +94,9 @@
   let assetConsolePage = null;
   let assetConsoleFrame = null;
   let assetConsoleReturnFocus = null;
+  let conversationHistory = null;
+  let historySignature = "";
+  let recoveredHistorySignature = "";
   let skillOrganizerSource = null;
   let skillOrganizerCatalog = [];
   let skillOrganizerCatalogSignature = "";
@@ -100,6 +110,10 @@
   let skillOrganizerOpenGeneration = 0;
   let skillOrganizerOpenObserver = null;
   let skillOrganizerOpenTimer = null;
+  let hostSkillCatalog = [];
+  let skillContextMenu = null;
+  let pendingAssetConsoleQuery = "";
+  let lastWorkspaceCommand = { text: "", at: 0 };
   let sectionSources = new Map();
   let sectionTogglePending = new Map();
   let sectionSourcesMissingSince = 0;
@@ -235,6 +249,20 @@
       }
       [data-codex-sidebar-pinned-outside-hidden="true"] {
         display: none !important;
+      }
+      [data-codex-sidebar-native-alias-hidden] {
+        display: none !important;
+      }
+      [data-codex-sidebar-semantic-duplicate-hidden] {
+        display: none !important;
+      }
+      [data-codex-sidebar-folder-control-item="true"] {
+        grid-column: 1 / -1 !important;
+        width: 100% !important;
+      }
+      html:not([data-codex-conversation-view="card"]) [data-codex-sidebar-folder-catalog-list="true"] {
+        display: flex !important;
+        flex-direction: column;
       }
       html[data-codex-conversation-view="card"] [data-codex-conversation-card-grid="true"] > [data-codex-conversation-card-item="true"],
       html[data-codex-conversation-view="card"] [data-codex-conversation-card-grid="true"] > [data-codex-conversation-card-item="true"] > *,
@@ -828,16 +856,21 @@
         cursor: pointer;
       }
       #${CUSTOM_SHORTCUT_PAGE_ID} {
-        position: absolute;
-        inset: 0;
-        z-index: 2;
+        position: relative;
+        z-index: 30;
         display: grid;
         grid-template-rows: 44px minmax(0, 1fr);
-        min-width: 0;
+        flex: 0 0 var(--codex-workspace-panel-width, min(680px, 48vw));
+        width: var(--codex-workspace-panel-width, min(680px, 48vw));
+        min-width: 420px;
+        max-width: min(1000px, calc(100vw - 360px));
+        height: 100%;
         min-height: 0;
         overflow: hidden;
+        border-left: 1px solid color-mix(in srgb, currentColor 12%, transparent);
         background: Canvas;
         color: CanvasText;
+        box-shadow: -12px 0 32px color-mix(in srgb, black 8%, transparent);
         pointer-events: auto;
       }
       #${CUSTOM_SHORTCUT_PAGE_ID}[hidden] { display: none !important; }
@@ -1375,23 +1408,75 @@
         font-size: 12px;
         line-height: 18px;
       }
+      [${RECOVERED_HISTORY_FLOW_ATTRIBUTE}="true"] {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+      }
+      [${RECOVERED_HISTORY_CONTENT_ATTRIBUTE}="true"] {
+        height: auto !important;
+      }
+      [${RECOVERED_HISTORY_MESSAGE_ATTRIBUTE}="true"] {
+        display: flex;
+        min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 12px 0;
+        contain: layout style paint;
+      }
+      [${RECOVERED_HISTORY_MESSAGE_ATTRIBUTE}="true"][data-role="user"] {
+        justify-content: flex-end;
+      }
+      [${RECOVERED_HISTORY_MESSAGE_ATTRIBUTE}="true"][data-role="assistant"] {
+        justify-content: flex-start;
+      }
+      [${RECOVERED_HISTORY_MESSAGE_ATTRIBUTE}="true"] .codex-recovered-history-body {
+        min-width: 0;
+        max-width: 100%;
+        color: inherit;
+        font: inherit;
+        font-size: var(--text-size-chat, 14px);
+        line-height: 1.55;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        user-select: text;
+      }
+      [${RECOVERED_HISTORY_MESSAGE_ATTRIBUTE}="true"][data-role="user"] .codex-recovered-history-body {
+        max-width: 77%;
+        padding: 10px 14px;
+        border-radius: 16px;
+        background: color-mix(in srgb, currentColor 5%, transparent);
+      }
+      [${RECOVERED_HISTORY_MESSAGE_ATTRIBUTE}="true"][data-role="assistant"] .codex-recovered-history-body {
+        width: 100%;
+      }
       #${ASSET_CONSOLE_PAGE_ID} {
-        position: absolute;
-        inset: 0;
-        z-index: 30;
+        position: relative;
+        z-index: 1000;
         display: grid;
         grid-template-rows: 50px minmax(0, 1fr);
+        flex: 0 0 var(--codex-workspace-panel-width, min(680px, 48vw));
+        width: var(--codex-workspace-panel-width, min(680px, 48vw));
+        min-width: 420px;
+        max-width: min(1000px, calc(100vw - 360px));
+        height: 100%;
         overflow: hidden;
+        border-left: 1px solid color-mix(in srgb, currentColor 12%, transparent);
         background: var(--color-token-bg-primary, #fff);
+        box-shadow: -12px 0 32px color-mix(in srgb, black 8%, transparent);
         pointer-events: auto;
       }
       #${ASSET_CONSOLE_PAGE_ID}[hidden] { display: none !important; }
       #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-header {
+        position: relative;
+        z-index: 4;
         display: flex;
         align-items: center;
         gap: 10px;
-        padding: 0 16px;
+        padding: 0 8px 0 16px;
         border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+        pointer-events: auto !important;
+        -webkit-app-region: no-drag !important;
       }
       #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-title { font-size: 15px; font-weight: 650; }
       #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-local {
@@ -1410,7 +1495,23 @@
         color: inherit;
         cursor: pointer;
       }
-      #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-close { width: 32px; height: 32px; font-size: 20px; }
+      #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-close {
+        position: relative;
+        z-index: 5;
+        display: grid;
+        place-items: center;
+        flex: 0 0 40px;
+        width: 40px;
+        height: 40px;
+        min-width: 40px;
+        min-height: 40px;
+        padding: 0;
+        font-size: 20px;
+        line-height: 1;
+        pointer-events: auto !important;
+        touch-action: manipulation;
+        -webkit-app-region: no-drag !important;
+      }
       #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-body { position: relative; min-height: 0; }
       #${ASSET_CONSOLE_PAGE_ID} .codex-asset-console-state {
         position: absolute;
@@ -1427,14 +1528,27 @@
       [${SKILL_NATIVE_SECTION_ATTR}="hidden"] { display: none !important; }
       #${SKILL_ORGANIZER_ID} {
         display: grid;
-        gap: 14px;
-        margin: 0 0 18px;
-        padding: 18px;
-        border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-        border-radius: 18px;
-        background: color-mix(in srgb, var(--color-token-bg-primary, #fff) 92%, transparent);
-        box-shadow: 0 12px 30px color-mix(in srgb, #24364b 8%, transparent);
+        position: relative;
+        z-index: 30;
+        flex: 0 0 var(--codex-workspace-panel-width, min(680px, 48vw));
+        width: var(--codex-workspace-panel-width, min(680px, 48vw));
+        min-width: 420px;
+        max-width: min(1000px, calc(100vw - 360px));
+        height: 100%;
+        min-height: 0;
+        grid-template-rows: auto auto auto auto minmax(0, 1fr);
+        gap: 12px;
+        box-sizing: border-box;
+        margin: 0;
+        padding: 16px;
+        overflow: hidden;
+        border: 0;
+        border-left: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+        border-radius: 0;
+        background: var(--color-token-bg-primary, #fff);
+        box-shadow: -12px 0 32px color-mix(in srgb, #24364b 9%, transparent);
       }
+      #${SKILL_ORGANIZER_ID}[hidden] { display: none !important; }
       #${SKILL_ORGANIZER_ID} .codex-skill-organizer-head,
       #${SKILL_ORGANIZER_ID} .codex-skill-result-head {
         display: flex;
@@ -1485,10 +1599,13 @@
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 9px;
+        align-content: start;
+        overflow: auto;
+        padding-right: 2px;
       }
       #${SKILL_ORGANIZER_ID} .codex-skill-row {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 32px;
+        grid-template-columns: minmax(0, 1fr) 30px 30px;
         align-items: center;
         gap: 8px;
         min-height: 80px;
@@ -1528,6 +1645,20 @@
       }
       #${SKILL_ORGANIZER_ID} .codex-skill-favorite[aria-pressed="true"] { color: #d89400; background: #fff5d5; }
       #${SKILL_ORGANIZER_ID} .codex-skill-empty { grid-column: 1 / -1; padding: 30px; text-align: center; color: color-mix(in srgb, currentColor 58%, transparent); }
+      #${SKILL_ORGANIZER_ID} .codex-skill-close {
+        width: 32px; height: 32px; border: 0; border-radius: 9px; background: color-mix(in srgb, currentColor 6%, transparent); cursor: pointer; font-size: 20px;
+      }
+      #${SKILL_ORGANIZER_ID} .codex-skill-use {
+        width: 30px; height: 30px; border: 0; border-radius: 8px; background: color-mix(in srgb, #2f80ed 10%, transparent); color: #1767c0; cursor: pointer; font-size: 16px;
+      }
+      .codex-skill-context-menu {
+        position: fixed; z-index: 10000; min-width: 150px; padding: 6px; border: 1px solid color-mix(in srgb, currentColor 14%, transparent); border-radius: 10px; background: var(--color-token-bg-primary, Canvas); box-shadow: 0 14px 34px color-mix(in srgb, black 20%, transparent);
+      }
+      .codex-skill-context-menu button { width: 100%; padding: 8px 10px; border: 0; border-radius: 7px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+      .codex-skill-context-menu button:hover { background: color-mix(in srgb, currentColor 7%, transparent); }
+      [${WORKSPACE_PANEL_ATTRIBUTE}]::before {
+        content: ""; position: absolute; z-index: 5; top: 0; bottom: 0; left: -4px; width: 8px; cursor: ew-resize;
+      }
       .${DETAILS_CLASS} .codex-conversation-preview-text {
         display: -webkit-box;
         min-width: 0;
@@ -1600,7 +1731,9 @@
       if (sectionPanel?.hidden) return false;
       if (row.closest('[data-codex-sidebar-recent-native-hidden="true"]')) return false;
       if (row.hasAttribute("data-codex-sidebar-all-project-row")) {
-        return Boolean(row.closest(`#${ALL_PROJECTS_PANEL_ID}`));
+        return Boolean(row.closest(
+          `#${ALL_PROJECTS_PANEL_ID}, [data-codex-sidebar-virtual-folder-panel]`,
+        ));
       }
       const folderPanel = row.closest("[data-codex-sidebar-folder-panel]");
       return !folderPanel?.hidden;
@@ -1965,6 +2098,49 @@
       .forEach((node) => node.removeAttribute(CUSTOM_SHORTCUT_HOST_ATTRIBUTE));
   }
 
+  function savedWorkspacePanelWidth() {
+    let value = 680;
+    try { value = Number(localStorage.getItem(WORKSPACE_PANEL_WIDTH_KEY)) || value; } catch {}
+    return Math.max(420, Math.min(value, Math.max(420, window.innerWidth - 360)));
+  }
+
+  function initializeWorkspacePanel(page, panelName) {
+    page.setAttribute(WORKSPACE_PANEL_ATTRIBUTE, panelName);
+    page.style.setProperty("--codex-workspace-panel-width", `${savedWorkspacePanelWidth()}px`);
+    page.addEventListener("pointerdown", (event) => {
+      const rect = page.getBoundingClientRect();
+      if (event.button !== 0 || Math.abs(event.clientX - rect.left) > 8) return;
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = rect.width;
+      const move = (moveEvent) => {
+        const width = Math.max(420, Math.min(startWidth + startX - moveEvent.clientX, Math.max(420, window.innerWidth - 360)));
+        page.style.setProperty("--codex-workspace-panel-width", `${width}px`);
+      };
+      const up = () => {
+        document.removeEventListener("pointermove", move, true);
+        document.removeEventListener("pointerup", up, true);
+        const width = Math.round(page.getBoundingClientRect().width);
+        try { localStorage.setItem(WORKSPACE_PANEL_WIDTH_KEY, String(width)); } catch {}
+      };
+      document.addEventListener("pointermove", move, true);
+      document.addEventListener("pointerup", up, true);
+    }, true);
+    return page;
+  }
+
+  function announceWorkspacePanel(panel) {
+    window.postMessage({ type: WORKSPACE_PANEL_EVENT, panel }, window.location.origin);
+  }
+
+  function closeOtherWorkspacePanels(panel) {
+    if (panel !== "custom") closeCustomShortcutPanel(false);
+    if (panel !== "asset") closeAssetConsolePanel({ notify: false, restoreFocus: false });
+    if (panel !== "skills") closeSkillsGrouping(false);
+    if (panel !== "taskboard") window.__codexTaskboardInjection__?.close?.(false);
+    announceWorkspacePanel(panel);
+  }
+
   function findCustomShortcutPageMount() {
     let frameHost = document.querySelector(".app-shell-main-content-frame");
     if (!frameHost?.closest?.("[data-app-shell-main-content-layout]")) {
@@ -2002,7 +2178,7 @@
     close.onclick = () => closeCustomShortcutPanel();
     header.append(title, close);
     page.appendChild(header);
-    return page;
+    return initializeWorkspacePanel(page, "custom");
   }
 
   function openCustomShortcutPanel(item) {
@@ -2010,20 +2186,10 @@
     if (!url) return false;
     const mount = findCustomShortcutPageMount();
     if (!mount) return false;
+    closeOtherWorkspacePanels("custom");
     if (!customShortcutPage) customShortcutPage = createCustomShortcutPage();
     customShortcutLastFocusedElement = document.activeElement;
-    if (customShortcutPage.parentElement !== mount.surface) {
-      restoreCustomShortcutNativeContent();
-      mount.surface.appendChild(customShortcutPage);
-    }
-    mount.surface.setAttribute(CUSTOM_SHORTCUT_HOST_ATTRIBUTE, "true");
-    Array.from(mount.surface.children).forEach((child) => {
-      if (child !== customShortcutPage) child.setAttribute(CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE, "true");
-    });
-    document.querySelectorAll('[data-testid="app-shell-header-context-menu-surface"]')
-      .forEach((header) => Array.from(header.children).forEach((child) => {
-        child.setAttribute(CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE, "true");
-      }));
+    if (customShortcutPage.parentElement !== mount.surface) mount.surface.appendChild(customShortcutPage);
     customShortcutPage.querySelector("[data-codex-custom-shortcut-title]").textContent = item.name;
     customShortcutFrame?.remove();
     const frame = document.createElement("iframe");
@@ -2058,6 +2224,199 @@
     };
   }
 
+  function normalizeRecoveredMessageText(value) {
+    return String(value || "")
+      .replace(/^附件：[^\n]*(?:\r?\n){1,2}/u, "")
+      .replace(/[`*_~]/gu, "")
+      .replace(/\s+/gu, " ")
+      .trim();
+  }
+
+  function recoveredMessageDisplayText(value) {
+    return String(value || "")
+      .replace(/<oai-mem-citation>[\s\S]*?<\/oai-mem-citation>/gu, "")
+      .replace(/<image\b[^>]*\bpath="[^"]+"[^>]*>/gu, "")
+      .replace(/:codex-file-citation\{path="([^"]+)"[^}]*\}/gu, "$1")
+      .replace(/^```[^\n]*\n?|```$/gmu, "")
+      .replace(/\*\*([^*]+)\*\*/gu, "$1")
+      .replace(/~~([^~]+)~~/gu, "$1")
+      .replace(/`([^`]+)`/gu, "$1")
+      .replace(/^#{1,6}\s+/gmu, "")
+      .replace(/\n{3,}/gu, "\n\n")
+      .trim();
+  }
+
+  function recoveredTextsMatch(left, right) {
+    if (!left || !right) return false;
+    if (left === right) return true;
+    return Math.min(left.length, right.length) >= 24 && (left.includes(right) || right.includes(left));
+  }
+
+  function clearRecoveredConversationHistory() {
+    document.querySelectorAll(`[${RECOVERED_HISTORY_FLOW_ATTRIBUTE}="true"]`).forEach((node) => node.remove());
+    document.querySelectorAll(`[${RECOVERED_HISTORY_CONTENT_ATTRIBUTE}="true"]`)
+      .forEach((node) => node.removeAttribute(RECOVERED_HISTORY_CONTENT_ATTRIBUTE));
+    recoveredHistorySignature = "";
+  }
+
+  function nativeConversationFlowMount() {
+    const conversation = document.querySelector('[data-thread-find-target="conversation"]');
+    const historyContent = conversation?.firstElementChild;
+    if (!(conversation instanceof HTMLElement) || !(historyContent instanceof HTMLElement)) return null;
+    const turns = Array.from(historyContent.children).find((child) =>
+      child instanceof HTMLElement && child.classList.contains("flex") && child.classList.contains("flex-col"),
+    );
+    if (!(turns instanceof HTMLElement)) return null;
+    const children = Array.from(turns.children);
+    const insertionReference = children.find((child, index) => index > 0 && (
+      child.getAttribute("data-turn-key")?.startsWith("history-content:tail:")
+      || child.querySelector('[data-local-conversation-final-assistant="true"]')
+    )) || children.at(-1) || null;
+    const scroll = conversation.closest(".thread-scroll-container");
+    return { conversation, historyContent, turns, insertionReference, scroll: scroll instanceof HTMLElement ? scroll : null };
+  }
+
+  function nativeConversationSnapshot(mount) {
+    const recoveredSelector = `[${RECOVERED_HISTORY_FLOW_ATTRIBUTE}="true"]`;
+    const userTexts = Array.from(mount.conversation.querySelectorAll('[data-user-message-bubble="true"]'))
+      .filter((node) => !node.closest(recoveredSelector))
+      .map((node) => normalizeRecoveredMessageText(node.textContent));
+    const assistantNodes = Array.from(mount.conversation.querySelectorAll('[data-markdown-text-style="assistant-message"]'))
+      .filter((node) => !node.closest(recoveredSelector));
+    for (const finalNode of mount.conversation.querySelectorAll('[data-local-conversation-final-assistant="true"]')) {
+      if (!finalNode.closest(recoveredSelector) && !finalNode.querySelector('[data-markdown-text-style="assistant-message"]')) {
+        assistantNodes.push(finalNode);
+      }
+    }
+    const assistantTexts = assistantNodes.map((node) => normalizeRecoveredMessageText(node.textContent));
+    const nativeText = normalizeRecoveredMessageText(Array.from(mount.turns.children)
+      .filter((node) => !node.matches(recoveredSelector))
+      .map((node) => node.textContent || "")
+      .join("\n"));
+    return { userTexts, assistantTexts, nativeText };
+  }
+
+  function historicalMessagesMissingFromNativeFlow(history, mount) {
+    const snapshot = nativeConversationSnapshot(mount);
+    const available = {
+      user: snapshot.userTexts.map((text) => ({ text, used: false })),
+      assistant: snapshot.assistantTexts.map((text) => ({ text, used: false })),
+    };
+    const missing = [];
+    for (const message of history.messages) {
+      const normalized = normalizeRecoveredMessageText(message.text);
+      if (!normalized) continue;
+      const candidates = available[message.role] || [];
+      const match = candidates.find((candidate) => !candidate.used && recoveredTextsMatch(normalized, candidate.text));
+      if (match) {
+        match.used = true;
+        continue;
+      }
+      if (message.role === "assistant" && normalized.length >= 24 && snapshot.nativeText.includes(normalized)) continue;
+      missing.push(message);
+    }
+    return missing;
+  }
+
+  function createRecoveredConversationFlow(messages, signature) {
+    const flow = document.createElement("section");
+    flow.setAttribute(RECOVERED_HISTORY_FLOW_ATTRIBUTE, "true");
+    flow.dataset.signature = signature;
+    flow.setAttribute("aria-label", "已恢复的对话消息");
+    const fragment = document.createDocumentFragment();
+    for (const message of messages) {
+      const article = document.createElement("article");
+      article.setAttribute(RECOVERED_HISTORY_MESSAGE_ATTRIBUTE, "true");
+      article.dataset.role = message.role;
+      article.dataset.phase = message.phase || "";
+      article.dataset.messageId = message.id || "";
+      const body = document.createElement("div");
+      body.className = "codex-recovered-history-body text-size-chat";
+      body.textContent = recoveredMessageDisplayText(message.text);
+      article.appendChild(body);
+      fragment.appendChild(article);
+    }
+    flow.appendChild(fragment);
+    return flow;
+  }
+
+  function ensureRecoveredConversationHistory() {
+    const historyThreadId = normalizedThreadId(conversationHistory?.threadId);
+    if (!historyThreadId || currentCodexTaskContext().threadId !== historyThreadId || !conversationHistory?.messages?.length) {
+      clearRecoveredConversationHistory();
+      return;
+    }
+    const mount = nativeConversationFlowMount();
+    if (!mount) return;
+    const missing = historicalMessagesMissingFromNativeFlow(conversationHistory, mount);
+    if (!missing.length) {
+      clearRecoveredConversationHistory();
+      return;
+    }
+    const signature = `${historyThreadId}:${missing.map((message) => message.id || `${message.role}:${message.text}`).join("|")}`;
+    const current = mount.turns.querySelector(`:scope > [${RECOVERED_HISTORY_FLOW_ATTRIBUTE}="true"]`);
+    if (current?.dataset.signature === signature
+      && current.parentElement === mount.turns
+      && current.nextElementSibling === mount.insertionReference) {
+      mount.historyContent.setAttribute(RECOVERED_HISTORY_CONTENT_ATTRIBUTE, "true");
+      recoveredHistorySignature = signature;
+      return;
+    }
+    const previousHeight = mount.scroll?.scrollHeight || 0;
+    const previousScrollTop = mount.scroll?.scrollTop || 0;
+    const reverseScroll = mount.scroll ? getComputedStyle(mount.scroll).flexDirection === "column-reverse" : false;
+    const wasNearBottom = mount.scroll
+      ? (reverseScroll
+        ? Math.abs(mount.scroll.scrollTop) < 96
+        : mount.scroll.scrollHeight - mount.scroll.scrollTop - mount.scroll.clientHeight < 96)
+      : false;
+    clearRecoveredConversationHistory();
+    const flow = createRecoveredConversationFlow(missing, signature);
+    mount.historyContent.setAttribute(RECOVERED_HISTORY_CONTENT_ATTRIBUTE, "true");
+    mount.turns.insertBefore(flow, mount.insertionReference);
+    recoveredHistorySignature = signature;
+    if (mount.scroll) {
+      const heightDelta = mount.scroll.scrollHeight - previousHeight;
+      if (wasNearBottom) mount.scroll.scrollTop = reverseScroll ? 0 : mount.scroll.scrollHeight;
+      else mount.scroll.scrollTop = previousScrollTop + (reverseScroll ? -heightDelta : heightDelta);
+    }
+  }
+
+  function setConversationHistory(value) {
+    const source = value && typeof value === "object" ? value : null;
+    const threadId = normalizedThreadId(source?.threadId);
+    const messages = (Array.isArray(source?.messages) ? source.messages : []).flatMap((message) => {
+      const role = message?.role;
+      const text = typeof message?.text === "string" ? message.text : "";
+      if ((role !== "user" && role !== "assistant") || !text) return [];
+      return [{
+        id: String(message.id || ""),
+        role,
+        phase: role === "assistant" ? String(message.phase || "") : "",
+        timestamp: typeof message.timestamp === "string" ? message.timestamp : null,
+        text,
+      }];
+    });
+    if (!threadId || !messages.length) {
+      conversationHistory = null;
+      historySignature = "";
+      clearRecoveredConversationHistory();
+      return;
+    }
+    historySignature = `${threadId}:${source.sourceSize || 0}:${messages.length}`;
+    conversationHistory = {
+      threadId,
+      title: String(source.title || ""),
+      updatedAt: source.updatedAt || null,
+      sourceSize: Number(source.sourceSize || 0),
+      totalCount: messages.length,
+      userCount: messages.filter((message) => message.role === "user").length,
+      assistantCount: messages.filter((message) => message.role === "assistant").length,
+      messages,
+    };
+    ensureRecoveredConversationHistory();
+  }
+
   function notifyAssetConsole(action) {
     const binding = globalThis.codexSidebarOpenAssetConsole;
     if (typeof binding !== "function") return false;
@@ -2067,6 +2426,27 @@
     } catch {
       return false;
     }
+  }
+
+  function setAssetConsoleHostLayer(active) {
+    const host = assetConsolePage?.parentElement;
+    if (!host) return;
+    const marker = "data-codex-asset-console-host-layer";
+    const previous = "data-codex-asset-console-host-z-index";
+    if (active) {
+      if (!host.hasAttribute(marker)) {
+        host.setAttribute(marker, "true");
+        host.setAttribute(previous, host.style.zIndex || "");
+      }
+      host.style.setProperty("z-index", "40");
+      return;
+    }
+    if (!host.hasAttribute(marker)) return;
+    const original = host.getAttribute(previous) || "";
+    if (original) host.style.zIndex = original;
+    else host.style.removeProperty("z-index");
+    host.removeAttribute(marker);
+    host.removeAttribute(previous);
   }
 
   function createAssetConsolePage() {
@@ -2094,24 +2474,27 @@
       page.querySelector(".codex-asset-console-message").textContent = "正在连接本机资产库…";
       notifyAssetConsole("open");
     };
-    return page;
+    return initializeWorkspacePanel(page, "asset");
   }
 
-  function openAssetConsolePanel() {
-    closeCustomShortcutPanel(false);
+  function openAssetConsolePanel(options = {}) {
+    pendingAssetConsoleQuery = typeof options?.query === "string" ? options.query.trim() : "";
+    closeOtherWorkspacePanels("asset");
     const mount = findCustomShortcutPageMount();
     if (!mount) return false;
     if (!assetConsolePage) assetConsolePage = createAssetConsolePage();
     assetConsoleReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    if (assetConsolePage.parentElement !== mount.surface) {
-      restoreCustomShortcutNativeContent();
-      mount.surface.appendChild(assetConsolePage);
-    }
-    mount.surface.setAttribute(CUSTOM_SHORTCUT_HOST_ATTRIBUTE, "true");
-    Array.from(mount.surface.children).forEach((child) => {
-      if (child !== assetConsolePage) child.setAttribute(CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE, "true");
-    });
+    if (assetConsolePage.parentElement !== mount.surface) mount.surface.appendChild(assetConsolePage);
+    setAssetConsoleHostLayer(true);
     assetConsolePage.hidden = false;
+    if (assetConsoleFrame?.isConnected && assetConsolePage.dataset.state === "ready") {
+      if (pendingAssetConsoleQuery) {
+        assetConsoleFrame.contentWindow?.postMessage({ source: "codex-sidebar-enhancer", action: "search", query: pendingAssetConsoleQuery }, "*");
+      }
+      document.documentElement.setAttribute("data-codex-asset-console-open", "true");
+      scheduleSync();
+      return true;
+    }
     assetConsolePage.dataset.state = "loading";
     assetConsolePage.querySelector(".codex-asset-console-message").textContent = assetConsole.available
       ? "正在连接本机资产库…"
@@ -2127,8 +2510,11 @@
 
   function closeAssetConsolePanel({ notify = true, restoreFocus = true } = {}) {
     if (assetConsolePage) assetConsolePage.hidden = true;
-    assetConsoleFrame?.remove();
-    assetConsoleFrame = null;
+    setAssetConsoleHostLayer(false);
+    if (notify) {
+      assetConsoleFrame?.remove();
+      assetConsoleFrame = null;
+    }
     restoreCustomShortcutNativeContent();
     document.documentElement.removeAttribute("data-codex-asset-console-open");
     if (notify) notifyAssetConsole("close");
@@ -2154,7 +2540,12 @@
     frame.title = "资产控制台";
     frame.src = state.url;
     frame.setAttribute("allow", "clipboard-read; clipboard-write; autoplay");
-    frame.onload = () => { if (assetConsolePage) assetConsolePage.dataset.state = "ready"; };
+    frame.onload = () => {
+      if (assetConsolePage) assetConsolePage.dataset.state = "ready";
+      if (pendingAssetConsoleQuery) {
+        frame.contentWindow?.postMessage({ source: "codex-sidebar-enhancer", action: "search", query: pendingAssetConsoleQuery }, "*");
+      }
+    };
     assetConsoleFrame = frame;
     body.appendChild(frame);
     assetConsolePage.dataset.state = "ready";
@@ -2273,6 +2664,8 @@
     skillOrganizerFilter = "常用";
     skillOrganizerQuery = "";
     skillOrganizerNativeVisible = false;
+    skillContextMenu?.remove();
+    skillContextMenu = null;
   }
 
   function syncSkillOrganizerFilterSelection(shell, selected = skillOrganizerFilter) {
@@ -2305,10 +2698,11 @@
 
   function renderSkillOrganizer() {
     const shell = document.getElementById(SKILL_ORGANIZER_ID);
-    if (!shell || !skillOrganizerSource?.isConnected) return;
+    if (!shell || (!hostSkillCatalog.length && !skillOrganizerSource?.isConnected)) return;
     loadSkillFavorites(skillOrganizerCatalog);
-    skillOrganizerSource.setAttribute(SKILL_NATIVE_SECTION_ATTR, skillOrganizerNativeVisible ? "visible" : "hidden");
-    shell.querySelector(".codex-skill-native-toggle").textContent = skillOrganizerNativeVisible ? "返回分组" : "完整列表";
+    if (skillOrganizerSource?.isConnected) {
+      skillOrganizerSource.setAttribute(SKILL_NATIVE_SECTION_ATTR, skillOrganizerNativeVisible ? "visible" : "hidden");
+    }
     const filters = shell.querySelector(".codex-skill-filter-list");
     if (!filters.childElementCount) {
       filters.append(...SKILL_FILTERS.map((label) => {
@@ -2362,16 +2756,28 @@
         try { localStorage.setItem(SKILL_FAVORITES_KEY, JSON.stringify([...skillOrganizerFavorites])); } catch {}
         renderSkillOrganizer();
       };
-      const open = () => entry.card?.isConnected && entry.card.click();
+      const use = document.createElement("button");
+      use.type = "button";
+      use.className = "codex-skill-use";
+      use.setAttribute("aria-label", `添加到对话：${entry.title}`);
+      use.title = "添加到对话";
+      use.textContent = "+";
+      use.onclick = (event) => { event.stopPropagation(); void addSkillToConversation(entry); };
+      const open = () => {
+        if (entry.card?.isConnected) entry.card.click();
+        else row.toggleAttribute("data-expanded");
+      };
       row.onclick = open;
       row.onkeydown = (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } };
-      row.append(copy, favorite);
+      row.oncontextmenu = (event) => { event.preventDefault(); showSkillContextMenu(entry, event.clientX, event.clientY); };
+      row.append(copy, favorite, use);
       return row;
     }));
     shell.removeAttribute("aria-busy");
   }
 
   function ensureSkillOrganizer() {
+    if (hostSkillCatalog.length) return;
     const section = document.querySelector("section#skills-installed");
     if (!section) {
       if (skillOrganizerSource) clearSkillOrganizer();
@@ -2419,7 +2825,8 @@
     const button = Array.from(document.querySelectorAll("[data-codex-sidebar-shortcut-card]"))
       .find((candidate) => candidate.dataset.codexSidebarShortcutName === "Skills 分组");
     if (!button) return;
-    const active = skillOrganizerOpening || Boolean(document.getElementById(SKILL_ORGANIZER_ID));
+    const shell = document.getElementById(SKILL_ORGANIZER_ID);
+    const active = skillOrganizerOpening || Boolean(shell && !shell.hidden);
     button.dataset.active = String(active);
     button.setAttribute("aria-current", String(active));
     const label = button.querySelector(`.${SHORTCUT_LABEL_CLASS}`);
@@ -2444,69 +2851,122 @@
     updateSkillsGroupingShortcutState();
   }
 
-  function openSkillsGrouping() {
-    closeAssetConsolePanel({ notify: true, restoreFocus: false });
+  function insertPlainTextIntoComposer(text) {
+    const composer = currentComposer();
+    if (!composer || !text) return false;
+    composer.focus();
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(composer);
+    range.collapse(false);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    let inserted = false;
+    try { inserted = document.execCommand("insertText", false, text); } catch {}
+    if (!inserted) range.insertNode(document.createTextNode(text));
+    composer.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    return true;
+  }
+
+  async function addSkillToConversation(entry) {
+    skillContextMenu?.remove();
+    skillContextMenu = null;
+    let added = false;
     try {
-      const requestedAt = Number(localStorage.getItem(SKILL_OPEN_REQUEST_STORAGE_KEY));
-      if (!Number.isFinite(requestedAt) || Date.now() - requestedAt > SKILL_OPEN_REQUEST_TTL_MS) {
-        localStorage.setItem(SKILL_OPEN_REQUEST_STORAGE_KEY, String(Date.now()));
-      }
+      added = await window.__codexTaskboardInjection__?.addSkillToComposer?.({
+        skillDisplayName: entry.title,
+        skillName: entry.name || entry.title,
+        skillPath: entry.path || "",
+      }) === true;
     } catch {}
-    const generation = ++skillOrganizerOpenGeneration;
-    skillOrganizerOpening = true;
+    if (!added) added = insertPlainTextIntoComposer(`${currentComposer()?.textContent?.trim() ? " " : ""}$${entry.name || entry.title} `);
+    const useButton = Array.from(document.querySelectorAll(`#${SKILL_ORGANIZER_ID} .codex-skill-use`))
+      .find((button) => button.getAttribute("aria-label") === `添加到对话：${entry.title}`);
+    if (useButton) useButton.textContent = added ? "✓" : "!";
+    return added;
+  }
+
+  function showSkillContextMenu(entry, x, y) {
+    skillContextMenu?.remove();
+    const menu = document.createElement("div");
+    menu.className = "codex-skill-context-menu";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "添加到对话";
+    button.onclick = () => void addSkillToConversation(entry);
+    menu.appendChild(button);
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = `${Math.min(x, window.innerWidth - rect.width - 8)}px`;
+    menu.style.top = `${Math.min(y, window.innerHeight - rect.height - 8)}px`;
+    skillContextMenu = menu;
+  }
+
+  function createHostSkillOrganizer() {
+    const shell = document.createElement("section");
+    shell.id = SKILL_ORGANIZER_ID;
+    shell.hidden = true;
+    shell.innerHTML = `
+      <div class="codex-skill-organizer-head"><div><h2>Skills 分组</h2><p>搜索已安装 Skill；右键或点“+”添加到当前对话。</p></div><button type="button" class="codex-skill-close" aria-label="关闭 Skills 分组">×</button></div>
+      <label class="codex-skill-search"><input type="search" placeholder="搜索名称或用途" aria-label="搜索已安装 Skill"></label>
+      <div class="codex-skill-filter-list" role="group" aria-label="Skills 分组"></div>
+      <div class="codex-skill-result-head"><strong>已安装 Skills</strong><span class="codex-skill-result-count"></span></div>
+      <div class="codex-skill-grid"></div>`;
+    shell.querySelector("input").oninput = (event) => { skillOrganizerQuery = event.target.value.trim(); renderSkillOrganizer(); };
+    shell.querySelector(".codex-skill-close").onclick = () => closeSkillsGrouping();
+    return initializeWorkspacePanel(shell, "skills");
+  }
+
+  function closeSkillsGrouping(restoreFocus = true) {
+    const shell = document.getElementById(SKILL_ORGANIZER_ID);
+    if (shell && hostSkillCatalog.length) shell.hidden = true;
+    skillContextMenu?.remove();
+    skillContextMenu = null;
+    skillOrganizerOpening = false;
     updateSkillsGroupingShortcutState();
-    const startedAt = Date.now();
-    let lastClickedPlugins = null;
-    let lastPluginsClickAt = 0;
-    let lastClickedSkills = null;
-    let lastSkillsClickAt = 0;
-    const activateSkills = () => {
-      if (generation !== skillOrganizerOpenGeneration) return true;
-      if (document.getElementById(SKILL_ORGANIZER_ID)) {
-        finishSkillsGroupingOpen();
-        return true;
-      }
-      const tabs = Array.from(document.querySelectorAll('button[aria-pressed]')).filter((button) =>
-        !button.closest(`#${SHORTCUT_GRID_ID}`) && button.getClientRects().length > 0,
-      );
-      const skills = tabs.find((button) => button.textContent?.trim() === "技能");
-      if (!skills) {
-        const currentPlugins = findNativeShortcutButton("插件");
-        if (currentPlugins
-          && (currentPlugins !== lastClickedPlugins || Date.now() - lastPluginsClickAt >= 160)) {
-          currentPlugins.click();
-          lastClickedPlugins = currentPlugins;
-          lastPluginsClickAt = Date.now();
-        }
-        return false;
-      }
-      if (skills.getAttribute("aria-pressed") !== "true"
-        && (skills !== lastClickedSkills || Date.now() - lastSkillsClickAt >= 160)) {
-        skills.click();
-        lastClickedSkills = skills;
-        lastSkillsClickAt = Date.now();
-      }
-      scheduleSync();
-      return skills.getAttribute("aria-pressed") === "true";
-    };
-    activateSkills();
-    skillOrganizerOpenObserver?.disconnect();
-    skillOrganizerOpenObserver = new MutationObserver(activateSkills);
-    skillOrganizerOpenObserver.observe(document.documentElement, { childList: true, subtree: true });
-    const retryActivation = () => {
-      if (generation !== skillOrganizerOpenGeneration || document.getElementById(SKILL_ORGANIZER_ID)) return;
-      activateSkills();
-      if (Date.now() - startedAt < 12_000) {
-        skillOrganizerOpenTimer = setTimeout(retryActivation, 40);
-      } else {
-        finishSkillsGroupingOpen();
-      }
-    };
-    if (skillOrganizerOpenTimer !== null) clearTimeout(skillOrganizerOpenTimer);
-    skillOrganizerOpenTimer = setTimeout(retryActivation, 0);
+    if (restoreFocus) currentComposer()?.focus();
+  }
+
+  function openSkillsGrouping(options = {}) {
+    const mount = findCustomShortcutPageMount();
+    if (!mount) return false;
+    closeOtherWorkspacePanels("skills");
+    let shell = document.getElementById(SKILL_ORGANIZER_ID);
+    if (!shell || !hostSkillCatalog.length) {
+      shell?.remove();
+      shell = createHostSkillOrganizer();
+    }
+    if (shell.parentElement !== mount.surface) mount.surface.appendChild(shell);
+    skillOrganizerCatalog = hostSkillCatalog.slice();
+    skillOrganizerCatalogSignature = skillOrganizerCatalog.map((entry) => `${entry.name}\u0000${entry.description}`).join("\u0001");
+    skillOrganizerQuery = typeof options?.query === "string" ? options.query.trim() : skillOrganizerQuery;
+    if (skillOrganizerQuery) skillOrganizerFilter = "全部";
+    const input = shell.querySelector("input");
+    input.value = skillOrganizerQuery;
+    shell.hidden = false;
+    skillOrganizerOpening = false;
+    renderSkillOrganizer();
+    updateSkillsGroupingShortcutState();
+    if (skillOrganizerQuery) requestAnimationFrame(() => input.focus());
+    return true;
+  }
+
+  function setSkillCatalog(value) {
+    hostSkillCatalog = (Array.isArray(value) ? value : []).flatMap((entry) => {
+      const name = typeof entry?.name === "string" ? entry.name.trim() : "";
+      const title = typeof entry?.title === "string" ? entry.title.trim() : name;
+      if (!name || !title) return [];
+      return [{ name, title, description: String(entry.description || "打开查看 Skill 详情"), path: String(entry.path || "") }];
+    });
+    const shell = document.getElementById(SKILL_ORGANIZER_ID);
+    if (shell && !shell.hidden) {
+      skillOrganizerCatalog = hostSkillCatalog.slice();
+      renderSkillOrganizer();
+    }
   }
 
   function resumeSkillsGroupingOpenRequest() {
+    if (hostSkillCatalog.length) return;
     if (skillOrganizerOpening || document.getElementById(SKILL_ORGANIZER_ID)) return;
     let requestedAt = 0;
     try { requestedAt = Number(localStorage.getItem(SKILL_OPEN_REQUEST_STORAGE_KEY)); } catch {}
@@ -3312,13 +3772,12 @@
     return latest;
   }
 
-  function virtualFolderSourceItems(project) {
-    if (!project?.virtual) return [];
-    let sourceIndex = 0;
+  function virtualFolderSourceItems(excludedIds = new Set(), sourceIndexOffset = 0) {
+    let sourceIndex = sourceIndexOffset;
     return Array.from(searchCatalogByProject, ([id, sourceEntries]) => {
-      const catalogEntries = sourceEntries
-        .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId)))
-        .sort((left, right) => Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
+      if (excludedIds.has(id)) return null;
+      const { entries: catalogEntries } = dedupeFolderCatalogEntries(sourceEntries
+        .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId))));
       const label = catalogEntries.find((entry) => entry.projectName)?.projectName || id;
       const lastUsed = catalogEntries.reduce((latest, entry) => {
         const time = Date.parse(entry.updatedAt || "");
@@ -3336,7 +3795,7 @@
         lastUsed,
         active: false,
       };
-    }).filter((item) => item.id && item.label);
+    }).filter((item) => item?.id && item?.label);
   }
 
   function nativeFolderSources() {
@@ -3362,8 +3821,9 @@
         )))
         .map((thread) => thread.getAttribute("data-app-action-sidebar-thread-title") || "")
         .filter(Boolean);
-      const catalogEntries = (searchCatalogByProject.get(id) || [])
+      const rawCatalogEntries = (searchCatalogByProject.get(id) || [])
         .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId)));
+      const { entries: catalogEntries, suppressedIds: duplicateThreadIds } = dedupeFolderCatalogEntries(rawCatalogEntries);
       const catalogTitles = catalogEntries.map((entry) => entry.title);
       const catalogLastUsed = catalogEntries.reduce((latest, entry) => {
         const time = Date.parse(entry.updatedAt || "");
@@ -3380,6 +3840,7 @@
         sourceIndex,
         threadTitles,
         catalogEntries,
+        duplicateThreadIds,
         searchText: [label, ...threadTitles, ...catalogTitles].join(" "),
         lastUsed: Math.max(folderLastUsed(folder), catalogLastUsed),
         active: Boolean(folder.querySelector('[aria-current="page"], [data-app-action-sidebar-thread-active="true"]')),
@@ -3452,6 +3913,36 @@
 
   function normalizedThreadId(value) {
     return String(value || "").trim().replace(/^(?:local|cloud):/i, "").toLocaleLowerCase();
+  }
+
+  function normalizedThreadTitle(value) {
+    return String(value || "").trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  }
+
+  function isTemporaryThreadId(value) {
+    return normalizedThreadId(value).startsWith("client-new-thread:");
+  }
+
+  function dedupeFolderCatalogEntries(sourceEntries) {
+    const entries = [...sourceEntries]
+      .sort((left, right) => Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
+    const visible = [];
+    const suppressedIds = new Set();
+    const newestByKey = new Map();
+    for (const entry of entries) {
+      const threadId = normalizedThreadId(entry.threadId);
+      const title = normalizedThreadTitle(entry.title);
+      const key = String(entry.dedupeKey || "").trim() || (title ? `title:${title}` : "");
+      const time = Date.parse(entry.updatedAt || "");
+      const newest = key ? newestByKey.get(key) : null;
+      if (threadId && newest && Number.isFinite(time) && newest.time - time <= FOLDER_DUPLICATE_WINDOW_MS) {
+        suppressedIds.add(threadId);
+        continue;
+      }
+      visible.push(entry);
+      if (key && Number.isFinite(time)) newestByKey.set(key, { time, threadId });
+    }
+    return { entries: visible, suppressedIds };
   }
 
   function catalogMatchesForFolder(item, query = folderSearchQuery) {
@@ -3612,6 +4103,9 @@
       row.dataset.codexSidebarInterruptedRow = "true";
       row.dataset.codexSidebarInterruptedKind = entry.interruptionKind || "passive";
       row.dataset.codexSidebarInterruptedUpdatedAt = entry.updatedAt || "";
+    } else if (kind === "folder") {
+      row.dataset.codexSidebarFolderCatalogRow = "true";
+      row.dataset.codexSidebarFolderCatalogUpdatedAt = entry.updatedAt || "";
     } else {
       row.dataset.codexSidebarAllProjectRow = "true";
       row.dataset.codexSidebarAllProjectId = entry.projectId;
@@ -3635,6 +4129,136 @@
     row.appendChild(titleHost);
     item.appendChild(row);
     return item;
+  }
+
+  function reconcileNativeFolderCatalog(item) {
+    if (!item?.folder || !item?.catalogEntries?.length) return;
+    const projectList = item.folder.querySelector(
+      `[data-app-action-sidebar-project-list-id="${CSS.escape(item.id)}"]`,
+    );
+    const list = projectList?.querySelector('[role="list"]');
+    if (!list) return;
+
+    const currentItems = Array.from(list.children).filter((child) => child.getAttribute("role") === "listitem");
+    const nativeById = new Map();
+    const generatedById = new Map();
+    const nativeRows = [];
+    const nativeControlItems = [];
+    const duplicateThreadIds = item.duplicateThreadIds instanceof Set
+      ? item.duplicateThreadIds
+      : new Set(item.duplicateThreadIds || []);
+    for (const listItem of currentItems) {
+      const row = listItem.querySelector(ROW_SELECTOR);
+      if (!row) {
+        nativeControlItems.push(listItem);
+        continue;
+      }
+      const threadId = normalizedThreadId(row?.getAttribute("data-app-action-sidebar-thread-id"));
+      if (!threadId) continue;
+      if (row.dataset.codexSidebarFolderCatalogRow === "true") generatedById.set(threadId, listItem);
+      else {
+        nativeById.set(threadId, listItem);
+        nativeRows.push({
+          listItem,
+          row,
+          threadId,
+          title: normalizedThreadTitle(row.getAttribute("data-app-action-sidebar-thread-title")),
+        });
+      }
+    }
+
+    // Codex initially renders a newly created conversation with a client-new-thread id,
+    // then persists it under a UUID. The catalog can see that UUID before React replaces
+    // the temporary row, so compare the exact title only for temporary ids during this
+    // hand-off. Permanent conversations continue to be matched strictly by id.
+    const catalogEntriesByTitle = new Map();
+    for (const entry of item.catalogEntries) {
+      const title = normalizedThreadTitle(entry.title);
+      if (!title) continue;
+      const entries = catalogEntriesByTitle.get(title) || [];
+      entries.push(entry);
+      catalogEntriesByTitle.set(title, entries);
+    }
+    for (const entries of catalogEntriesByTitle.values()) {
+      entries.sort((left, right) => Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
+    }
+    const temporaryNativeCatalogId = new Map();
+    const nativeAliasByCatalogId = new Map();
+    const claimedCatalogIds = new Set();
+    for (const native of nativeRows) {
+      if (!isTemporaryThreadId(native.threadId) || !native.title) continue;
+      const candidate = (catalogEntriesByTitle.get(native.title) || []).find((entry) => {
+        const catalogId = normalizedThreadId(entry.threadId);
+        return catalogId && !claimedCatalogIds.has(catalogId);
+      });
+      const catalogId = normalizedThreadId(candidate?.threadId);
+      if (!catalogId) continue;
+      claimedCatalogIds.add(catalogId);
+      temporaryNativeCatalogId.set(native.threadId, catalogId);
+      if (!nativeById.has(catalogId)) nativeAliasByCatalogId.set(catalogId, native.listItem);
+    }
+
+    const catalogById = new Map();
+    const desired = item.catalogEntries.flatMap((entry, sourceIndex) => {
+      const threadId = normalizedThreadId(entry.threadId);
+      if (!threadId || pinnedThreadIds.has(threadId) || catalogById.has(threadId)) return [];
+      catalogById.set(threadId, entry);
+      const listItem = nativeById.get(threadId)
+        || nativeAliasByCatalogId.get(threadId)
+        || generatedById.get(threadId)
+        || createCatalogThreadRow(entry, "folder");
+      const row = listItem.querySelector(ROW_SELECTOR);
+      if (row) row.dataset.codexSidebarFolderCatalogUpdatedAt = entry.updatedAt || "";
+      const time = Date.parse(entry.updatedAt || "");
+      return [{ listItem, time: Number.isFinite(time) ? time : 0, sourceIndex }];
+    });
+
+    for (const [threadId, listItem] of nativeById) {
+      if (catalogById.has(threadId)
+        || temporaryNativeCatalogId.has(threadId)
+        || duplicateThreadIds.has(threadId)) continue;
+      const row = listItem.querySelector(ROW_SELECTOR);
+      const previewTime = Date.parse(previewForRow(row)?.updatedAt || "");
+      desired.push({
+        listItem,
+        time: Number.isFinite(previewTime) ? previewTime : 0,
+        sourceIndex: desired.length,
+      });
+    }
+    desired.sort((left, right) => right.time - left.time || left.sourceIndex - right.sourceIndex);
+
+    // Never move or remove Codex-owned list items. React replaces the temporary
+    // new-thread row while the first message is being sent; mutating that native
+    // child list can make React remove a node that no longer exists and abort the
+    // send. CSS order keeps the visual activity sort without changing ownership.
+    list.dataset.codexSidebarFolderCatalogList = "true";
+    const desiredItems = new Set();
+    desired.forEach(({ listItem }, index) => {
+      desiredItems.add(listItem);
+      listItem.style.order = String(index);
+      if (!listItem.isConnected) list.appendChild(listItem);
+    });
+
+    for (const native of nativeRows) {
+      const catalogId = temporaryNativeCatalogId.get(native.threadId);
+      const aliasIsVisible = catalogId && nativeAliasByCatalogId.get(catalogId) === native.listItem;
+      native.listItem.toggleAttribute("data-codex-sidebar-native-alias-hidden", Boolean(catalogId && !aliasIsVisible));
+      native.listItem.toggleAttribute(
+        "data-codex-sidebar-semantic-duplicate-hidden",
+        duplicateThreadIds.has(native.threadId),
+      );
+    }
+
+    nativeControlItems.forEach((control, index) => {
+      control.dataset.codexSidebarFolderControlItem = "true";
+      control.style.order = String(desired.length + index);
+    });
+
+    for (const listItem of currentItems) {
+      const row = listItem.querySelector(ROW_SELECTOR);
+      if (row?.dataset.codexSidebarFolderCatalogRow !== "true" || desiredItems.has(listItem)) continue;
+      listItem.remove();
+    }
   }
 
   function createAllProjectRow(entry) {
@@ -3670,6 +4294,7 @@
     let panel = root.parentElement.querySelector(`[data-codex-sidebar-virtual-folder-panel="${CSS.escape(item.id)}"]`);
     if (!panel) {
       panel = document.createElement("section");
+      panel.id = `codex-sidebar-folder-panel-${item.id}`;
       panel.dataset.codexSidebarVirtualFolderPanel = item.id;
       panel.setAttribute("role", "region");
       panel.setAttribute("aria-labelledby", `codex-sidebar-folder-tag-${item.id}`);
@@ -3869,6 +4494,7 @@
       // This completes recent-use sorting and project-title search even when
       // Codex originally rendered a populated folder in its collapsed state.
       setNativeFolderExpanded(item);
+      if (selected) reconcileNativeFolderCatalog(item);
     }
 
     const entries = allProjectEntries();
@@ -3932,8 +4558,8 @@
       panel.removeAttribute("data-codex-sidebar-folder-panel-id");
     });
     for (const item of folderSources.values()) {
-      item.folder.removeAttribute("id");
-      item.folder.removeAttribute("aria-labelledby");
+      item.folder?.removeAttribute("id");
+      item.folder?.removeAttribute("aria-labelledby");
     }
     folderSources = new Map();
     folderTogglePending = new Map();
@@ -3943,8 +4569,18 @@
   function ensureFolderSwitcher() {
     const project = sectionSources.get("项目");
     const nativeSources = nativeFolderSources();
-    const virtualItems = virtualFolderSourceItems(project);
-    const sources = nativeSources || (virtualItems.length ? { listRoot: project.section, items: virtualItems, virtual: true } : null);
+    if (nativeSources && requestCompleteNativeFolderList(nativeSources)) return;
+    const nativeIds = new Set(nativeSources?.items.map((item) => item.id) || []);
+    const virtualItems = virtualFolderSourceItems(nativeIds, nativeSources?.items.length || 0);
+    const sources = nativeSources
+      ? {
+          listRoot: nativeSources.listRoot,
+          items: [...nativeSources.items, ...virtualItems],
+          sourceMode: virtualItems.length ? "hybrid" : "native",
+        }
+      : virtualItems.length
+        ? { listRoot: project?.section, items: virtualItems, sourceMode: "virtual" }
+        : null;
     const host = project?.virtual ? project.section : project?.heading?.parentElement;
     if (!project || !sources || !host) {
       if (document.getElementById(FOLDER_SWITCHER_ID)) {
@@ -3958,26 +4594,25 @@
       return;
     }
     folderSourcesMissingSince = 0;
-    if (!sources.virtual && requestCompleteNativeFolderList(sources)) return;
     let root = document.getElementById(FOLDER_SWITCHER_ID);
     const signature = sources.items.map((item) => item.id).join("\n");
     const needsRebuild = root?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN
       || root?.parentElement !== host
       || root?.dataset.sourceIds !== signature
-      || root?.dataset.sourceMode !== (sources.virtual ? "virtual" : "native")
-      || sources.items.some((item) => sources.virtual
+      || root?.dataset.sourceMode !== sources.sourceMode
+      || sources.items.some((item) => item.virtual
         ? !folderSources.get(item.id)?.virtual
         : folderSources.get(item.id)?.row !== item.row);
     if (needsRebuild) {
       clearFolderEnhancement();
       root = createFolderSwitcher();
       root.dataset.sourceIds = signature;
-      root.dataset.sourceMode = sources.virtual ? "virtual" : "native";
+      root.dataset.sourceMode = sources.sourceMode;
       if (project.virtual) host.insertBefore(root, host.firstChild);
       else host.insertBefore(root, project.heading.nextElementSibling);
       folderSources = new Map(sources.items.map((item) => [item.id, item]));
       if (!activeFolderId || (activeFolderId !== ALL_FOLDER_ID && !folderSources.has(activeFolderId))) {
-        activeFolderId = sources.virtual
+        activeFolderId = sources.sourceMode === "virtual"
           ? ALL_FOLDER_ID
           : sources.items.find((item) => item.active)?.id || rankedFolders(sources.items, "")[0]?.id || null;
       }
@@ -4207,6 +4842,7 @@
     ensureShortcutSettingsButton();
     ensureSectionTabs();
     ensureFolderSwitcher();
+    ensureRecoveredConversationHistory();
     const rows = visibleRows();
     const anchor = !layoutAnchored
       ? rows.find((row) => row.getAttribute("aria-current") === "page")
@@ -4328,6 +4964,69 @@
     if (event.key === "Escape" && assetConsolePage && !assetConsolePage.hidden) {
       event.preventDefault();
       closeAssetConsolePanel();
+      return;
+    }
+    if (event.key === "Escape" && document.getElementById(SKILL_ORGANIZER_ID) && !document.getElementById(SKILL_ORGANIZER_ID).hidden) {
+      event.preventDefault();
+      closeSkillsGrouping();
+      return;
+    }
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    const composer = event.target?.closest?.('[contenteditable="true"]');
+    if (!composer || composer !== currentComposer()) return;
+    routeWorkspaceCommand(composer.textContent || "");
+  }
+
+  function workspaceCommand(value) {
+    const text = String(value || "").replace(/\s+/gu, " ").trim();
+    if (!text) return null;
+    const slash = text.match(/^\/(项目|项目管理|skills?|技能|资产|资产控制台)\s+(.+)$/iu);
+    const target = slash?.[1] || text.match(/(?:^|[，,。；;：:\s])(项目管理|任务面板|项目看板|skills?\s*分组|skills?|技能列表|资产控制台|资产库|素材库)(?:[，,。；;：:\s]|$)/iu)?.[1];
+    if (!target) return null;
+    const hasAction = Boolean(slash) || /(?:帮我|请|打开|进入|找|查找|搜索|检索|定位)/u.test(text);
+    if (!hasAction) return null;
+    const panel = /项目|任务/u.test(target) ? "taskboard" : /skill|技能/iu.test(target) ? "skills" : "asset";
+    let query = slash?.[2] || text;
+    query = query
+      .replace(/^(?:请|麻烦)?(?:帮我)?/u, "")
+      .replace(new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "iu"), "")
+      .replace(/(?:帮我|请)?(?:打开|进入|找|查找|搜索|检索|定位)(?:一下|下)?/gu, "")
+      .replace(/(?:这个|有关的|相关的)?(?:项目|skills?|技能|资产|素材)?[。！？!?]*$/iu, "")
+      .replace(/^[，,。；;：:\s]+|[，,。；;：:\s]+$/gu, "")
+      .trim();
+    return { panel, query };
+  }
+
+  function routeWorkspaceCommand(value) {
+    const text = String(value || "").trim();
+    const command = workspaceCommand(text);
+    if (!command) return false;
+    const now = Date.now();
+    if (lastWorkspaceCommand.text === text && now - lastWorkspaceCommand.at < 1_500) return true;
+    lastWorkspaceCommand = { text, at: now };
+    window.setTimeout(() => {
+      if (command.panel === "taskboard") {
+        const api = window.__codexTaskboardInjection__;
+        if (typeof api?.search === "function") void api.search(command.query);
+        else api?.open?.();
+      } else if (command.panel === "skills") openSkillsGrouping({ query: command.query });
+      else openAssetConsolePanel({ query: command.query });
+    }, 0);
+    return true;
+  }
+
+  function handleWorkspaceCommandClick(event) {
+    const button = event.target?.closest?.('button[aria-label*="发送"], button[aria-label*="Send"], button[data-testid*="send"]');
+    if (!button || !currentComposer()) return;
+    routeWorkspaceCommand(currentComposer().textContent || "");
+  }
+
+  function handleWorkspacePanelMessage(event) {
+    if (event.source !== window || event.origin !== window.location.origin || event.data?.type !== WORKSPACE_PANEL_EVENT) return;
+    if (event.data.panel === "taskboard") {
+      closeCustomShortcutPanel(false);
+      closeAssetConsolePanel({ notify: false, restoreFocus: false });
+      closeSkillsGrouping(false);
     }
   }
 
@@ -4357,7 +5056,9 @@
     document.addEventListener("pointerdown", handleStatusDocumentPointerDown, true);
     document.addEventListener("click", handlePinDocumentClick, true);
     document.addEventListener("keydown", handleWorkspaceEnhancementKeydown, true);
+    document.addEventListener("click", handleWorkspaceCommandClick, true);
     window.addEventListener("message", handleAssetConsoleMessage);
+    window.addEventListener("message", handleWorkspacePanelMessage);
     sync();
   }
 
@@ -4376,7 +5077,9 @@
     document.removeEventListener("pointerdown", handleStatusDocumentPointerDown, true);
     document.removeEventListener("click", handlePinDocumentClick, true);
     document.removeEventListener("keydown", handleWorkspaceEnhancementKeydown, true);
+    document.removeEventListener("click", handleWorkspaceCommandClick, true);
     window.removeEventListener("message", handleAssetConsoleMessage);
+    window.removeEventListener("message", handleWorkspacePanelMessage);
     closeStatusMenu();
     document.getElementById(STYLE_ID)?.remove();
     document.getElementById(TOGGLE_ID)?.remove();
@@ -4394,6 +5097,7 @@
     document.getElementById(SHORTCUT_SETTINGS_ID)?.remove();
     clearSectionEnhancement();
     closeCustomShortcutPanel(false);
+    clearRecoveredConversationHistory();
     closeAssetConsolePanel({ notify: true, restoreFocus: false });
     assetConsolePage?.remove();
     assetConsolePage = null;
@@ -4432,9 +5136,14 @@
     setInterruptedCatalog,
     setPinnedThreads,
     setActiveProjectThreads,
+    setConversationHistory,
     setUsage,
     setAssetConsole,
     setAssetConsolePanel,
+    setSkillCatalog,
+    openSkillsGrouping,
+    openAssetConsolePanel,
+    routeWorkspaceCommand,
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
   else start();

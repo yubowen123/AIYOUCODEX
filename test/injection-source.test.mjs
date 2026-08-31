@@ -11,6 +11,21 @@ test("injection uses stable Codex sidebar and tooltip anchors", () => {
   assert.match(source, /role=\\?"tooltip/);
 });
 
+test("workspace menu pages stay in a shared side panel and accept conversation commands", () => {
+  assert.match(source, /data-codex-workspace-side-panel/);
+  assert.match(source, /function workspaceCommand\(value\)/);
+  assert.match(source, /routeWorkspaceCommand/);
+  assert.match(source, /typeof api\?\.search === "function"\) void api\.search\(command\.query\)/);
+  assert.match(source, /setSkillCatalog/);
+  assert.match(source, /添加到对话/);
+  assert.match(source, /codex-asset-console-close[\s\S]{0,520}-webkit-app-region:\s*no-drag/);
+  assert.match(source, /codex-asset-console-close[\s\S]{0,420}pointer-events:\s*auto/);
+  assert.match(source, /function setAssetConsoleHostLayer\(active\)/);
+  assert.match(source, /host\.style\.setProperty\("z-index", "40"\)/);
+  assert.match(source, /action: "search", query: pendingAssetConsoleQuery/);
+  assert.doesNotMatch(source, /Array\.from\(mount\.surface\.children\)[\s\S]{0,180}CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE/);
+});
+
 test("hover previews contain all requested fields and clamp message bodies to three lines", () => {
   assert.match(source, /核心总结/);
   assert.match(source, /最近输入/);
@@ -30,6 +45,19 @@ test("injection is idempotent and reversible", () => {
 test("renderer receives host-pushed previews without a local HTTP fetch", () => {
   assert.match(source, /setPreviews/);
   assert.doesNotMatch(source, /fetch\s*\(/);
+});
+
+test("recovered history is host-pushed into the native conversation flow and renders text safely", () => {
+  assert.match(source, /setConversationHistory/);
+  assert.match(source, /data-thread-find-target/);
+  assert.match(source, /data-user-message-bubble/);
+  assert.match(source, /data-local-conversation-final-assistant/);
+  assert.match(source, /data-codex-recovered-history-flow/);
+  assert.match(source, /body\.textContent = recoveredMessageDisplayText\(message\.text\)/);
+  assert.doesNotMatch(source, /body\.innerHTML = message\.text/);
+  assert.doesNotMatch(source, /codex-complete-history-page/);
+  assert.doesNotMatch(source, /搜索这次任务的全部对话/);
+  assert.doesNotMatch(source, /返回实时对话/);
 });
 
 test("sidebar groups use accessible tabs and preserve native project actions", () => {
@@ -83,7 +111,50 @@ test("priority-only Codex sidebars retain virtual tabs, project search, and fold
   assert.match(source, /data-codex-sidebar-priority-native-hidden/);
   assert.match(source, /data-codex-sidebar-virtual-section/);
   assert.match(source, /function ensureVirtualPinnedRows\(\)/);
-  assert.match(source, /function virtualFolderSourceItems\(project\)/);
+  assert.match(source, /function virtualFolderSourceItems\(excludedIds = new Set\(\), sourceIndexOffset = 0\)/);
+  assert.match(source, /sourceMode: virtualItems\.length \? "hybrid" : "native"/);
+});
+
+test("virtual folder catalog rows participate in card-view enhancement", () => {
+  assert.match(
+    source,
+    /#\$\{ALL_PROJECTS_PANEL_ID\}, \[data-codex-sidebar-virtual-folder-panel\]/,
+  );
+});
+
+test("native project folders merge catalog-only conversations and sort them by real activity", () => {
+  assert.match(source, /function reconcileNativeFolderCatalog\(item\)/);
+  assert.match(source, /createCatalogThreadRow\(entry, "folder"\)/);
+  assert.match(source, /desired\.sort\(\(left, right\) => right\.time - left\.time/);
+  assert.match(source, /if \(selected\) reconcileNativeFolderCatalog\(item\)/);
+});
+
+test("new native conversations replace catalog placeholders without duplicate cards", () => {
+  assert.match(source, /function isTemporaryThreadId\(value\)/);
+  assert.match(source, /startsWith\("client-new-thread:"\)/);
+  assert.match(source, /const temporaryNativeCatalogId = new Map\(\)/);
+  assert.match(source, /nativeAliasByCatalogId\.get\(threadId\)/);
+  assert.match(source, /temporaryNativeCatalogId\.has\(threadId\)/);
+});
+
+test("folder reconciliation never removes React-owned rows during the first message send", () => {
+  assert.match(source, /list\.dataset\.codexSidebarFolderCatalogList = "true"/);
+  assert.match(source, /listItem\.style\.order = String\(index\)/);
+  assert.match(source, /data-codex-sidebar-native-alias-hidden/);
+  assert.match(source, /row\?\.dataset\.codexSidebarFolderCatalogRow !== "true"/);
+  assert.doesNotMatch(source, /list\.replaceChildren\(\.\.\.desiredChildren\)/);
+});
+
+test("folder cards collapse short retry bursts and keep native controls on a full bottom row", () => {
+  assert.match(source, /const FOLDER_DUPLICATE_WINDOW_MS = 15 \* 60 \* 1000/);
+  assert.match(source, /function dedupeFolderCatalogEntries\(sourceEntries\)/);
+  assert.match(source, /entry\.dedupeKey/);
+  assert.match(source, /data-codex-sidebar-semantic-duplicate-hidden/);
+  assert.match(source, /\[data-codex-sidebar-semantic-duplicate-hidden\]\s*\{/);
+  assert.doesNotMatch(source, /\[data-codex-sidebar-semantic-duplicate-hidden="true"\]/);
+  assert.match(source, /control\.style\.order = String\(desired\.length \+ index\)/);
+  assert.match(source, /data-codex-sidebar-folder-control-item/);
+  assert.match(source, /grid-column: 1 \/ -1 !important/);
 });
 
 test("running Taskboard threads receive a reduced-motion-safe blue border glow", () => {

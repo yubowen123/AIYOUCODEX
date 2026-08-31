@@ -15,8 +15,8 @@ test("vendored Taskboard is the pinned custom project-management snapshot", asyn
       snapshotSource: manifest.snapshotSource,
     },
     {
-      version: "0.1.0-codexoptimiz.20260813",
-      ref: "custom-working-tree-2026-08-13",
+      version: "0.2.0-codexoptimiz.20260831",
+      ref: "custom-working-tree-2026-08-31",
       baseCommit: "677b544",
       license: "Apache-2.0",
       snapshotSource: "019fe64a-ace1-7793-92aa-4d91195005ec",
@@ -30,19 +30,35 @@ test("vendored Taskboard is the pinned custom project-management snapshot", asyn
 test("custom Taskboard retains the six-lane project management implementation", async () => {
   const app = await readFile(new URL("web/src/App.tsx", root), "utf8");
   const swimlane = await readFile(new URL("web/src/components/ProjectSwimlaneBoard.tsx", root), "utf8");
+  const profilePanel = await readFile(new URL("web/src/components/ProjectProfilePanel.tsx", root), "utf8");
   const injection = await readFile(new URL("inject/codex-taskboard.user.js", root), "utf8");
   assert.match(app, /<ProjectSwimlaneBoard/);
   assert.match(swimlane, /跨项目六泳道看板/);
   assert.match(swimlane, /project-swimlane-resize-handle/);
   assert.match(swimlane, /onMoveTask/);
+  assert.match(swimlane, /projectUrgencies/);
+  assert.match(app, /project-folder-filter/);
+  assert.match(
+    app,
+    /profile\?\.workspacePath\s*\?\? deviceWorkspacePaths\[codexProjectId\][\s\S]*?\?\? deviceProject\?\.workspacePath[\s\S]*?\?\? project\.workspacePath/,
+  );
+  assert.match(app, /listDeviceProjects\(signal\)/);
+  assert.match(swimlane, /taskGuidance\(task\)/);
+  assert.match(app, /saveSelectedProjectProfile/);
+  assert.match(profilePanel, /项目描述/);
+  assert.match(profilePanel, /下一步规划/);
+  assert.match(profilePanel, /匹配 Codex 项目/);
   assert.match(injection, /const ENTRY_LABEL = "项目管理"/);
 });
 
-test("custom Taskboard keeps full-workspace embedding and the loopback null-origin fix", async () => {
+test("custom Taskboard keeps side-panel embedding and the loopback null-origin fix", async () => {
   const injection = await readFile(new URL("inject/codex-taskboard.user.js", root), "utf8");
   const server = await readFile(new URL("server/app.mjs", root), "utf8");
   assert.match(injection, /codex-taskboard-page/);
   assert.match(injection, /codex-taskboard-frame/);
+  assert.match(injection, /--codex-taskboard-panel-width/);
+  assert.match(injection, /search: searchTaskboard/);
+  assert.match(injection, /addSkillToComposer/);
   assert.match(server, /origin === "null" && isLoopbackAddress/);
   assert.match(server, /access-control-allow-private-network/);
 });

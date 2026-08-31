@@ -21,10 +21,12 @@
   const HOST_HEARTBEAT_NAME = "__codexTaskboardHostHeartbeatV1";
   const REATTACH_DELAY_MS = 160;
   const FRAME_READY_TIMEOUT_MS = 12_000;
-  const HOST_REQUEST_TIMEOUT_MS = 12_000;
+  const HOST_REQUEST_TIMEOUT_MS = 22_000;
   const HOST_HEARTBEAT_MAX_AGE_MS = 8_000;
   const MACOS_TITLEBAR_SAFE_LEFT = 80;
   const FRAME_REFRESH_PARAM = "__codex_taskboard_refresh";
+  const PANEL_WIDTH_KEY = "codex-workspace-enhancer:side-panel-width-v1";
+  const PANEL_EVENT = "codex-workspace-panel:open";
   const PLUGIN_LABELS = ["插件", "plugins"];
   const ENTRY_LABEL = "项目管理";
   const NATIVE_PAGE_LABELS = [
@@ -128,7 +130,6 @@
       [${HOST_ATTRIBUTE}="true"] {
         position: relative !important;
         z-index: 31 !important;
-        pointer-events: none !important;
       }
       [${HIDDEN_ATTRIBUTE}="true"] {
         visibility: hidden !important;
@@ -141,18 +142,30 @@
         color: var(--color-token-foreground, inherit) !important;
       }
       #${PAGE_ID} {
-        position: absolute;
-        top: 0;
-        right: 0;
-        bottom: 0;
-        left: 0;
-        z-index: 1;
-        min-width: 0;
+        position: relative;
+        z-index: 30;
+        flex: 0 0 var(--codex-taskboard-panel-width, min(620px, 46vw));
+        width: var(--codex-taskboard-panel-width, min(620px, 46vw));
+        min-width: 420px;
+        max-width: min(1100px, calc(100vw - 360px));
+        height: 100%;
         min-height: 0;
         overflow: hidden;
+        border-left: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
         background: Canvas;
         color: CanvasText;
+        box-shadow: -12px 0 32px color-mix(in srgb, black 9%, transparent);
         pointer-events: auto;
+      }
+      #${PAGE_ID}::before {
+        content: "";
+        position: absolute;
+        z-index: 4;
+        top: 0;
+        bottom: 0;
+        left: -4px;
+        width: 8px;
+        cursor: ew-resize;
       }
       #${PAGE_ID}[hidden] {
         display: none !important;
@@ -722,14 +735,19 @@
           focusComposerNonce: Date.now(),
         },
       });
-      await requestHostTaskComposerPrefill({
+      const autoSubmit = payload.autoSubmit === true;
+      const prepared = await requestHostTaskComposerPrefill({
         instruction,
         skillDisplayName,
         skillName,
         skillPath,
+        autoSubmit,
       });
-      await waitForPreparedComposer(identifier, skillPath);
-      postToFrame({ type: "taskboard:thread-prepared", payload: { taskId } });
+      if (!autoSubmit) await waitForPreparedComposer(identifier, skillPath);
+      postToFrame({
+        type: "taskboard:thread-prepared",
+        payload: { taskId, submitted: prepared?.submitted === true },
+      });
     } catch (error) {
       postToFrame({
         type: "taskboard:thread-create-error",
@@ -867,6 +885,28 @@
     section.setAttribute(OWNED_ATTRIBUTE, "true");
     section.setAttribute("role", "region");
     section.setAttribute("aria-label", ENTRY_LABEL);
+    let panelWidth = 620;
+    try { panelWidth = Number(localStorage.getItem(PANEL_WIDTH_KEY)) || panelWidth; } catch (_) {}
+    panelWidth = Math.max(420, Math.min(panelWidth, Math.max(420, window.innerWidth - 360)));
+    section.style.setProperty("--codex-taskboard-panel-width", `${panelWidth}px`);
+    section.addEventListener("pointerdown", (event) => {
+      const rect = section.getBoundingClientRect();
+      if (event.button !== 0 || Math.abs(event.clientX - rect.left) > 8) return;
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = rect.width;
+      const move = (moveEvent) => {
+        const width = Math.max(420, Math.min(startWidth + startX - moveEvent.clientX, Math.max(420, window.innerWidth - 360)));
+        section.style.setProperty("--codex-taskboard-panel-width", `${width}px`);
+      };
+      const up = () => {
+        document.removeEventListener("pointermove", move, true);
+        document.removeEventListener("pointerup", up, true);
+        try { localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(section.getBoundingClientRect().width))); } catch (_) {}
+      };
+      document.addEventListener("pointermove", move, true);
+      document.addEventListener("pointerup", up, true);
+    }, true);
 
     status = document.createElement("div");
     status.id = STATUS_ID;
@@ -1065,12 +1105,14 @@
     skillDisplayName,
     skillName,
     skillPath,
+    autoSubmit = false,
   }) {
     return requestHost("prefill-task-composer", {
       instruction,
       skillDisplayName,
       skillName,
       skillPath,
+      autoSubmit,
     });
   }
 
@@ -1145,18 +1187,7 @@
     if (!mount) return;
     const { surface } = mount;
 
-    if (page.parentElement !== surface) {
-      restoreNativeContent();
-      surface.appendChild(page);
-    }
-    surface.setAttribute(HOST_ATTRIBUTE, "true");
-    Array.from(surface.children).forEach((child) => {
-      if (child !== page && child.getAttribute(OWNED_ATTRIBUTE) !== "true") {
-        child.setAttribute(HIDDEN_ATTRIBUTE, "true");
-      }
-    });
-    hideNativeHeader();
-    muteNativeSelection();
+    if (page.parentElement !== surface) surface.appendChild(page);
     page.hidden = false;
     document.documentElement.setAttribute("data-codex-taskboard-open", "true");
   }
@@ -1183,6 +1214,7 @@
     }
     const generation = ++openGeneration;
     active = true;
+    window.postMessage({ type: PANEL_EVENT, panel: "taskboard" }, window.location.origin);
     ensureEntry();
     mountActivePage();
     syncEntryState();
@@ -1207,7 +1239,7 @@
     const clickedThreadId = normalizeThreadId(threadRow?.getAttribute?.("data-app-action-sidebar-thread-id"));
     if (clickedThreadId) lastNativeThreadId = clickedThreadId;
     if (!active || !isNativePageNavigation(event.target)) return;
-    closeTaskboard(false);
+    window.setTimeout(postHostContext, REATTACH_DELAY_MS);
   }
 
   function scheduleRefresh() {
@@ -1283,7 +1315,68 @@
   }
 
   function onNativeRouteChange() {
-    if (active) closeTaskboard(false);
+    if (active) window.setTimeout(postHostContext, REATTACH_DELAY_MS);
+  }
+
+  function setReactInputValue(input, value) {
+    const Input = input.ownerDocument?.defaultView?.HTMLInputElement || HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(Input.prototype, "value")?.set;
+    setter?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function setReactSelectValue(select, value) {
+    const Select = select.ownerDocument?.defaultView?.HTMLSelectElement || HTMLSelectElement;
+    const setter = Object.getOwnPropertyDescriptor(Select.prototype, "value")?.set;
+    setter?.call(select, value);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  async function searchTaskboard(query = "") {
+    openTaskboard();
+    try { await waitForFrameReady(); } catch (_) { return false; }
+    const text = String(query || "").trim();
+    if (!text) return true;
+    const expected = normalizedLabel(text);
+    const deadline = Date.now() + 3_000;
+    while (Date.now() < deadline) {
+      const doc = frame?.contentDocument;
+      if (doc) {
+        const folder = doc.querySelector(".project-folder-filter select");
+        const option = folder && Array.from(folder.options).find((candidate) => normalizedLabel(candidate.textContent).includes(expected));
+        if (folder && option) {
+          setReactSelectValue(folder, option.value);
+          return true;
+        }
+        const projectCandidates = Array.from(doc.querySelectorAll(
+          ".project-nav-item, .project-card button, .header-project-menu button, [data-project-switcher] button, button",
+        )).filter((node) => node.getClientRects().length > 0);
+        const project = projectCandidates.find((node) => normalizedLabel(node.textContent) === expected)
+          || projectCandidates.find((node) => normalizedLabel(node.textContent).includes(expected));
+        if (project) {
+          project.click();
+          return true;
+        }
+        const search = doc.querySelector('#task-search, input[type="search"], input[placeholder*="搜索"]');
+        if (search) {
+          setReactInputValue(search, text);
+          search.focus();
+          return true;
+        }
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+    }
+    return false;
+  }
+
+  async function addSkillToComposer(payload = {}) {
+    const skillName = typeof payload.skillName === "string" ? payload.skillName.trim() : "";
+    const skillDisplayName = typeof payload.skillDisplayName === "string" ? payload.skillDisplayName.trim() : "";
+    const skillPath = typeof payload.skillPath === "string" ? payload.skillPath.trim() : "";
+    if (!skillName || !skillDisplayName || !skillPath) return false;
+    await requestHostTaskComposerPrefill({ instruction: " ", skillDisplayName, skillName, skillPath, autoSubmit: false });
+    return true;
   }
 
   const api = {
@@ -1292,6 +1385,8 @@
     refresh,
     reloadFrame,
     open: openTaskboard,
+    search: searchTaskboard,
+    addSkillToComposer,
     close: closeTaskboard,
     destroy,
     hostResponse: onHostResponse,

@@ -86,7 +86,7 @@ export function selectCodexTargets(targets) {
 }
 
 function parseHostRequest(payload, parseAutomationRequest) {
-  if (typeof payload !== "string" || payload.length > 4_096) {
+  if (typeof payload !== "string" || payload.length > 24_000) {
     return { id: null, request: null, error: HOST_REQUEST_ERROR };
   }
 
@@ -119,7 +119,7 @@ function parseHostRequest(payload, parseAutomationRequest) {
     request.action === "prefill-task-composer"
     && typeof request.instruction === "string"
     && request.instruction.length > 0
-    && request.instruction.length <= 1_024
+    && request.instruction.length <= 16_000
     && typeof request.skillName === "string"
     && /^[a-z0-9][a-z0-9-]{0,79}$/i.test(request.skillName)
     && typeof request.skillDisplayName === "string"
@@ -128,6 +128,7 @@ function parseHostRequest(payload, parseAutomationRequest) {
     && typeof request.skillPath === "string"
     && request.skillPath.length > 0
     && request.skillPath.length <= 1_024
+    && (request.autoSubmit === undefined || typeof request.autoSubmit === "boolean")
   ) {
     return { id, request, error: null };
   }

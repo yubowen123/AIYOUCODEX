@@ -38,7 +38,7 @@ test("public installer copies a portable runtime and activates it under the curr
       path.join(installDir, "vendor", "codex-taskboard", "VERSION.json"),
       "utf8",
     ));
-    assert.equal(taskboardManifest.version, "0.1.0-codexoptimiz.20260813");
+    assert.equal(taskboardManifest.version, "0.2.0-codexoptimiz.20260831");
     assert.equal(taskboardManifest.snapshotSource, "019fe64a-ace1-7793-92aa-4d91195005ec");
     const publicRuntime = [
       await readFile(path.join(installDir, "scripts", "injector.mjs"), "utf8"),

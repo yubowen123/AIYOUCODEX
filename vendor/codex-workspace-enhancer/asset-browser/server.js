@@ -16,6 +16,7 @@ import { buildImageSequenceProfiles, classifyLocalAsset } from "./asset-smart-cl
 import { readImageDimensions } from "./image-dimensions.js";
 import { createAssetScanCoordinator } from "./asset-scan-coordinator.js";
 import { filterLibraryResult } from "./asset-library-filter.js";
+import { PersistentAssetIndex, sameAssetIndexFolders } from "./persistent-asset-index.js";
 import { CodexPromptAssociationStore } from "./codex-prompt-associations.js";
 import {
   CodexProductionProjectSync,
@@ -30,6 +31,7 @@ const ledgerPath = path.resolve(process.env.ASSET_BROWSER_LEDGER || path.join(__
 const generationRegistryPath = path.resolve(process.env.GENERATION_TICKETS || path.join(__dirname, ".generation-tickets.json"));
 const generationBindingsPath = path.resolve(process.env.GENERATION_THREAD_BINDINGS || path.join(__dirname, ".thread-project-bindings.json"));
 const promptAssociationRegistryPath = path.resolve(process.env.CODEX_PROMPT_ASSOCIATIONS || path.join(path.dirname(generationRegistryPath), ".codex-prompt-associations.json"));
+const assetLibraryIndexPath = path.resolve(process.env.ASSET_LIBRARY_INDEX || path.join(path.dirname(configPath), ".asset-library-index.json"));
 const duplicateLedgerPath = path.resolve(process.env.DUPLICATE_CLEANUP_LEDGER || path.join(__dirname, ".duplicate-cleanup-ledger.json"));
 const duplicateQuarantinePath = path.resolve(process.env.DUPLICATE_QUARANTINE || path.join(__dirname, "duplicate-quarantine"));
 const rhythmControlRegistryPath = path.resolve(process.env.RHYTHM_CONTROL_REGISTRY || path.join(__dirname, ".rhythm-control-tracks.json"));
@@ -58,8 +60,12 @@ const defaultAssetTaxonomy = {
   video: ["预告", "成片", "抽卡片段", "素材片段"],
 };
 const sseClients = new Set();
-let watchTimer = null;
 const watcherHandles = new Map();
+const pendingWatchPaths = new Set();
+const libraryResponseCache = new Map();
+const MAX_LIBRARY_RESPONSE_CACHE_ENTRIES = 4;
+let watchFlushTimer = null;
+let assetIndexUpdateQueue = Promise.resolve();
 const downloadAutomation = new DownloadAutomation({ ledgerPath });
 const generationPipeline = new GenerationPipeline({
   registryPath: generationRegistryPath,
@@ -70,6 +76,7 @@ const promptAssociations = new CodexPromptAssociationStore({
   sessionsRoot: process.env.CODEX_SESSIONS_ROOT || path.join(os.homedir(), ".codex", "sessions"),
   generatedImagesRoot: process.env.CODEX_GENERATED_IMAGES_ROOT || path.join(os.homedir(), ".codex", "generated_images"),
 });
+const assetLibraryIndex = new PersistentAssetIndex({ filePath: assetLibraryIndexPath });
 const codexProductionProjects = new CodexProductionProjectSync({
   globalStatePath: process.env.CODEX_GLOBAL_STATE || path.join(os.homedir(), ".codex", ".codex-global-state.json"),
   sessionIndexPath: process.env.CODEX_SESSION_INDEX || path.join(os.homedir(), ".codex", "session_index.jsonl"),
@@ -89,6 +96,55 @@ function sendJson(res, data, status = 200) {
     "cache-control": "no-store"
   });
   res.end(body);
+}
+
+function sendJsonBuffer(res, body, status = 200) {
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "content-length": body.length,
+    "cache-control": "no-store",
+  });
+  res.end(body);
+}
+
+function rememberLibraryResponse(key, body) {
+  if (libraryResponseCache.has(key)) libraryResponseCache.delete(key);
+  libraryResponseCache.set(key, body);
+  while (libraryResponseCache.size > MAX_LIBRARY_RESPONSE_CACHE_ENTRIES) {
+    libraryResponseCache.delete(libraryResponseCache.keys().next().value);
+  }
+  return body;
+}
+
+function cachedLibraryResponse(library, filters) {
+  const key = JSON.stringify({
+    projectId: library.project?.id || "",
+    mode: library.index?.mode || "",
+    updatedAt: library.index?.updatedAt || "",
+    settings: library.settings || {},
+    filters,
+  });
+  const cached = libraryResponseCache.get(key);
+  if (cached) {
+    libraryResponseCache.delete(key);
+    libraryResponseCache.set(key, cached);
+    return cached;
+  }
+  return rememberLibraryResponse(key, Buffer.from(JSON.stringify(filterLibraryResult(library, filters))));
+}
+
+function invalidateLibraryResponseCache(projectId = "") {
+  if (!projectId) {
+    libraryResponseCache.clear();
+    return;
+  }
+  for (const key of libraryResponseCache.keys()) {
+    try {
+      if (JSON.parse(key).projectId === projectId) libraryResponseCache.delete(key);
+    } catch {
+      libraryResponseCache.delete(key);
+    }
+  }
 }
 
 function sendText(res, text, status = 200) {
@@ -1506,6 +1562,7 @@ async function buildLibraryAsset(filePath, project, config, assignment, classifi
   }, classificationContext);
   return {
     id: assetRef,
+    sourcePath: filePath,
     projectId: project.id,
     projectName: project.name,
     name: path.basename(filePath),
@@ -1535,35 +1592,48 @@ async function buildLibraryAsset(filePath, project, config, assignment, classifi
   };
 }
 
-async function listLibraryAssets(projectId) {
-  const config = await loadConfig();
-  const project = config.projects.find((item) => item.id === projectId) || config.projects[0];
-  if (!project) return {
-    project: null,
-    assets: [],
-    counts: { all: 0, text: 0, image: 0, audio: 0, video: 0 },
-    smartCounts: { asset: 0, review: 0, noise: 0 },
-    settings: config.assetManager,
-  };
-  const candidates = [];
-  for (const folder of project.folders) await walkLibrary(folder, candidates);
-  for (const [filePath, assignedProjectId] of Object.entries(config.assetAssignments || {})) {
-    if (assignedProjectId === project.id && !candidates.includes(filePath) && supportedAssetExts.has(path.extname(filePath).toLowerCase())) candidates.push(filePath);
+function indexedAssetPath(asset) {
+  try {
+    return path.resolve(asset?.sourcePath || decodeAssetRef(asset?.id));
+  } catch {
+    return "";
   }
+}
+
+function projectContainsAsset(project, filePath, config) {
+  const resolved = path.resolve(filePath);
+  const assignment = config.assetAssignments?.[resolved] || "";
+  if (assignment) return assignment === project.id;
+  return project.folders.some((folder) => isPathInside(folder, resolved));
+}
+
+async function buildLibraryAssets(project, config, candidates, contextPaths = candidates) {
   const unique = [...new Set(candidates.map((item) => path.resolve(item)))];
   const classificationContext = {
-    profiles: buildImageSequenceProfiles(unique.filter((filePath) => libraryAssetKind(filePath) === "image"), path),
+    profiles: buildImageSequenceProfiles(
+      [...new Set(contextPaths.map((item) => path.resolve(item)))]
+        .filter((filePath) => libraryAssetKind(filePath) === "image"),
+      path,
+    ),
     pathApi: path,
   };
   const assets = [];
   for (const filePath of unique) {
+    if (!supportedAssetExts.has(path.extname(filePath).toLowerCase())) continue;
+    if (!projectContainsAsset(project, filePath, config) || !await exists(filePath)) continue;
     const assignment = config.assetAssignments?.[filePath] || "";
-    if (assignment && assignment !== project.id) continue;
-    if (!await exists(filePath)) continue;
     const asset = await buildLibraryAsset(filePath, project, config, assignment, classificationContext);
     assets.push(asset);
   }
-  assets.sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name, "zh-CN", { numeric: true }));
+  return assets;
+}
+
+function createLibraryResult(project, entry, settings, mode) {
+  const assets = (entry?.assets || [])
+    .map((asset) => asset.projectId === project.id && asset.projectName === project.name
+      ? asset
+      : { ...asset, projectId: project.id, projectName: project.name })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name, "zh-CN", { numeric: true }));
   const counts = { all: assets.length, text: 0, image: 0, audio: 0, video: 0 };
   const smartCounts = { asset: 0, review: 0, noise: 0 };
   for (const asset of assets) {
@@ -1575,8 +1645,72 @@ async function listLibraryAssets(projectId) {
     assets,
     counts,
     smartCounts,
-    settings: config.assetManager,
+    settings,
+    index: {
+      mode,
+      initializedAt: entry?.initializedAt || "",
+      updatedAt: entry?.updatedAt || "",
+      persistent: true,
+    },
   };
+}
+
+async function rebuildLibraryIndex(project, config, mode = "initial-scan") {
+  const candidates = [];
+  for (const folder of project.folders) await walkLibrary(folder, candidates);
+  for (const [filePath, assignedProjectId] of Object.entries(config.assetAssignments || {})) {
+    if (assignedProjectId === project.id && supportedAssetExts.has(path.extname(filePath).toLowerCase())) candidates.push(filePath);
+  }
+  const assets = await buildLibraryAssets(project, config, candidates);
+  const entry = await assetLibraryIndex.replaceProject(project, assets);
+  invalidateLibraryResponseCache(project.id);
+  return createLibraryResult(project, entry, config.assetManager, mode);
+}
+
+async function reconcileIndexedProject(project, config, entry) {
+  const existingPaths = entry.assets.map(indexedAssetPath).filter(Boolean);
+  const existingIds = new Set(entry.assets.map((asset) => String(asset.id)));
+  const removeIds = entry.assets
+    .filter((asset) => {
+      const filePath = indexedAssetPath(asset);
+      return !filePath || !projectContainsAsset(project, filePath, config);
+    })
+    .map((asset) => String(asset.id));
+  const addedFolders = project.folders.filter((folder) => !entry.folders.includes(path.resolve(folder)));
+  const candidates = [];
+  for (const folder of addedFolders) await walkLibrary(folder, candidates);
+  for (const [filePath, assignedProjectId] of Object.entries(config.assetAssignments || {})) {
+    const id = encodeAssetRef(filePath);
+    if (assignedProjectId === project.id && !existingIds.has(id)) candidates.push(filePath);
+  }
+  const upserts = await buildLibraryAssets(project, config, candidates, [...existingPaths, ...candidates]);
+  if (!removeIds.length && !upserts.length && sameAssetIndexFolders(entry.folders, project.folders)) return entry;
+  const patched = await assetLibraryIndex.patchProject(project, {
+    upserts,
+    removeIds,
+    folders: project.folders,
+  });
+  invalidateLibraryResponseCache(project.id);
+  return patched;
+}
+
+async function listLibraryAssets(projectId, { force = false } = {}) {
+  const config = await loadConfig();
+  const project = config.projects.find((item) => item.id === projectId) || config.projects[0];
+  if (!project) return {
+    project: null,
+    assets: [],
+    counts: { all: 0, text: 0, image: 0, audio: 0, video: 0 },
+    smartCounts: { asset: 0, review: 0, noise: 0 },
+    settings: config.assetManager,
+    index: { mode: "empty", initializedAt: "", updatedAt: "", persistent: true },
+  };
+  if (force) return rebuildLibraryIndex(project, config, "manual-rescan");
+  const existing = await assetLibraryIndex.getProject(project.id);
+  if (!existing) return rebuildLibraryIndex(project, config, "initial-scan");
+  const entry = await reconcileIndexedProject(project, config, existing);
+  const mode = sameAssetIndexFolders(existing.folders, project.folders) ? "persistent" : "folder-incremental";
+  return createLibraryResult(project, entry, config.assetManager, mode);
 }
 
 async function assignAssetToProject(body = {}) {
@@ -1585,6 +1719,7 @@ async function assignAssetToProject(body = {}) {
   const target = config.projects.find((project) => project.id === body.targetProjectId);
   if (!target) throw new Error("目标项目不存在");
   await updateConfig((draft) => { draft.assetAssignments[filePath] = target.id; });
+  await enqueueAssetIndexUpdate([filePath]);
   notifyClients("asset-change");
   return { assetId: encodeAssetRef(filePath), targetProjectId: target.id, movedFile: false };
 }
@@ -1595,6 +1730,7 @@ async function clearAssetProjectAssignment(body = {}) {
   const previousProjectId = config.assetAssignments[filePath] || "";
   if (!previousProjectId) return { assetId: encodeAssetRef(filePath), removed: false };
   await updateConfig((draft) => { delete draft.assetAssignments[filePath]; });
+  await enqueueAssetIndexUpdate([filePath]);
   notifyClients("asset-change");
   return { assetId: encodeAssetRef(filePath), removed: true, previousProjectId };
 }
@@ -1640,6 +1776,7 @@ async function renameLibraryAsset(body = {}) {
       delete draft.assetMetadata[filePath];
     }
   });
+  await enqueueAssetIndexUpdate([filePath, nextPath]);
   notifyClients("asset-change");
   return { assetId: encodeAssetRef(nextPath), name: path.basename(nextPath), previousName: path.basename(filePath) };
 }
@@ -1657,6 +1794,7 @@ async function deleteLibraryAsset(body = {}) {
     delete draft.assetAssignments[filePath];
     delete draft.assetMetadata[filePath];
   });
+  await enqueueAssetIndexUpdate([filePath]);
   notifyClients("asset-change");
   return { deleted: true, name: path.basename(filePath), recoverable: false };
 }
@@ -1681,6 +1819,7 @@ async function saveTextAsset(body = {}) {
     await fs.writeFile(tempPath, content, "utf8");
   }
   await fs.rename(tempPath, filePath);
+  await enqueueAssetIndexUpdate([filePath]);
   notifyClients("asset-change");
   return { saved: true, assetId: encodeAssetRef(filePath), size: (await fs.stat(filePath)).size };
 }
@@ -1694,6 +1833,7 @@ async function updateLibraryAssetMetadata(body = {}) {
     smartGroup: ["asset", "review", "noise"].includes(body.smartGroup) ? body.smartGroup : "",
   };
   await updateConfig((draft) => { draft.assetMetadata[filePath] = metadata; });
+  await enqueueAssetIndexUpdate([filePath]);
   notifyClients("asset-change");
   return metadata;
 }
@@ -2113,6 +2253,11 @@ async function syncCodexPromptAssociations() {
     if (Object.keys(assignments).length) {
       await updateConfig((draft) => Object.assign(draft.assetAssignments, assignments));
     }
+    const indexedChanges = [...new Set([
+      ...synced.importedAssociations.map((association) => association.assetPath),
+      ...Object.keys(assignments),
+    ].filter(Boolean))];
+    if (indexedChanges.length) await enqueueAssetIndexUpdate(indexedChanges);
     if (synced.imported || Object.keys(assignments).length || projectSync.changed) notifyClients("asset-change");
   } catch (error) {
     console.warn("Codex prompt association:", error.message);
@@ -2129,9 +2274,69 @@ function notifyClients(event = "asset-change") {
   }
 }
 
-function scheduleNotify() {
-  if (watchTimer) clearTimeout(watchTimer);
-  watchTimer = setTimeout(() => notifyClients(), 600);
+async function syncAssetIndexPaths(changedPaths = []) {
+  const paths = [...new Set(changedPaths.map((filePath) => path.resolve(String(filePath || ""))).filter(Boolean))];
+  if (!paths.length) return { paths: 0, projects: 0 };
+  const config = await loadConfig();
+  const expanded = [];
+  for (const changedPath of paths) {
+    const stats = await fs.lstat(changedPath).catch(() => null);
+    if (stats?.isDirectory() && !stats.isSymbolicLink()) {
+      const candidates = [];
+      await walkLibrary(changedPath, candidates);
+      expanded.push({ changedPath, candidates, removePrefix: changedPath });
+    } else if (stats?.isFile() && !stats.isSymbolicLink() && supportedAssetExts.has(path.extname(changedPath).toLowerCase())) {
+      expanded.push({ changedPath, candidates: [changedPath], removePrefix: "" });
+    } else {
+      expanded.push({ changedPath, candidates: [], removePrefix: changedPath });
+    }
+  }
+
+  let updatedProjects = 0;
+  for (const project of config.projects) {
+    const entry = await assetLibraryIndex.getProject(project.id);
+    if (!entry) continue;
+    const existingPaths = entry.assets.map(indexedAssetPath).filter(Boolean);
+    const affected = expanded.some(({ changedPath, candidates, removePrefix }) =>
+      candidates.some((candidate) => projectContainsAsset(project, candidate, config))
+        || existingPaths.some((filePath) => filePath === changedPath || (removePrefix && isPathInside(removePrefix, filePath))));
+    if (!affected) continue;
+
+    const candidates = expanded.flatMap((change) => change.candidates)
+      .filter((filePath) => projectContainsAsset(project, filePath, config));
+    const removeIds = expanded.map(({ changedPath }) => encodeAssetRef(changedPath));
+    const removePrefixes = expanded.map(({ removePrefix }) => removePrefix).filter(Boolean);
+    const retainedContext = existingPaths.filter((filePath) =>
+      !removePrefixes.some((prefix) => filePath === prefix || isPathInside(prefix, filePath)));
+    const upserts = await buildLibraryAssets(project, config, candidates, [...retainedContext, ...candidates]);
+    await assetLibraryIndex.patchProject(project, {
+      upserts,
+      removeIds,
+      removePrefixes,
+      folders: project.folders,
+    });
+    invalidateLibraryResponseCache(project.id);
+    updatedProjects += 1;
+  }
+  return { paths: paths.length, projects: updatedProjects };
+}
+
+function enqueueAssetIndexUpdate(paths) {
+  const operation = assetIndexUpdateQueue.then(() => syncAssetIndexPaths(paths));
+  assetIndexUpdateQueue = operation.then(() => undefined, () => undefined);
+  return operation;
+}
+
+function scheduleAssetIndexUpdate(changedPath) {
+  pendingWatchPaths.add(path.resolve(changedPath));
+  if (watchFlushTimer) clearTimeout(watchFlushTimer);
+  watchFlushTimer = setTimeout(() => {
+    const paths = [...pendingWatchPaths];
+    pendingWatchPaths.clear();
+    enqueueAssetIndexUpdate(paths)
+      .then(() => notifyClients("asset-change"))
+      .catch((error) => console.warn("Asset index update:", error.message));
+  }, 450);
 }
 
 async function runDuplicateSweep() {
@@ -2147,15 +2352,24 @@ async function runDuplicateSweep() {
 
 async function ensureWatchers() {
   const config = await loadConfig();
+  const desiredRoots = new Set(config.projects.flatMap((project) => project.folders.map((folder) => path.resolve(folder))));
+  for (const [watchRoot, watcher] of watcherHandles) {
+    if (desiredRoots.has(watchRoot)) continue;
+    watcher.close();
+    watcherHandles.delete(watchRoot);
+  }
   for (const project of config.projects) {
     for (const watchRoot of project.folders) {
-      if (!await exists(watchRoot)) continue;
-      if (watcherHandles.has(watchRoot)) continue;
+      const resolvedWatchRoot = path.resolve(watchRoot);
+      if (!await exists(resolvedWatchRoot)) continue;
+      if (watcherHandles.has(resolvedWatchRoot)) continue;
       try {
-        const watcher = watch(watchRoot, { recursive: true }, (_eventType, filename) => {
-          scheduleNotify();
+        const watcher = watch(resolvedWatchRoot, { recursive: true }, (_eventType, filename) => {
+          const changedPath = filename
+            ? path.resolve(resolvedWatchRoot, String(filename))
+            : resolvedWatchRoot;
+          scheduleAssetIndexUpdate(changedPath);
           if (!filename) return;
-          const changedPath = path.resolve(watchRoot, String(filename));
           duplicateCleaner.schedule({
             filePath: changedPath,
             project,
@@ -2164,12 +2378,12 @@ async function ensureWatchers() {
           });
         });
         watcher.on("error", (error) => {
-          console.warn(`Asset watcher error (${watchRoot}):`, error.message);
+          console.warn(`Asset watcher error (${resolvedWatchRoot}):`, error.message);
         });
-        watcherHandles.set(watchRoot, watcher);
-        console.log(`Watching assets: ${watchRoot}`);
+        watcherHandles.set(resolvedWatchRoot, watcher);
+        console.log(`Watching assets: ${resolvedWatchRoot}`);
       } catch (error) {
-        console.warn(`Asset watcher unavailable (${watchRoot}):`, error.message);
+        console.warn(`Asset watcher unavailable (${resolvedWatchRoot}):`, error.message);
       }
     }
   }
@@ -2394,13 +2608,15 @@ const server = createServer(async (req, res) => {
 
     if (url.pathname === "/api/library" && req.method === "GET") {
       const projectId = url.searchParams.get("project") || "";
-      const library = await libraryScanCoordinator.run(projectId, () => listLibraryAssets(projectId));
-      sendJson(res, filterLibraryResult(library, {
+      const force = url.searchParams.get("rescan") === "1";
+      const library = await libraryScanCoordinator.run(projectId, () => listLibraryAssets(projectId, { force }));
+      const filters = {
         kind: url.searchParams.get("kind") || "",
         category: url.searchParams.get("category") || "",
         smartGroup: url.searchParams.get("smartGroup") || "",
         query: url.searchParams.get("query") || "",
-      }));
+      };
+      sendJsonBuffer(res, cachedLibraryResponse(library, filters));
       return;
     }
 
@@ -2418,6 +2634,7 @@ const server = createServer(async (req, res) => {
       const config = await loadConfig();
       const { filePath } = await resolveManagedAsset(config, body.assetId);
       const association = await promptAssociations.register({ ...body, assetPath: filePath });
+      await enqueueAssetIndexUpdate([filePath]);
       notifyClients("asset-change");
       sendJson(res, { ok: true, association });
       return;
