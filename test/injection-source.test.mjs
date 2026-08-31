@@ -11,6 +11,21 @@ test("injection uses stable Codex sidebar and tooltip anchors", () => {
   assert.match(source, /role=\\?"tooltip/);
 });
 
+test("workspace menu pages stay in a shared side panel and accept conversation commands", () => {
+  assert.match(source, /data-codex-workspace-side-panel/);
+  assert.match(source, /function workspaceCommand\(value\)/);
+  assert.match(source, /routeWorkspaceCommand/);
+  assert.match(source, /typeof api\?\.search === "function"\) void api\.search\(command\.query\)/);
+  assert.match(source, /setSkillCatalog/);
+  assert.match(source, /添加到对话/);
+  assert.match(source, /codex-asset-console-close[\s\S]{0,520}-webkit-app-region:\s*no-drag/);
+  assert.match(source, /codex-asset-console-close[\s\S]{0,420}pointer-events:\s*auto/);
+  assert.match(source, /function setAssetConsoleHostLayer\(active\)/);
+  assert.match(source, /host\.style\.setProperty\("z-index", "40"\)/);
+  assert.match(source, /action: "search", query: pendingAssetConsoleQuery/);
+  assert.doesNotMatch(source, /Array\.from\(mount\.surface\.children\)[\s\S]{0,180}CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE/);
+});
+
 test("hover previews contain all requested fields and clamp message bodies to three lines", () => {
   assert.match(source, /核心总结/);
   assert.match(source, /最近输入/);
@@ -30,6 +45,19 @@ test("injection is idempotent and reversible", () => {
 test("renderer receives host-pushed previews without a local HTTP fetch", () => {
   assert.match(source, /setPreviews/);
   assert.doesNotMatch(source, /fetch\s*\(/);
+});
+
+test("recovered history is host-pushed into the native conversation flow and renders text safely", () => {
+  assert.match(source, /setConversationHistory/);
+  assert.match(source, /data-thread-find-target/);
+  assert.match(source, /data-user-message-bubble/);
+  assert.match(source, /data-local-conversation-final-assistant/);
+  assert.match(source, /data-codex-recovered-history-flow/);
+  assert.match(source, /body\.textContent = recoveredMessageDisplayText\(message\.text\)/);
+  assert.doesNotMatch(source, /body\.innerHTML = message\.text/);
+  assert.doesNotMatch(source, /codex-complete-history-page/);
+  assert.doesNotMatch(source, /搜索这次任务的全部对话/);
+  assert.doesNotMatch(source, /返回实时对话/);
 });
 
 test("sidebar groups use accessible tabs and preserve native project actions", () => {

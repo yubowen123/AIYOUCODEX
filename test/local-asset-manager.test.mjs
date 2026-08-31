@@ -25,7 +25,19 @@ test("local asset cards implement media-specific interactions", async () => {
   assert.match(source, /mouseenter/);
   assert.match(source, /requestFullscreen/);
   assert.match(source, /dblclick/);
+  const doubleClickHandlers = source.match(/card\.addEventListener\("dblclick",[\s\S]*?\n  \}\);/g) || [];
+  assert.equal(doubleClickHandlers.length, 4);
+  doubleClickHandlers.forEach((handler) => assert.match(handler, /useAssetInCodex\(asset\)/));
+  assert.match(source, /data-action="preview"/);
+  assert.match(source, /function previewAsset/);
   assert.match(source, /saveTextAsset/);
+  assert.match(source, /data-action="use-in-codex"/);
+  assert.match(source, /function useAssetInCodex/);
+  assert.match(source, /action: "use-in-codex"/);
+  assert.match(source, /action === "asset-added" \|\| message\.action === "assets-added"/);
+  assert.match(source, /action === "asset-add-failed"/);
+  assert.match(source, /正在添加到 Codex 对话/);
+  assert.match(source, /message\.action === "search"/);
 });
 
 test("local asset manager reads a persistent index and reserves full scans for the repair button", async () => {

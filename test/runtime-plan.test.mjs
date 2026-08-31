@@ -15,7 +15,7 @@ test("runtime starts the sidebar, pinned Taskboard, and Asset Console together",
     environment: {},
   });
 
-  assert.equal(TASKBOARD_VERSION, "0.1.0-codexoptimiz.20260813");
+  assert.equal(TASKBOARD_VERSION, "0.2.0-codexoptimiz.20260831");
   assert.equal(plan.children.length, 3);
   assert.deepEqual(plan.children[0].args, [path.posix.join(root, "scripts", "injector.mjs"), "--port", "9231", "--watch"]);
   assert.deepEqual(plan.children[1].args, [

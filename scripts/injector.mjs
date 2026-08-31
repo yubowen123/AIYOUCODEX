@@ -15,6 +15,7 @@ import {
 import { createDesktopAppRuntime } from "../lib/desktop-runtime.mjs";
 import { readActiveTaskThreads } from "../lib/taskboard-status.mjs";
 import { AssetConsoleBridge } from "../lib/asset-console-bridge.mjs";
+import { readInstalledSkillCatalog } from "../lib/skill-catalog.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(root, "inject", "conversation-preview.user.js");
@@ -47,6 +48,9 @@ let stopped = false;
 let attachedTargetId = null;
 let client = null;
 let registeredScriptIdentifier = null;
+let deliveredHistoryKey = "";
+let skillCatalog = [];
+let nextSkillCatalogRefreshAt = 0;
 const desktopAppRecovery = new DesktopAppRecovery();
 const desktopAppRuntime = createDesktopAppRuntime();
 const assetConsoleBridge = new AssetConsoleBridge({
@@ -62,6 +66,7 @@ async function closeClient() {
   if (assetConsoleBridge.client === closingClient) await assetConsoleBridge.dispose();
   closingClient?.close();
   if (client === closingClient) client = null;
+  deliveredHistoryKey = "";
 }
 
 async function attach() {
@@ -108,9 +113,42 @@ async function attach() {
   return true;
 }
 
+async function readActiveConversationContext() {
+  if (!client || !attachedTargetId) return { threadId: "", title: "" };
+  return client.evaluate(`(() => {
+    const active = document.querySelector('[data-app-action-sidebar-thread-active="true"], [data-app-action-sidebar-thread-selected="true"], [data-app-action-sidebar-thread-row][aria-current="page"]');
+    return {
+      threadId: active?.getAttribute('data-app-action-sidebar-thread-id') || '',
+      title: active?.getAttribute('data-app-action-sidebar-thread-title') || '',
+    };
+  })()`);
+}
+
+async function pushConversationHistory(activeContext = null) {
+  if (!client || !attachedTargetId) return;
+  const context = activeContext || await readActiveConversationContext();
+  let conversationHistory = null;
+  try {
+    if (context?.threadId) {
+      conversationHistory = await repository.readConversationHistory(context.threadId, context.title);
+    }
+  } catch {}
+  const lastMessage = conversationHistory?.messages?.at(-1);
+  const historyKey = conversationHistory
+    ? `${attachedTargetId}:${conversationHistory.threadId}:${conversationHistory.totalCount}:${lastMessage?.id || lastMessage?.timestamp || ""}`
+    : `${attachedTargetId}:none`;
+  if (historyKey === deliveredHistoryKey) return;
+  deliveredHistoryKey = historyKey;
+  await client.evaluate(`window.__codexConversationPreviewInjection__?.setConversationHistory?.(${JSON.stringify(conversationHistory)})`);
+}
+
 async function pushPreviews() {
   if (!client || !attachedTargetId) return;
-  const [requests, recentCatalog, pinnedThreadIds, taskboardStatus] = await Promise.all([
+  if (!skillCatalog.length || Date.now() >= nextSkillCatalogRefreshAt) {
+    skillCatalog = await readInstalledSkillCatalog();
+    nextSkillCatalogRefreshAt = Date.now() + 5 * 60_000;
+  }
+  const [requests, activeContext, recentCatalog, pinnedThreadIds, taskboardStatus] = await Promise.all([
     client.evaluate(`(() => {
       const seen = new Set();
       const allPanel = document.getElementById('codex-sidebar-all-projects');
@@ -128,6 +166,7 @@ async function pushPreviews() {
         return [{ key, id, title }];
       });
     })()`),
+    readActiveConversationContext(),
     repository.readRecentCatalog(),
     repository.readPinnedThreadIds(),
     readActiveTaskThreads(),
@@ -164,7 +203,9 @@ async function pushPreviews() {
     api?.setInterruptedCatalog?.(${JSON.stringify(interruptedCatalog)});
     api?.setPinnedThreads?.(${JSON.stringify(pinnedThreadIds)});
     api?.setActiveProjectThreads?.(${JSON.stringify(taskboardStatus.activeThreadIds)});
+    api?.setSkillCatalog?.(${JSON.stringify(skillCatalog)});
   })()`);
+  await pushConversationHistory(activeContext);
 }
 
 async function stop() {
@@ -181,11 +222,17 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
   });
 }
 
+let nextFullRefreshAt = 0;
 try {
   while (!stopped) {
     try {
-      await attach();
-      await pushPreviews();
+      const attached = await attach();
+      if (attached || Date.now() >= nextFullRefreshAt) {
+        await pushPreviews();
+        nextFullRefreshAt = Date.now() + 5_000;
+      } else {
+        await pushConversationHistory();
+      }
     } catch (error) {
       attachedTargetId = null;
       registeredScriptIdentifier = null;
@@ -193,7 +240,7 @@ try {
       if (!options.watch) throw error;
     }
     if (!options.watch) break;
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
 } finally {
   if (!options.watch) await stop();

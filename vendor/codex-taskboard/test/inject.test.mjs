@@ -31,7 +31,7 @@ test("embedded page uses the local taskboard URL and supports a runtime override
   assert.match(source, /taskboardServiceOrigin = taskboardUrl\.origin/);
 });
 
-test("loopback Taskboard stays in the full embedded workspace instead of a side panel", () => {
+test("loopback Taskboard stays embedded in Codex as a side panel", () => {
   const prepareSource = source.slice(
     source.indexOf("async function prepareTaskboard"),
     source.indexOf("function restoreNativeContent"),
@@ -44,11 +44,11 @@ test("loopback Taskboard stays in the full embedded workspace instead of a side 
   assert.match(prepareSource, /await waitForFrameReady\(\)/);
 });
 
-test("entry clones the native Plugins row and the page covers the complete Codex workspace", () => {
+test("entry clones the native Plugins row and mounts a resizable side panel", () => {
   assert.match(source, /const PLUGIN_LABELS = \["插件", "plugins"\]/);
   assert.match(source, /const ENTRY_LABEL = "项目管理"/);
-  assert.match(source, /if \(siblings\.length >= 3\) return plugin;/);
-  assert.match(source, /return directButtons\.length >= 3/);
+  assert.match(source, /pluginGroup && directShortcutButtons\(pluginGroup\)\.length >= 3/);
+  assert.match(source, /return directShortcutButtons\(group\)\.at\(-1\)/);
   assert.match(source, /const button = reference\.cloneNode\(true\)/);
   assert.match(source, /button\.setAttribute\("aria-label", `打开\$\{ENTRY_LABEL\}`\)/);
   assert.match(source, /button\.setAttribute\("title", ENTRY_LABEL\)/);
@@ -57,23 +57,20 @@ test("entry clones the native Plugins row and the page covers the complete Codex
   assert.match(source, /document\.querySelector\("\.app-shell-main-content-frame"\)/);
   assert.match(source, /const surface = viewport\?\.parentElement/);
   assert.match(source, /surface\.appendChild\(page\)/);
-  assert.match(source, /#\$\{PAGE_ID\} \{[\s\S]*?top: 0;/);
-  assert.doesNotMatch(source, /--codex-taskboard-top-offset/);
-  assert.match(source, /child\.setAttribute\(HIDDEN_ATTRIBUTE, "true"\)/);
+  assert.match(source, /#\$\{PAGE_ID\} \{[\s\S]*?flex: 0 0 var\(--codex-taskboard-panel-width/);
+  assert.match(source, /PANEL_WIDTH_KEY/);
+  const mountSource = source.slice(source.indexOf("function mountActivePage"), source.indexOf("function closeTaskboard"));
+  assert.doesNotMatch(mountSource, /HIDDEN_ATTRIBUTE|hideNativeHeader|muteNativeSelection/);
   assert.match(source, /page\.hidden = false/);
   assert.doesNotMatch(source, /codex-taskboard-overlay/);
   assert.doesNotMatch(source, /codex-taskboard-toolbar/);
   assert.doesNotMatch(source, /aria-modal/);
 });
 
-test("opening Taskboard suppresses native selection and contextual header until close", () => {
-  assert.match(source, /aside nav\[role="navigation"\] \[aria-current\]/);
-  assert.match(source, /node\.removeAttribute\("aria-current"\)/);
-  assert.match(source, /NATIVE_SELECTED_ATTRIBUTE/);
-  assert.match(source, /app-shell-header-context-menu-surface/);
-  assert.match(source, /restoreNativeSelection\(\)/);
-  assert.match(source, /function onDocumentClick[\s\S]*closeTaskboard\(false\);/);
-  assert.doesNotMatch(source, /setTimeout\(\(\) => closeTaskboard\(false\), 0\)/);
+test("native navigation keeps the Taskboard side panel open and refreshes its context", () => {
+  assert.match(source, /function onDocumentClick[\s\S]*setTimeout\(postHostContext, REATTACH_DELAY_MS\)/);
+  assert.match(source, /function onNativeRouteChange[\s\S]*setTimeout\(postHostContext, REATTACH_DELAY_MS\)/);
+  assert.match(source, /window\.postMessage\(\{ type: PANEL_EVENT, panel: "taskboard" \}/);
 });
 
 test("the embedded header fills the native titlebar without clipping or a full-page no-drag region", () => {
