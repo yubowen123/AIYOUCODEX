@@ -43,3 +43,22 @@ test("asset index folder comparison is order independent and path normalized", (
   assert.equal(sameAssetIndexFolders(["/a", "/b/../b"], ["/b", "/a"]), true);
   assert.equal(sameAssetIndexFolders(["/a"], ["/a", "/b"]), false);
 });
+
+test("multiple project patches are persisted by one atomic mutation", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codex-asset-index-batch-"));
+  const filePath = path.join(root, ".asset-library-index.json");
+  const projects = ["first", "second"].map((id) => ({ id, name: id, folders: [path.join(root, id)] }));
+  try {
+    const index = new PersistentAssetIndex({ filePath });
+    await Promise.all(projects.map((project) => index.replaceProject(project, [])));
+    const results = await index.patchProjects(projects.map((project) => ({
+      project,
+      patch: { upserts: [{ id: `${project.id}-asset`, sourcePath: path.join(project.folders[0], "asset.png") }] },
+    })));
+    assert.equal(results.length, 2);
+    assert.equal((await index.getProject("first")).assets.length, 1);
+    assert.equal((await index.getProject("second")).assets.length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

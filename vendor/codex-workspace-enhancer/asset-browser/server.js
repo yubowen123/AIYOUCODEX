@@ -17,6 +17,14 @@ import { readImageDimensions } from "./image-dimensions.js";
 import { createAssetScanCoordinator } from "./asset-scan-coordinator.js";
 import { filterLibraryResult } from "./asset-library-filter.js";
 import { PersistentAssetIndex, sameAssetIndexFolders } from "./persistent-asset-index.js";
+import {
+  changeAffectsProject,
+  CoalescingPathUpdateQueue,
+  createPathPrefixMatcher,
+  isIgnoredAssetPath,
+  isIgnoredAssetPathWithinRoots,
+  yieldToEventLoop,
+} from "./asset-index-update-utils.js";
 import { CodexPromptAssociationStore } from "./codex-prompt-associations.js";
 import {
   CodexProductionProjectSync,
@@ -65,7 +73,6 @@ const pendingWatchPaths = new Set();
 const libraryResponseCache = new Map();
 const MAX_LIBRARY_RESPONSE_CACHE_ENTRIES = 4;
 let watchFlushTimer = null;
-let assetIndexUpdateQueue = Promise.resolve();
 const downloadAutomation = new DownloadAutomation({ ledgerPath });
 const generationPipeline = new GenerationPipeline({
   registryPath: generationRegistryPath,
@@ -1330,8 +1337,9 @@ async function walkLibrary(directory, files, limit = 30000) {
   }
   for (const entry of entries) {
     if (files.length >= limit) return;
-    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    if (entry.name.startsWith(".")) continue;
     const filePath = path.join(directory, entry.name);
+    if (isIgnoredAssetPath(filePath, directory)) continue;
     if (entry.isDirectory() && !entry.isSymbolicLink()) {
       await walkLibrary(filePath, files, limit);
     } else if (entry.isFile() && supportedAssetExts.has(path.extname(entry.name).toLowerCase())) {
@@ -2275,11 +2283,14 @@ function notifyClients(event = "asset-change") {
 }
 
 async function syncAssetIndexPaths(changedPaths = []) {
-  const paths = [...new Set(changedPaths.map((filePath) => path.resolve(String(filePath || ""))).filter(Boolean))];
-  if (!paths.length) return { paths: 0, projects: 0 };
   const config = await loadConfig();
+  const watchRoots = config.projects.flatMap((project) => project.folders);
+  const paths = [...new Set(changedPaths.map((filePath) => path.resolve(String(filePath || ""))).filter(Boolean))]
+    .filter((filePath) => !isIgnoredAssetPathWithinRoots(filePath, watchRoots));
+  if (!paths.length) return { paths: 0, projects: 0 };
   const expanded = [];
-  for (const changedPath of paths) {
+  for (let index = 0; index < paths.length; index += 1) {
+    const changedPath = paths[index];
     const stats = await fs.lstat(changedPath).catch(() => null);
     if (stats?.isDirectory() && !stats.isSymbolicLink()) {
       const candidates = [];
@@ -2290,41 +2301,43 @@ async function syncAssetIndexPaths(changedPaths = []) {
     } else {
       expanded.push({ changedPath, candidates: [], removePrefix: changedPath });
     }
+    if (index > 0 && index % 128 === 0) await yieldToEventLoop();
   }
 
-  let updatedProjects = 0;
+  const projectPatches = [];
   for (const project of config.projects) {
     const entry = await assetLibraryIndex.getProject(project.id);
     if (!entry) continue;
     const existingPaths = entry.assets.map(indexedAssetPath).filter(Boolean);
-    const affected = expanded.some(({ changedPath, candidates, removePrefix }) =>
-      candidates.some((candidate) => projectContainsAsset(project, candidate, config))
-        || existingPaths.some((filePath) => filePath === changedPath || (removePrefix && isPathInside(removePrefix, filePath))));
-    if (!affected) continue;
+    const relevantChanges = expanded.filter((change) => changeAffectsProject(project, change, config.assetAssignments));
+    if (!relevantChanges.length) continue;
 
-    const candidates = expanded.flatMap((change) => change.candidates)
+    const candidates = relevantChanges.flatMap((change) => change.candidates)
       .filter((filePath) => projectContainsAsset(project, filePath, config));
-    const removeIds = expanded.map(({ changedPath }) => encodeAssetRef(changedPath));
-    const removePrefixes = expanded.map(({ removePrefix }) => removePrefix).filter(Boolean);
+    const removeIds = relevantChanges.map(({ changedPath }) => encodeAssetRef(changedPath));
+    const removePrefixes = relevantChanges.map(({ removePrefix }) => removePrefix).filter(Boolean);
+    const matchesRemovedPrefix = createPathPrefixMatcher(removePrefixes);
+    const candidateDirectories = new Set(candidates.map((filePath) => path.dirname(filePath)));
     const retainedContext = existingPaths.filter((filePath) =>
-      !removePrefixes.some((prefix) => filePath === prefix || isPathInside(prefix, filePath)));
+      candidateDirectories.has(path.dirname(filePath)) && !matchesRemovedPrefix(filePath));
     const upserts = await buildLibraryAssets(project, config, candidates, [...retainedContext, ...candidates]);
-    await assetLibraryIndex.patchProject(project, {
-      upserts,
-      removeIds,
-      removePrefixes,
-      folders: project.folders,
+    projectPatches.push({
+      project,
+      patch: { upserts, removeIds, removePrefixes, folders: project.folders },
     });
-    invalidateLibraryResponseCache(project.id);
-    updatedProjects += 1;
+    await yieldToEventLoop();
   }
-  return { paths: paths.length, projects: updatedProjects };
+  if (projectPatches.length) {
+    await assetLibraryIndex.patchProjects(projectPatches);
+    projectPatches.forEach(({ project }) => invalidateLibraryResponseCache(project.id));
+  }
+  return { paths: paths.length, projects: projectPatches.length };
 }
 
+const assetIndexUpdateQueue = new CoalescingPathUpdateQueue(syncAssetIndexPaths);
+
 function enqueueAssetIndexUpdate(paths) {
-  const operation = assetIndexUpdateQueue.then(() => syncAssetIndexPaths(paths));
-  assetIndexUpdateQueue = operation.then(() => undefined, () => undefined);
-  return operation;
+  return assetIndexUpdateQueue.enqueue(paths);
 }
 
 function scheduleAssetIndexUpdate(changedPath) {
@@ -2342,6 +2355,7 @@ function scheduleAssetIndexUpdate(changedPath) {
 async function runDuplicateSweep() {
   try {
     const config = await loadConfig();
+    if (!config.deduplication.automaticSweep) return;
     const result = await duplicateCleaner.sweepProjects(config.projects, config.deduplication);
     if (result.quarantined.length || result.purged.length) notifyClients("deduplication-change");
     if (result.quarantined.length) console.log(`Exact duplicate images quarantined: ${result.quarantined.length}`);
@@ -2365,9 +2379,9 @@ async function ensureWatchers() {
       if (watcherHandles.has(resolvedWatchRoot)) continue;
       try {
         const watcher = watch(resolvedWatchRoot, { recursive: true }, (_eventType, filename) => {
-          const changedPath = filename
-            ? path.resolve(resolvedWatchRoot, String(filename))
-            : resolvedWatchRoot;
+          if (!filename) return;
+          const changedPath = path.resolve(resolvedWatchRoot, String(filename));
+          if (isIgnoredAssetPath(changedPath, resolvedWatchRoot)) return;
           scheduleAssetIndexUpdate(changedPath);
           if (!filename) return;
           duplicateCleaner.schedule({

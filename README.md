@@ -1,6 +1,10 @@
-# Codex Sidebar Enhancer
+# AIYOUcodex
 
-一个面向 macOS 与 Windows Codex 桌面体验的本地工作台增强工具。它为对话增加摘要、最近消息预览、双列卡片、项目标签搜索、最近使用排序和额度展示，并默认集成本地项目管理看板、Skills 分组和多媒体资产库，同时不修改应用包或对话正文。
+AIYOUcodex 是一套面向 macOS 与 Windows Codex 桌面体验的本地交互工作台。它为对话增加摘要、最近消息预览、双列卡片、项目标签搜索、最近使用排序和额度展示，并默认集成本地项目管理看板、Skills 分组和多媒体资产库，同时不修改应用包或对话正文。
+
+GitHub 开源地址：[https://github.com/yubowen123/AIYOUCODEX](https://github.com/yubowen123/AIYOUCODEX)
+
+![AIYOUcodex 全项目核心能力知识卡片](.github/assets/AIYOUcodex-core-capabilities-4K.png)
 
 当前发行版：**v1.4.0**。项目管理、Skills 分组、本地资产库、快捷入口设置及对应的 macOS/Windows 后台运行时会作为同一安装包更新，不需要分别安装。
 
@@ -11,15 +15,15 @@ v1.4.0 将菜单功能统一为不打断对话的右侧面板：可以直接在�
 在 PowerShell 中粘贴并回车：
 
 ```powershell
-irm https://raw.githubusercontent.com/yubowen123/codex-sidebar-enhancer/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/yubowen123/AIYOUCODEX/main/install.ps1 | iex
 ```
 
 Windows 安装器会自动：
 
-1. 安装到 `%LOCALAPPDATA%\Codex Sidebar Enhancer`；
+1. 安装到兼容目录 `%LOCALAPPDATA%\Codex Sidebar Enhancer`，升级时复用已有配置与数据；
 2. 优先复用 Node.js 22.5+；本机缺少时，从 Node.js 官网下载对应架构的便携版 Node 22，并校验 SHA-256；
 3. 安装固定版本的本地项目管理看板、Skills 分组层和资产控制台，并在当前用户的“启动”目录创建隐藏后台运行时快捷方式，登录后自动恢复；
-4. 在开始菜单创建 **Codex Sidebar Enhancer** 启动器；
+4. 在开始菜单创建 **AIYOUcodex** 启动器，并自动移除旧名称的启动快捷方式；
 5. 用本地回环调试端口启动 Codex/ChatGPT。首次启用时，如果应用正在运行，会先询问是否重启一次。
 
 以后可照常打开 Codex/ChatGPT；后台注入器发现普通启动没有增强端口时，会自动纠正启动方式。无需管理员权限。
@@ -31,18 +35,18 @@ Windows 安装器会自动：
 在“终端”中粘贴并回车：
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/yubowen123/codex-sidebar-enhancer/main/install.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/yubowen123/AIYOUCODEX/main/install.sh)"
 ```
 
 安装器会自动：
 
-1. 下载到 `~/Library/Application Support/Codex Sidebar Enhancer`；
+1. 下载到兼容目录 `~/Library/Application Support/Codex Sidebar Enhancer`，升级时复用已有配置与数据；
 2. 使用系统 Node.js，或 Codex/ChatGPT 桌面应用内置的 Node.js；
 3. 安装固定版本的本地项目管理看板、Skills 分组层、资产控制台和用户级 LaunchAgent，登录和应用重启后自动恢复；若检测到桌面应用未带增强端口启动，会自动正常退出并重开一次；
-4. 在 `~/Applications` 创建 **Codex Sidebar Enhancer.app** 启动器；
+4. 在 `~/Applications` 创建 **AIYOUcodex.app** 启动器，并自动移除旧名称的启动器；
 5. 打开启动器。首次启用时，如 Codex 正在运行，会重启一次以挂载增强界面。
 
-以后可以照常打开 Codex/ChatGPT；后台增强会在缺少本地调试端口时自动纠正启动方式。也可从 Spotlight、访达的“应用程序”或 `~/Applications` 直接打开 **Codex Sidebar Enhancer**。注入器只连接 `127.0.0.1:9231`。
+以后可以照常打开 Codex/ChatGPT；后台增强会在缺少本地调试端口时自动纠正启动方式。也可从 Spotlight、访达的“应用程序”或 `~/Applications` 直接打开 **AIYOUcodex**。注入器只连接 `127.0.0.1:9231`。
 
 > 不想直接执行远程脚本？先[查看 install.sh](./install.sh)，或下载仓库后运行 `bash install.sh`。
 
@@ -51,13 +55,13 @@ Windows 安装器会自动：
 Windows PowerShell：
 
 ```powershell
-irm https://raw.githubusercontent.com/yubowen123/codex-sidebar-enhancer/main/uninstall.ps1 | iex
+irm https://raw.githubusercontent.com/yubowen123/AIYOUCODEX/main/uninstall.ps1 | iex
 ```
 
 macOS 终端：
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/yubowen123/codex-sidebar-enhancer/main/uninstall.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/yubowen123/AIYOUCODEX/main/uninstall.sh)"
 ```
 
 卸载会停止增强进程，并移除本工具的安装目录、当前用户自启动项、启动器和增强日志，不会删除 Codex 对话或设置。
@@ -75,7 +79,7 @@ macOS 终端：
 - 文件夹标签首位提供“全部”：汇总完整项目会话索引，并按最近一次请求或沟通时间跨文件夹排序。
 - 搜索框可模糊搜索文件夹名和项目名，命中后直接展示对应文件夹。
 - 搜索栏右侧的新建按钮始终绑定当前选中的文件夹；点击后进入该文件夹的项目创建页，“全部”视图不提供无归属新建入口。
-- 项目管理、Skills 分组、资产控制台和内置自定义入口统一在可拖动调宽的右侧面板打开，切换功能时互斥收起，当前对话、滚动位置和输入框始终保留；公共版不包含私有 TV 入口。
+- 项目管理、Skills 分组、资产控制台和内置自定义入口统一在可拖动调宽的右侧面板打开，切换功能时互斥收起，当前对话、滚动位置和输入框始终保留；本机专属入口由仓库外配置管理，公开包不携带任何本机配置。
 - 在当前对话输入“项目管理，帮我找下管理优化”“Skills 帮我找下知识卡片”或“资产控制台，帮我找下角色”等指令，可自动打开对应面板并带入检索词。
 - “项目管理”随安装包提供：右侧打开本地 Taskboard，支持按项目名定位，并保留跨项目六泳道、紧急状态、文件夹过滤、项目描述、进度和下一步规划。
 - “Skills 分组”直接读取本机已安装 Skill，按视频创作、导演镜头、画面风格、资产工作台、写作研究和工具管理分类；支持搜索、常用收藏，以及右键或“+”添加原生 Skill 引用到当前输入框。
@@ -115,7 +119,7 @@ macOS 终端：
 
 ## 更新与排查
 
-更新时重新运行安装命令即可。安装器会原子替换旧版本，并迁移早期 `com.yubowen.codex-conversation-preview` LaunchAgent。Taskboard 数据独立保存在用户数据目录，更新安装包不会覆盖已有项目和任务。
+更新时重新运行安装命令即可。安装器会原子替换旧版本，并迁移旧名称启动器及早期 `com.yubowen.codex-conversation-preview` LaunchAgent。为保证无损升级，安装目录、数据目录、LaunchAgent label 和内部消息协议继续沿用既有兼容标识；这不会影响界面及启动器统一显示为 AIYOUcodex。Taskboard 数据独立保存在用户数据目录，更新安装包不会覆盖已有项目和任务。
 
 macOS 日志位置：
 
@@ -134,15 +138,15 @@ Windows 日志位置：
 如果增强没有出现：
 
 1. 等待约 10 秒，后台增强会自动纠正一次普通启动；
-2. 仍未出现时退出 Codex/ChatGPT，再打开 macOS 的 `~/Applications/Codex Sidebar Enhancer.app`，或 Windows 开始菜单中的 **Codex Sidebar Enhancer**；
+2. 仍未出现时退出 Codex/ChatGPT，再打开 macOS 的 `~/Applications/AIYOUcodex.app`，或 Windows 开始菜单中的 **AIYOUcodex**；
 3. 在安装目录运行 `node scripts/doctor.mjs`，确认固定资产、Node、Codex 调试端口和 Taskboard 服务状态；
 4. 查看上述日志。
 
 ## 本地开发
 
 ```bash
-git clone https://github.com/yubowen123/codex-sidebar-enhancer.git
-cd codex-sidebar-enhancer
+git clone https://github.com/yubowen123/AIYOUCODEX.git
+cd AIYOUCODEX
 npm install
 npm test
 npm run runtime

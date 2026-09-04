@@ -1,14 +1,15 @@
 {
-  "name": "codex-sidebar-enhancer",
+  "name": "aiyoucodex",
   "version": "1.4.0",
-  "description": "A local, reversible Codex workspace enhancement with sidebar views, project Taskboard, Skills groups, and a multimedia asset library for macOS and Windows.",
+  "description": "AIYOUcodex is a local, reversible Codex workspace with enhanced conversation views, project Taskboard, Skills groups, and a multimedia asset library for macOS and Windows.",
   "license": "MIT",
-  "homepage": "https://github.com/yubowen123/codex-sidebar-enhancer#readme",
+  "homepage": "https://github.com/yubowen123/AIYOUCODEX#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yubowen123/codex-sidebar-enhancer.git"
+    "url": "git+https://github.com/yubowen123/AIYOUCODEX.git"
   },
   "keywords": [
+    "aiyoucodex",
     "codex",
     "sidebar",
     "asset-library",

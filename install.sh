@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-REPOSITORY="${CODEX_SIDEBAR_REPOSITORY:-yubowen123/codex-sidebar-enhancer}"
+REPOSITORY="${CODEX_SIDEBAR_REPOSITORY:-yubowen123/AIYOUCODEX}"
 REPOSITORY_REF="${CODEX_SIDEBAR_REF:-main}"
 INSTALL_DIR="${CODEX_SIDEBAR_INSTALL_DIR:-${HOME}/Library/Application Support/Codex Sidebar Enhancer}"
 SOURCE_DIR="${CODEX_SIDEBAR_SOURCE_DIR:-}"
@@ -110,9 +110,9 @@ if [[ -d "${BACKUP_DIR}" ]]; then
 fi
 
 if [[ "${CODEX_SIDEBAR_SKIP_OPEN:-0}" != "1" ]]; then
-  /usr/bin/open "${HOME}/Applications/Codex Sidebar Enhancer.app"
+  /usr/bin/open "${HOME}/Applications/AIYOUcodex.app"
 fi
 
-printf '\nCodex Sidebar Enhancer installed.\n'
-printf 'Launcher: %s\n' "${HOME}/Applications/Codex Sidebar Enhancer.app"
+printf '\nAIYOUcodex installed.\n'
+printf 'Launcher: %s\n' "${HOME}/Applications/AIYOUcodex.app"
 printf 'Logs: %s\n' "${HOME}/Library/Logs/CodexSidebarEnhancer"

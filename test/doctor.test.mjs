@@ -23,3 +23,18 @@ test("doctor confirms the pinned package without requiring Codex to be running",
   assert.equal(report.assetConsole.packaged, true);
   assert.equal(report.assetConsole.reachable, false);
 });
+
+test("doctor uses the AIYOUcodex product name in human-readable output", () => {
+  const result = spawnSync(process.execPath, ["scripts/doctor.mjs", "--port", "65534"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      CODEX_TASKBOARD_PORT: "65533",
+      CODEX_ASSET_CONSOLE_PORT: "65532",
+      CODEX_SIDEBAR_TASKBOARD_RUNTIME_FILE: "/missing/codex-sidebar-runtime.json",
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^AIYOUcodex package: ready$/m);
+});

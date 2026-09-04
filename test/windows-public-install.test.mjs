@@ -14,6 +14,7 @@ test("Windows public installer creates a user-local runtime and login shortcuts"
   const logsDir = path.join(testRoot, "logs");
   const startupDir = path.join(testRoot, "startup");
   const startMenuDir = path.join(testRoot, "start-menu");
+  const legacyStartMenuDir = path.join(testRoot, "legacy-start-menu");
   const sentinel = path.join(testRoot, "keep.txt");
   const env = {
     ...process.env,
@@ -22,6 +23,7 @@ test("Windows public installer creates a user-local runtime and login shortcuts"
     CODEX_SIDEBAR_LOGS_DIR: logsDir,
     CODEX_SIDEBAR_STARTUP_DIR: startupDir,
     CODEX_SIDEBAR_START_MENU_DIR: startMenuDir,
+    CODEX_SIDEBAR_LEGACY_START_MENU_DIR: legacyStartMenuDir,
     CODEX_SIDEBAR_NODE: process.execPath,
     CODEX_SIDEBAR_SKIP_OPEN: "1",
   };
@@ -34,14 +36,14 @@ test("Windows public installer creates a user-local runtime and login shortcuts"
     ], { cwd: projectRoot, encoding: "utf8", env });
 
     assert.equal(installed.status, 0, installed.stderr);
-    assert.match(installed.stdout, /Codex Sidebar Enhancer installed for Windows/);
+    assert.match(installed.stdout, /AIYOUcodex installed for Windows/);
     await access(path.join(installDir, "scripts", "injector.mjs"));
     await access(path.join(installDir, "inject", "conversation-preview.user.js"));
     const config = JSON.parse(await readFile(path.join(installDir, "windows", "config.json"), "utf8"));
     assert.equal(path.resolve(config.nodePath), path.resolve(process.execPath));
     assert.equal(config.port, 9231);
-    await access(path.join(startupDir, "Codex Sidebar Enhancer.lnk"));
-    await access(path.join(startMenuDir, "Codex Sidebar Enhancer.lnk"));
+    await access(path.join(startupDir, "AIYOUcodex.lnk"));
+    await access(path.join(startMenuDir, "AIYOUcodex.lnk"));
 
     const removed = spawnSync("powershell.exe", [
       "-NoProfile",
@@ -49,11 +51,11 @@ test("Windows public installer creates a user-local runtime and login shortcuts"
       "-File", "uninstall.ps1",
     ], { cwd: projectRoot, encoding: "utf8", env });
     assert.equal(removed.status, 0, removed.stderr);
-    assert.match(removed.stdout, /Codex Sidebar Enhancer uninstalled from Windows/);
+    assert.match(removed.stdout, /AIYOUcodex uninstalled from Windows/);
     await assert.rejects(access(installDir));
     await assert.rejects(access(logsDir));
-    await assert.rejects(access(path.join(startupDir, "Codex Sidebar Enhancer.lnk")));
-    await assert.rejects(access(path.join(startMenuDir, "Codex Sidebar Enhancer.lnk")));
+    await assert.rejects(access(path.join(startupDir, "AIYOUcodex.lnk")));
+    await assert.rejects(access(path.join(startMenuDir, "AIYOUcodex.lnk")));
     assert.equal(await readFile(sentinel, "utf8"), "preserve");
   } finally {
     await rm(testRoot, { recursive: true, force: true });

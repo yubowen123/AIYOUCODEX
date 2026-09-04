@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createInstallPlan, LEGACY_TASKBOARD_LABELS } from "../lib/install-config.mjs";
-import { access, mkdir, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, rm, unlink, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
@@ -61,6 +61,11 @@ if (options.dryRun) {
   }
   try { await unlink(legacyPlistPath); } catch (error) {
     if (error?.code !== "ENOENT") throw error;
+  }
+  for (const legacyLauncherPath of plan.legacyLauncherPaths) {
+    if (legacyLauncherPath !== plan.launcherPath) {
+      await rm(legacyLauncherPath, { recursive: true, force: true });
+    }
   }
   process.stdout.write(`${JSON.stringify({
     activated: true,

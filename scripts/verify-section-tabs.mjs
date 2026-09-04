@@ -39,6 +39,8 @@ try {
     const tabs = Array.from(bar.querySelectorAll('[role="tab"]'));
     const panels = Array.from(document.querySelectorAll('[data-codex-sidebar-section-panel]'));
     const actions = bar.querySelector('[data-codex-sidebar-project-actions]');
+    const newChat = actions?.querySelector('[data-codex-sidebar-current-folder-new-chat]');
+    const newChatRect = newChat?.getBoundingClientRect();
     return {
       role: bar.querySelector('[role="tablist"]')?.getAttribute("role"),
       ariaLabel: bar.querySelector('[role="tablist"]')?.getAttribute("aria-label"),
@@ -57,6 +59,15 @@ try {
       })),
       actionsHidden: actions?.hidden,
       actionLabels: Array.from(actions?.querySelectorAll("button") || []).map((button) => button.getAttribute("aria-label")),
+      newChat: newChat && {
+        hidden: newChat.hidden,
+        target: newChat.dataset.codexSidebarCurrentFolderNewChat,
+        opacity: getComputedStyle(newChat).opacity,
+        hit: document.elementFromPoint(
+          newChatRect.x + newChatRect.width / 2,
+          newChatRect.y + newChatRect.height / 2,
+        )?.closest("button") === newChat,
+      },
       nativeExpanded: Object.fromEntries(["置顶", "项目", "最近"].map((name) => {
         const source = Array.from(document.querySelectorAll('button[data-app-action-sidebar-section-toggle]'))
           .find((button) => button.textContent.trim() === name);
@@ -85,7 +96,12 @@ try {
   assert.equal(await waitFor(client, `Array.from(document.querySelectorAll('button[data-app-action-sidebar-section-toggle]')).find((button) => button.textContent.trim() === "项目")?.getAttribute("aria-expanded") === "true"`), true);
   actual = await inspect();
   assert.equal(actual.actionsHidden, false);
-  assert.deepEqual(actual.actionLabels, ["项目侧边栏选项", "添加新项目"]);
+  assert.match(actual.actionLabels[0] || "", /^在“.+”中新建对话$/u);
+  assert.deepEqual(actual.actionLabels.slice(1), ["项目侧边栏选项", "添加新项目"]);
+  assert.equal(actual.newChat.hidden, false);
+  assert.match(actual.newChat.target || "", /\S/u);
+  assert.equal(actual.newChat.opacity, "1");
+  assert.equal(actual.newChat.hit, true, "new-chat proxy must receive a real pointer hit in the tab toolbar");
   assert.deepEqual(actual.panels.filter((panel) => !panel.hidden).map((panel) => panel.name), ["项目"]);
 
   const nativeActions = await client.evaluate(`(() => ({

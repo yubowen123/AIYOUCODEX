@@ -12,9 +12,11 @@ import {
   reconcileTaskboardAutomation,
 } from "../shared/taskboard-automation.mjs";
 import {
+  CdpConnection,
   codexStartupAction,
   findResidentInjectorPids,
   handleHostBindingPayload,
+  injectionRuntimeNeedsRefresh,
   reconcileManagedCodexRuntime,
   reconcileInjectionRuntime,
   restartResidentInjector,
@@ -100,7 +102,7 @@ function parseArgs(argv) {
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(1_500) });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   return response.json();
 }
@@ -256,102 +258,6 @@ function terminateCodex() {
     } catch (error) {
       if (error.code !== "ESRCH") throw error;
     }
-  }
-}
-
-class CdpConnection {
-  constructor(url) {
-    this.socket = new WebSocket(url);
-    this.sequence = 0;
-    this.pending = new Map();
-    this.eventWaiters = new Map();
-    this.eventHandlers = new Map();
-    this.closed = false;
-  }
-
-  async open() {
-    await new Promise((resolve, reject) => {
-      this.socket.addEventListener("open", resolve, { once: true });
-      this.socket.addEventListener("error", () => reject(new Error("CDP WebSocket connection failed")), {
-        once: true,
-      });
-    });
-    this.socket.addEventListener("message", (event) => {
-      const message = JSON.parse(String(event.data));
-      if (!message.id) {
-        const waiters = this.eventWaiters.get(message.method) || [];
-        this.eventWaiters.delete(message.method);
-        waiters.forEach((waiter) => waiter.resolve(message.params));
-        const handlers = this.eventHandlers.get(message.method) || [];
-        handlers.forEach((handler) => {
-          try {
-            Promise.resolve(handler(message.params)).catch((error) => {
-              console.error(`CDP ${message.method} handler failed: ${error.message}`);
-            });
-          } catch (error) {
-            console.error(`CDP ${message.method} handler failed: ${error.message}`);
-          }
-        });
-        return;
-      }
-      const pending = this.pending.get(message.id);
-      if (!pending) return;
-      this.pending.delete(message.id);
-      if (message.error) pending.reject(new Error(message.error.message));
-      else pending.resolve(message.result);
-    });
-    this.socket.addEventListener("close", () => {
-      this.closed = true;
-      const error = new Error("CDP WebSocket closed");
-      this.pending.forEach((pending) => pending.reject(error));
-      this.pending.clear();
-      this.eventWaiters.forEach((waiters) => waiters.forEach((waiter) => waiter.reject(error)));
-      this.eventWaiters.clear();
-      this.eventHandlers.clear();
-    });
-  }
-
-  send(method, params = {}) {
-    const id = ++this.sequence;
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  waitFor(method, timeoutMs) {
-    return new Promise((resolve, reject) => {
-      const waiters = this.eventWaiters.get(method) || [];
-      const timeout = setTimeout(() => {
-        this.eventWaiters.set(
-          method,
-          (this.eventWaiters.get(method) || []).filter((waiter) => waiter.resolve !== wrappedResolve),
-        );
-        reject(new Error(`Timed out waiting for CDP event ${method}`));
-      }, timeoutMs);
-      const wrappedResolve = (value) => {
-        clearTimeout(timeout);
-        resolve(value);
-      };
-      waiters.push({ resolve: wrappedResolve, reject });
-      this.eventWaiters.set(method, waiters);
-    });
-  }
-
-  on(method, handler) {
-    const handlers = this.eventHandlers.get(method) || [];
-    handlers.push(handler);
-    this.eventHandlers.set(method, handlers);
-    return () => {
-      this.eventHandlers.set(
-        method,
-        (this.eventHandlers.get(method) || []).filter((candidate) => candidate !== handler),
-      );
-    };
-  }
-
-  close() {
-    this.socket.close();
   }
 }
 
@@ -1091,7 +997,7 @@ async function publishHostHeartbeat(cdp, startupToken) {
       window[${JSON.stringify(hostStartupTokenName)}] = ${JSON.stringify(startupToken)};
     })()`,
     returnByValue: true,
-  });
+  }, { timeoutMs: 2_500 });
 }
 
 async function readInjectionStatus(cdp) {
@@ -1106,7 +1012,7 @@ async function readInjectionStatus(cdp) {
       frameUrl: document.getElementById("codex-taskboard-frame")?.src || null
     })`,
     returnByValue: true,
-  });
+  }, { timeoutMs: 2_500 });
   return status.result.value;
 }
 
@@ -1286,7 +1192,17 @@ async function injectAll(
 
   const results = [];
   for (const target of targets) {
-    if (injectedTargets.has(target.id)) continue;
+    const existingConnection = injectedTargets.get(target.id);
+    let reattachExisting = false;
+    if (existingConnection) {
+      try {
+        const currentStatus = await readInjectionStatus(existingConnection);
+        if (!injectionRuntimeNeedsRefresh(currentStatus, sourceHash)) continue;
+        reattachExisting = true;
+      } catch {}
+      existingConnection.close();
+      injectedTargets.delete(target.id);
+    }
     const firstTarget = injectedTargets.size === 0 && results.length === 0;
     const { result, connection } = await injectTarget(
       target,
@@ -1296,7 +1212,7 @@ async function injectAll(
       firstTarget ? screenshotPath : null,
       keepAlive,
       supervisor,
-      attachExisting,
+      attachExisting || reattachExisting,
       startupToken,
     );
     if (connection) injectedTargets.set(target.id, connection);
@@ -1475,11 +1391,6 @@ async function main() {
       } catch (error) {
         console.error(`Waiting for Taskboard service: ${error.message}`);
       }
-      for (const connection of injectedTargets.values()) {
-        try {
-          await publishHostHeartbeat(connection, options.startupToken);
-        } catch (_) {}
-      }
       try {
         const results = await injectAll(
           options.port,
@@ -1494,6 +1405,11 @@ async function main() {
           options.startupToken,
         );
         if (results.length > 0) console.log(JSON.stringify({ injected: results }, null, 2));
+        for (const connection of injectedTargets.values()) {
+          try {
+            await publishHostHeartbeat(connection, options.startupToken);
+          } catch (_) {}
+        }
       } catch (error) {
         if (codexProcess && codexProcess.exitCode !== null) break;
         console.error(`Waiting for Codex renderer: ${error.message}`);

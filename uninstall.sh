@@ -2,7 +2,8 @@
 set -euo pipefail
 
 INSTALL_DIR="${CODEX_SIDEBAR_INSTALL_DIR:-${HOME}/Library/Application Support/Codex Sidebar Enhancer}"
-LAUNCHER_PATH="${HOME}/Applications/Codex Sidebar Enhancer.app"
+LAUNCHER_PATH="${HOME}/Applications/AIYOUcodex.app"
+LEGACY_LAUNCHER_PATH="${HOME}/Applications/Codex Sidebar Enhancer.app"
 LOGS_DIR="${HOME}/Library/Logs/CodexSidebarEnhancer"
 PLIST_PATH="${HOME}/Library/LaunchAgents/com.yubowen.codex-sidebar-enhancer.plist"
 LEGACY_PLIST_PATH="${HOME}/Library/LaunchAgents/com.yubowen.codex-conversation-preview.plist"
@@ -33,6 +34,7 @@ for TARGET in \
   "${PLIST_PATH}" \
   "${LEGACY_PLIST_PATH}" \
   "${LAUNCHER_PATH}" \
+  "${LEGACY_LAUNCHER_PATH}" \
   "${INSTALL_DIR}" \
   "${LOGS_DIR}"; do
   if [[ -e "${TARGET}" ]]; then
@@ -40,4 +42,4 @@ for TARGET in \
   fi
 done
 
-printf 'Codex Sidebar Enhancer uninstalled.\n'
+printf 'AIYOUcodex uninstalled.\n'

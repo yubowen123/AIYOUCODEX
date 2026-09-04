@@ -70,7 +70,21 @@ test("sidebar groups use accessible tabs and preserve native project actions", (
   assert.match(source, /ArrowRight/);
 });
 
-test("public shortcut grid exposes bundled project management but excludes private entries", () => {
+test("project tab actions include a selected-folder new-chat proxy", () => {
+  assert.match(source, /grid-template-columns:\s*minmax\(0, 1fr\) auto/);
+  assert.match(
+    source,
+    /#\$\{SECTION_TABS_ID\} \[data-codex-sidebar-project-actions\] \{[\s\S]{0,180}min-width:\s*58px/,
+  );
+  assert.match(source, /\[data-codex-sidebar-current-folder-new-chat\]/);
+  assert.match(source, /data-codex-sidebar-current-folder-new-chat\][\s\S]{0,180}flex:\s*0 0 26px/);
+  assert.match(source, /dataset\.codexSidebarCurrentFolderNewChat\s*=\s*item\.id/);
+  assert.match(source, /`在“\$\{item\.label\}”中新建对话`/);
+  assert.match(source, /function handleCurrentFolderNewChat[\s\S]{0,420}nativeFolderCreateButton\(item\)[\s\S]{0,220}source\.click\(\)/);
+  assert.match(source, /button\.hidden = true/);
+});
+
+test("public shortcut grid exposes bundled project management and accepts external managed entries", () => {
   assert.match(source, /HIDDEN_SHORTCUT_NAMES = new Set\(\)/);
   assert.match(source, /else findNativeShortcutButton\(item\.name\)\?\.click\(\)/,
     "native shortcut cards must resolve the current source button after another injector replaces it");
@@ -78,8 +92,8 @@ test("public shortcut grid exposes bundled project management but excludes priva
   assert.match(source, /hidden\.filter\(\(value\) => !value\.startsWith\("native:"\)\)/);
   assert.match(source, /savedShortcutSettings\.schemaVersion !== 4[\s\S]*localStorage\.setItem\(SHORTCUT_SETTINGS_STORAGE_KEY/);
   assert.match(source, /button\.dataset\.codexSidebarShortcutUrl = item\.url/);
-  assert.doesNotMatch(source, /TV_SHORTCUT_URL|__codexTvHostV1|data-codex-tv-open/);
-  assert.doesNotMatch(source, /TV_SHORTCUT_URL|__codexTvHostV1|data-codex-tv-open/);
+  assert.match(source, /Array\.isArray\(window\[MANAGED_SHORTCUTS_GLOBAL\]\)/);
+  assert.match(source, /managed:\s*true/);
 });
 
 test("shortcut discovery supports Codex navigation buttons wrapped by contents containers", () => {
@@ -175,6 +189,7 @@ test("pinned conversations are exclusive to the pinned tab", () => {
 test("folder create action is bound to the selected folder and restores native markup", () => {
   assert.match(source, /nativeFolderCreateButton/);
   assert.match(source, /codexSidebarFolderCreate = item\.id/);
-  assert.match(source, /在“\$\{item\.label\}”文件夹下创建项目/);
+  assert.match(source, /在“\$\{item\.label\}”中新建对话/);
+  assert.doesNotMatch(source, /在“\$\{item\.label\}”文件夹下创建项目/);
   assert.match(source, /removeAttribute\("data-codex-sidebar-folder-create"\)/);
 });

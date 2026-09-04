@@ -1,6 +1,7 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { createPathPrefixMatcher } from "./asset-index-update-utils.js";
 
 const SCHEMA_VERSION = 1;
 
@@ -89,35 +90,50 @@ export class PersistentAssetIndex {
     removePrefixes = [],
     folders = project.folders,
   } = {}, now = new Date().toISOString()) {
+    const results = await this.patchProjects([{ project, patch: { upserts, removeIds, removePrefixes, folders } }], now);
+    return results[0];
+  }
+
+  async patchProjects(updates = [], now = new Date().toISOString()) {
     return this.mutate((state) => {
-      const current = normalizeProjectEntry(project.id, state.projects[project.id] || {
-        projectName: project.name,
-        folders,
-        initializedAt: now,
-        updatedAt: now,
-        assets: [],
-      });
-      const removeIdSet = new Set(removeIds.map(String));
-      const normalizedPrefixes = removePrefixes.map((prefix) => path.resolve(String(prefix || "")));
-      const byId = new Map(current.assets
-        .filter((asset) => !removeIdSet.has(String(asset.id)))
-        .filter((asset) => {
-          const assetPath = String(asset.sourcePath || "");
-          if (!assetPath) return true;
-          return !normalizedPrefixes.some((prefix) => assetPath === prefix || assetPath.startsWith(`${prefix}${path.sep}`));
-        })
-        .map((asset) => [String(asset.id), asset]));
-      for (const asset of upserts) {
-        if (asset?.id) byId.set(String(asset.id), asset);
+      const results = [];
+      for (const { project, patch = {} } of updates) {
+        const {
+          upserts = [],
+          removeIds = [],
+          removePrefixes = [],
+          folders = project.folders,
+        } = patch;
+        const current = normalizeProjectEntry(project.id, state.projects[project.id] || {
+          projectName: project.name,
+          folders,
+          initializedAt: now,
+          updatedAt: now,
+          assets: [],
+        });
+        const removeIdSet = new Set(removeIds.map(String));
+        const matchesRemovedPrefix = createPathPrefixMatcher(removePrefixes);
+        const byId = new Map(current.assets
+          .filter((asset) => !removeIdSet.has(String(asset.id)))
+          .filter((asset) => {
+            const assetPath = String(asset.sourcePath || "");
+            if (!assetPath) return true;
+            return !matchesRemovedPrefix(assetPath);
+          })
+          .map((asset) => [String(asset.id), asset]));
+        for (const asset of upserts) {
+          if (asset?.id) byId.set(String(asset.id), asset);
+        }
+        state.projects[project.id] = normalizeProjectEntry(project.id, {
+          ...current,
+          projectName: project.name,
+          folders,
+          updatedAt: now,
+          assets: [...byId.values()],
+        });
+        results.push(state.projects[project.id]);
       }
-      state.projects[project.id] = normalizeProjectEntry(project.id, {
-        ...current,
-        projectName: project.name,
-        folders,
-        updatedAt: now,
-        assets: [...byId.values()],
-      });
-      return state.projects[project.id];
+      return results;
     });
   }
 

@@ -33,3 +33,30 @@ test("custom shortcuts support preset icons and both open modes", () => {
 test("custom shortcut URLs are restricted to http and https", () => {
   assert.match(source, /url\.protocol !== "https:" && url\.protocol !== "http:"/);
 });
+
+test("managed local shortcuts use the same panel without becoming deletable custom entries", () => {
+  assert.match(source, /__CODEX_SIDEBAR_MANAGED_SHORTCUTS__/);
+  assert.match(source, /function normalizedManagedShortcuts\(\)/);
+  assert.match(source, /dataset\.codexSidebarShortcutManaged = item\.id/);
+  assert.match(source, /item\.custom \|\| item\.managed/);
+  assert.match(source, /if \(item\.custom\) \{\s*const remove/s);
+});
+
+test("settings opens on pointerdown and header controls converge on one stable order", () => {
+  assert.match(source, /button\.onpointerdown = handleShortcutSettingsPointerDown/);
+  assert.match(source, /function handleShortcutSettingsPointerDown\(event\)/);
+  assert.match(source, /const before = settingsButton\?\.parentElement === host \? settingsButton : searchSlot/);
+  assert.match(source, /button\.nextElementSibling !== searchSlot\) host\.insertBefore\(button, searchSlot\)/);
+});
+
+test("settings exposes the AIYOUcodex brand without changing its accessibility contract", () => {
+  assert.match(source, /<h2>AIYOUcodex 设置<\/h2>/);
+  assert.match(source, /button\.title = "AIYOUcodex 快捷入口设置"/);
+  assert.match(source, /button\.setAttribute\("aria-label", "管理快捷入口"\)/);
+});
+
+test("native activity view suspends project section enhancement", () => {
+  assert.match(source, /function nativeActivityViewOpen\(\)/);
+  assert.match(source, /关闭活动视图\|close activity view/);
+  assert.match(source, /if \(nativeActivityViewOpen\(\)\) \{\s*if \(sectionEnhancementMounted\(\)\) clearSectionEnhancement\(\);\s*ensureRecoveredConversationHistory\(\);/s);
+});

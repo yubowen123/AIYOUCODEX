@@ -14,7 +14,9 @@ $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
 $installDir = Get-Setting "CODEX_SIDEBAR_INSTALL_DIR" (Join-Path $localAppData "Codex Sidebar Enhancer")
 $logsDir = Get-Setting "CODEX_SIDEBAR_LOGS_DIR" (Join-Path $localAppData "CodexSidebarEnhancer\Logs")
 $startupDir = Get-Setting "CODEX_SIDEBAR_STARTUP_DIR" ([Environment]::GetFolderPath("Startup"))
-$startMenuDir = Get-Setting "CODEX_SIDEBAR_START_MENU_DIR" (Join-Path ([Environment]::GetFolderPath("Programs")) "Codex Sidebar Enhancer")
+$programsDir = [Environment]::GetFolderPath("Programs")
+$startMenuDir = Get-Setting "CODEX_SIDEBAR_START_MENU_DIR" (Join-Path $programsDir "AIYOUcodex")
+$legacyStartMenuDir = Get-Setting "CODEX_SIDEBAR_LEGACY_START_MENU_DIR" (Join-Path $programsDir "Codex Sidebar Enhancer")
 $fullInstallDir = [IO.Path]::GetFullPath($installDir)
 $root = [IO.Path]::GetPathRoot($fullInstallDir)
 if ($fullInstallDir -eq $root -or $fullInstallDir -eq [IO.Path]::GetFullPath($localAppData)) {
@@ -41,11 +43,14 @@ if (Test-Path -LiteralPath $legacyMarker -PathType Leaf) {
 }
 
 $targets = @(
+  (Join-Path $startupDir "AIYOUcodex.lnk"),
+  (Join-Path $startMenuDir "AIYOUcodex.lnk"),
   (Join-Path $startupDir "Codex Sidebar Enhancer.lnk"),
   (Join-Path $startMenuDir "Codex Sidebar Enhancer.lnk"),
+  (Join-Path $legacyStartMenuDir "Codex Sidebar Enhancer.lnk"),
   $fullInstallDir,
   $logsDir
-)
+) | Select-Object -Unique
 foreach ($target in $targets) {
   if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
 }
@@ -54,5 +59,10 @@ if (Test-Path -LiteralPath $startMenuDir -PathType Container) {
     Remove-Item -LiteralPath $startMenuDir -Force
   }
 }
+if (Test-Path -LiteralPath $legacyStartMenuDir -PathType Container) {
+  if (-not (Get-ChildItem -LiteralPath $legacyStartMenuDir -Force | Select-Object -First 1)) {
+    Remove-Item -LiteralPath $legacyStartMenuDir -Force
+  }
+}
 
-Write-Output "Codex Sidebar Enhancer uninstalled from Windows."
+Write-Output "AIYOUcodex uninstalled from Windows."
