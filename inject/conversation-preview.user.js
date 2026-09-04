@@ -16,6 +16,7 @@
   const SHORTCUT_SETTINGS_ID = "codex-sidebar-shortcut-settings-dialog";
   const SHORTCUT_SETTINGS_BUTTON_ID = "codex-sidebar-shortcut-settings-button";
   const SHORTCUT_SETTINGS_STORAGE_KEY = "codex-conversation-preview:shortcut-settings";
+  const MANAGED_SHORTCUTS_GLOBAL = "__CODEX_SIDEBAR_MANAGED_SHORTCUTS__";
   const CUSTOM_SHORTCUT_PAGE_ID = "codex-custom-shortcut-page";
   const CUSTOM_SHORTCUT_FRAME_ID = "codex-custom-shortcut-frame";
   const CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE = "data-codex-custom-shortcut-hidden";
@@ -48,6 +49,32 @@
   const SECTION_TAB_STORAGE_KEY = "codex-conversation-preview:section-tab";
   const NATIVE_SECTION_NAMES = ["置顶", "项目", "最近"];
   const SECTION_NAMES = [...NATIVE_SECTION_NAMES, "中断"];
+  const NATIVE_SHORTCUT_LABEL_ALIASES = new Map([
+    ["新对话", "新对话"],
+    ["new chat", "新对话"],
+    ["拉取请求", "拉取请求"],
+    ["pull request", "拉取请求"],
+    ["pull requests", "拉取请求"],
+    ["站点", "站点"],
+    ["sites", "站点"],
+    ["已安排", "已安排"],
+    ["scheduled", "已安排"],
+    ["插件", "插件"],
+    ["plugins", "插件"],
+    ["更多", "更多"],
+    ["more", "更多"],
+    ["explore", "更多"],
+  ]);
+  const NATIVE_SECTION_LABEL_ALIASES = new Map([
+    ["置顶", "置顶"],
+    ["pinned", "置顶"],
+    ["项目", "项目"],
+    ["projects", "项目"],
+    ["最近", "最近"],
+    ["recents", "最近"],
+    ["中断", "中断"],
+    ["interrupted", "中断"],
+  ]);
   const RECENT_LIST_ID = "codex-sidebar-global-recent-list";
   const RECENT_VISIBLE_LIMIT = 30;
   const INTERRUPTED_PANEL_ID = "codex-sidebar-interrupted-panel";
@@ -192,6 +219,59 @@
       threadStatuses = savedThreadStatuses;
     }
   } catch {}
+
+  function normalizedNativeLabel(value) {
+    return String(value || "")
+      .normalize("NFKC")
+      .trim()
+      .replace(/\s+/gu, " ")
+      .toLocaleLowerCase();
+  }
+
+  function canonicalShortcutLabel(value) {
+    const label = String(value || "").trim();
+    return NATIVE_SHORTCUT_LABEL_ALIASES.get(normalizedNativeLabel(label)) || label;
+  }
+
+  function canonicalSectionLabel(value) {
+    const label = String(value || "").trim();
+    const normalized = normalizedNativeLabel(label);
+    if (normalized === "优先级" || normalized === "priority") return "优先级";
+    return NATIVE_SECTION_LABEL_ALIASES.get(normalized) || label;
+  }
+
+  function isPinActionLabel(value) {
+    return ["置顶聊天", "取消置顶聊天", "pin chat", "unpin chat"].includes(normalizedNativeLabel(value));
+  }
+
+  function canonicalPinActionLabel(value) {
+    const normalized = normalizedNativeLabel(value);
+    if (normalized === "置顶聊天" || normalized === "pin chat") return "pin";
+    if (normalized === "取消置顶聊天" || normalized === "unpin chat") return "unpin";
+    return "";
+  }
+
+  function isProjectActionsLabel(value, folderLabel) {
+    const actual = normalizedNativeLabel(value);
+    const folder = String(folderLabel || "").normalize("NFKC").trim().replace(/\s+/gu, " ");
+    return Boolean(folder) && [
+      `${folder} 的项目操作`,
+      `Project actions for ${folder}`,
+    ].some((candidate) => normalizedNativeLabel(candidate) === actual);
+  }
+
+  function isFolderCreateLabel(value, folderLabel) {
+    const actual = normalizedNativeLabel(value);
+    const folder = String(folderLabel || "").normalize("NFKC").trim().replace(/\s+/gu, " ");
+    return Boolean(folder) && [
+      `在 ${folder} 中开始新聊天`,
+      `Start new chat in ${folder}`,
+    ].some((candidate) => normalizedNativeLabel(candidate) === actual);
+  }
+
+  function isShowMoreLabel(value) {
+    return ["展开显示", "显示更多", "show more", "show all"].includes(normalizedNativeLabel(value));
+  }
 
   function installStyles() {
     document.getElementById(STYLE_ID)?.remove();
@@ -914,7 +994,7 @@
         display: grid !important;
         position: relative;
         flex: 0 0 auto;
-        grid-template-columns: minmax(0, 1fr) 58px;
+        grid-template-columns: minmax(0, 1fr) auto;
         align-items: center;
         gap: 6px;
         box-sizing: border-box;
@@ -974,7 +1054,8 @@
       }
       #${SECTION_TABS_ID} [data-codex-sidebar-project-actions] {
         display: flex;
-        width: 58px;
+        width: auto;
+        min-width: 58px;
         height: 32px;
         align-items: center;
         justify-content: flex-end;
@@ -1000,6 +1081,22 @@
         min-height: 26px !important;
         padding: 3px !important;
         border-radius: 8px !important;
+      }
+      #${SECTION_TABS_ID} [data-codex-sidebar-current-folder-new-chat] {
+        display: inline-flex;
+        flex: 0 0 26px;
+        align-items: center;
+        justify-content: center;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+      }
+      #${SECTION_TABS_ID} [data-codex-sidebar-current-folder-new-chat]:hover {
+        background: color-mix(in srgb, currentColor 6%, transparent);
+      }
+      #${SECTION_TABS_ID} [data-codex-sidebar-current-folder-new-chat][hidden] {
+        display: none !important;
       }
       #${SECTION_TABS_ID} [data-codex-sidebar-project-actions] svg {
         width: 17px !important;
@@ -1107,6 +1204,10 @@
         max-width: none !important;
         align-items: center;
         gap: 2px !important;
+        overflow: visible !important;
+        pointer-events: auto !important;
+        opacity: 1 !important;
+        visibility: visible !important;
       }
       #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-actions-source] > *,
       #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-actions-source] > * > *,
@@ -2027,6 +2128,7 @@
 
   function shortcutItemKey(item) {
     if (item?.kind === "enhancement") return `enhancement:${item.id}`;
+    if (item?.managed) return `managed:${item.id}`;
     return item?.custom ? `custom:${item.id}` : `native:${item?.name || ""}`;
   }
 
@@ -2055,6 +2157,28 @@
         icon: Object.hasOwn(SHORTCUT_ICON_PRESETS, raw.icon) ? raw.icon : "link",
         openMode: raw.openMode === "browser" ? "browser" : "internal",
         custom: true,
+      }];
+    });
+  }
+
+  function normalizedManagedShortcuts() {
+    const seen = new Set();
+    const configured = Array.isArray(window[MANAGED_SHORTCUTS_GLOBAL])
+      ? window[MANAGED_SHORTCUTS_GLOBAL]
+      : [];
+    return configured.flatMap((raw) => {
+      const id = typeof raw?.id === "string" ? raw.id.trim().slice(0, 80) : "";
+      const name = typeof raw?.name === "string" ? raw.name.trim().slice(0, 24) : "";
+      const url = validShortcutUrl(raw?.url);
+      if (!id || !name || !url || seen.has(id)) return [];
+      seen.add(id);
+      return [{
+        id,
+        name,
+        url,
+        icon: Object.hasOwn(SHORTCUT_ICON_PRESETS, raw.icon) ? raw.icon : "link",
+        openMode: raw.openMode === "browser" ? "browser" : "internal",
+        managed: true,
       }];
     });
   }
@@ -2191,6 +2315,7 @@
     customShortcutLastFocusedElement = document.activeElement;
     if (customShortcutPage.parentElement !== mount.surface) mount.surface.appendChild(customShortcutPage);
     customShortcutPage.querySelector("[data-codex-custom-shortcut-title]").textContent = item.name;
+    customShortcutPage.dataset.codexCustomShortcutItem = shortcutItemKey(item);
     customShortcutFrame?.remove();
     const frame = document.createElement("iframe");
     frame.id = CUSTOM_SHORTCUT_FRAME_ID;
@@ -2203,6 +2328,7 @@
     customShortcutPage.appendChild(frame);
     customShortcutPage.hidden = false;
     document.documentElement.setAttribute("data-codex-custom-shortcut-open", "true");
+    scheduleSync();
     return true;
   }
 
@@ -2212,6 +2338,7 @@
     customShortcutFrame = null;
     restoreCustomShortcutNativeContent();
     document.documentElement.removeAttribute("data-codex-custom-shortcut-open");
+    customShortcutPage?.removeAttribute("data-codex-custom-shortcut-item");
     if (restoreFocus) customShortcutLastFocusedElement?.focus?.();
     customShortcutLastFocusedElement = null;
   }
@@ -3043,7 +3170,7 @@
     dialog.innerHTML = `
       <div class="codex-shortcut-settings-shell">
         <header class="codex-shortcut-settings-header">
-          <h2>快捷入口设置</h2>
+          <h2>AIYOUcodex 设置</h2>
           <button type="button" data-codex-shortcut-settings-close aria-label="关闭设置">×</button>
         </header>
         <div class="codex-shortcut-settings-body">
@@ -3110,15 +3237,17 @@
   }
 
   function shortcutLabel(button) {
-    return button?.querySelector(".text-fade-truncate")?.textContent?.trim()
+    const label = button?.querySelector(".text-fade-truncate")?.textContent?.trim()
       || button?.getAttribute("title")
       || button?.getAttribute("aria-label")?.replace(/^打开/u, "")
       || "快捷入口";
+    return canonicalShortcutLabel(label);
   }
 
   function findNativeShortcutButton(name) {
+    const canonicalName = canonicalShortcutLabel(name);
     return Array.from(document.querySelectorAll("button")).find((button) =>
-      !button.closest(`#${SHORTCUT_GRID_ID}`) && shortcutLabel(button) === name,
+      !button.closest(`#${SHORTCUT_GRID_ID}`) && shortcutLabel(button) === canonicalName,
     );
   }
 
@@ -3140,14 +3269,24 @@
   function nativeShortcutSources() {
     const newConversation = findNativeShortcutButton("新对话");
     const pullRequests = findNativeShortcutButton("拉取请求");
+    const overflowButton = findNativeShortcutButton("更多");
     const navigationGroup = shortcutSiblingGroup(pullRequests);
-    const newConversationRow = newConversation?.parentElement;
-    const header = newConversationRow?.parentElement?.parentElement?.parentElement;
+    const overflowGroup = overflowButton?.parentElement?.parentElement || null;
+    let newConversationRow = newConversation?.parentElement;
+    while (newConversationRow && !newConversationRow.matches("nav, [data-app-action-sidebar-scroll]")) {
+      const rowButtons = Array.from(newConversationRow.querySelectorAll("button"));
+      if (rowButtons.includes(newConversation) && rowButtons.length > 1) break;
+      newConversationRow = newConversationRow.parentElement;
+    }
+    if (newConversationRow?.matches("nav, [data-app-action-sidebar-scroll]")) {
+      newConversationRow = newConversation?.parentElement;
+    }
+    const header = newConversation?.parentElement?.parentElement?.parentElement?.parentElement;
     if (!newConversation || !navigationGroup || !header) return null;
 
     const navigationButtons = shortcutGroupButtons(navigationGroup);
-    const quickButton = Array.from(newConversationRow.children)
-      .flatMap((node) => node === newConversation ? [] : Array.from(node.querySelectorAll?.("button") || []))[0] || null;
+    const quickButton = Array.from(newConversationRow.querySelectorAll("button"))
+      .find((button) => button !== newConversation) || null;
     const sourceItems = [
       { name: "新对话", button: newConversation, quickButton },
       ...navigationButtons.map((button) => ({ name: shortcutLabel(button), button, quickButton: null })),
@@ -3157,9 +3296,16 @@
       { id: "skills-grouping", name: "Skills 分组", kind: "enhancement", icon: "skills", activate: openSkillsGrouping },
       { id: "asset-console", name: "资产控制台", kind: "enhancement", icon: "assets", activate: openAssetConsolePanel },
     ];
-    const catalogItems = [...builtInItems, ...enhancementItems, ...normalizedCustomShortcuts()];
+    const managedItems = normalizedManagedShortcuts();
+    const catalogItems = [
+      ...builtInItems.slice(0, 1),
+      ...managedItems,
+      ...builtInItems.slice(1),
+      ...enhancementItems,
+      ...normalizedCustomShortcuts(),
+    ];
     const items = catalogItems.filter((item) => !shortcutSettings.hidden.includes(shortcutItemKey(item)));
-    return { header, newConversationRow, navigationGroup, sourceItems, catalogItems, items };
+    return { header, newConversationRow, navigationGroup, overflowGroup, sourceItems, catalogItems, items };
   }
 
   function shortcutIcon(source, className = SHORTCUT_ICON_CLASS, name = "", icon = "") {
@@ -3190,6 +3336,7 @@
     if (item.url) button.dataset.codexSidebarShortcutUrl = item.url;
     if (item.kind === "settings") button.dataset.codexSidebarShortcutSettings = "true";
     if (item.custom) button.dataset.codexSidebarShortcutCustom = item.id;
+    if (item.managed) button.dataset.codexSidebarShortcutManaged = item.id;
     button.setAttribute("aria-label", item.button?.getAttribute("aria-label") || `打开${item.name}`);
     button.title = item.name;
     const label = document.createElement("span");
@@ -3199,8 +3346,8 @@
     button.onclick = () => {
       if (item.kind === "settings") openShortcutSettings();
       else if (item.kind === "enhancement") item.activate?.();
-      else if (item.custom && item.openMode === "browser") openCustomShortcutInBrowser(item);
-      else if (item.custom) openCustomShortcutPanel(item);
+      else if ((item.custom || item.managed) && item.openMode === "browser") openCustomShortcutInBrowser(item);
+      else if (item.custom || item.managed) openCustomShortcutPanel(item);
       else findNativeShortcutButton(item.name)?.click();
     };
     wrap.appendChild(button);
@@ -3226,13 +3373,18 @@
 
   function updateShortcutCard(grid, item) {
     const button = Array.from(grid.querySelectorAll("[data-codex-sidebar-shortcut-card]"))
-      .find((candidate) => item.custom
-        ? candidate.dataset.codexSidebarShortcutCustom === item.id
-        : candidate.dataset.codexSidebarShortcutName === item.name);
+      .find((candidate) => item.managed
+        ? candidate.dataset.codexSidebarShortcutManaged === item.id
+        : item.custom
+          ? candidate.dataset.codexSidebarShortcutCustom === item.id
+          : candidate.dataset.codexSidebarShortcutName === item.name);
     if (!button) return;
     if (!item.button) {
       button.disabled = false;
-      const active = item.id === "asset-console"
+      const active = item.managed
+        ? customShortcutPage?.hidden === false
+          && customShortcutPage.dataset.codexCustomShortcutItem === shortcutItemKey(item)
+        : item.id === "asset-console"
         ? Boolean(assetConsolePage && !assetConsolePage.hidden)
         : item.id === "skills-grouping"
           ? skillOrganizerOpening || Boolean(document.getElementById(SKILL_ORGANIZER_ID))
@@ -3307,6 +3459,7 @@
     shortcutCatalog = sources.catalogItems;
     sources.newConversationRow.setAttribute("data-codex-sidebar-shortcut-source-hidden", "true");
     sources.navigationGroup.setAttribute("data-codex-sidebar-shortcut-source-group-hidden", "true");
+    sources.overflowGroup?.setAttribute("data-codex-sidebar-shortcut-source-group-hidden", "true");
     for (const item of sources.sourceItems) {
       item.button.dataset.codexSidebarShortcutSourceName = item.name;
     }
@@ -3316,20 +3469,29 @@
   }
 
   function sectionLabel(button) {
-    return button?.querySelector("span.min-w-0.truncate")?.textContent?.trim()
+    const label = button?.closest("section[data-app-action-sidebar-section-heading]")
+      ?.getAttribute("data-app-action-sidebar-section-heading")
+      || button?.querySelector("span.min-w-0.truncate")?.textContent?.trim()
       || button?.textContent?.trim()
       || "";
+    return canonicalSectionLabel(label);
   }
 
   function nativeSectionSource(name) {
-    const button = Array.from(document.querySelectorAll("button[data-app-action-sidebar-section-toggle]"))
-      .find((candidate) => !candidate.closest(`#${SECTION_TABS_ID}`) && sectionLabel(candidate) === name);
+    const canonicalName = canonicalSectionLabel(name);
+    const nativeSection = Array.from(document.querySelectorAll("section[data-app-action-sidebar-section-heading]"))
+      .find((candidate) => canonicalSectionLabel(
+        candidate.getAttribute("data-app-action-sidebar-section-heading"),
+      ) === canonicalName);
+    const button = nativeSection?.querySelector("button[data-app-action-sidebar-section-toggle]")
+      || Array.from(document.querySelectorAll("button[data-app-action-sidebar-section-toggle]"))
+        .find((candidate) => !candidate.closest(`#${SECTION_TABS_ID}`) && sectionLabel(candidate) === canonicalName);
     if (!button) return null;
     let heading = button.parentElement;
     while (heading && !heading.classList.contains("group/nav-section-title")) heading = heading.parentElement;
     const section = heading?.closest("section");
     if (!heading || !section) return null;
-    return { name, button, heading, section, panelHost: null, actions: null };
+    return { name: canonicalName, button, heading, section, panelHost: null, actions: null };
   }
 
   function commonAncestor(nodes) {
@@ -3362,10 +3524,32 @@
     const list = Array.from(document.querySelectorAll('[role="list"]')).find((candidate) => {
       if (!candidate.querySelector(ROW_SELECTOR)) return false;
       return Array.from(candidate.querySelectorAll("div,span,h1,h2,h3,h4")).some((node) =>
-        node.childElementCount === 0 && node.textContent?.trim() === "优先级",
+        node.childElementCount === 0 && canonicalSectionLabel(node.textContent) === "优先级",
       );
     });
     return list?.parentElement ? { common: list.parentElement, list } : null;
+  }
+
+  function nativeActivityViewOpen() {
+    return Array.from(document.querySelectorAll("button[aria-label]")).some((button) => {
+      const label = normalizedNativeLabel(button.getAttribute("aria-label"));
+      return /^(?:关闭活动视图|close activity view)(?:[，,\s]|$)/iu.test(label)
+        || (/^(?:查看活动|view activity|通知|notifications?)(?:[，,\s]|$)/iu.test(label)
+          && (button.getAttribute("aria-expanded") === "true" || button.getAttribute("aria-pressed") === "true"));
+    }) || Array.from(document.querySelectorAll("button[aria-label]")).some((button) =>
+      /^(?:活动视图选项|activity view options)$/iu.test(
+        normalizedNativeLabel(button.getAttribute("aria-label")),
+      ),
+    );
+  }
+
+  function sectionEnhancementMounted() {
+    return Boolean(
+      sectionSources.size
+      || document.getElementById(SECTION_TABS_ID)
+      || document.getElementById(FOLDER_SWITCHER_ID)
+      || document.querySelector('[data-codex-sidebar-priority-native-hidden="true"]'),
+    );
   }
 
   function sectionIdPart(name) {
@@ -3461,6 +3645,15 @@
     const actions = document.createElement("div");
     actions.dataset.codexSidebarProjectActions = "true";
     actions.setAttribute("aria-label", "项目操作");
+    const currentFolderNewChat = document.createElement("button");
+    currentFolderNewChat.type = "button";
+    currentFolderNewChat.hidden = true;
+    currentFolderNewChat.dataset.codexSidebarCurrentFolderNewChat = "";
+    currentFolderNewChat.setAttribute("aria-label", "在当前文件夹中新建对话");
+    currentFolderNewChat.title = "在当前文件夹中新建对话";
+    currentFolderNewChat.innerHTML = '<svg aria-hidden="true" width="17" height="17" viewBox="0 0 16 16" fill="none"><path d="M6.33 1.81H4.67A2.86 2.86 0 0 0 1.81 4.67v6.66a2.86 2.86 0 0 0 2.86 2.86h6.66a2.86 2.86 0 0 0 2.86-2.86V9.67" stroke="currentColor" stroke-width="1.15" stroke-linecap="round"/><path d="m7.05 9.96.52-2.09 4.38-4.38a1.42 1.42 0 0 1 2 2L9.57 9.87l-2.52.09Z" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round"/></svg>';
+    currentFolderNewChat.onclick = handleCurrentFolderNewChat;
+    actions.appendChild(currentFolderNewChat);
     bar.append(tablist, actions);
     return bar;
   }
@@ -3550,6 +3743,10 @@
   }
 
   function ensureSectionTabs() {
+    if (nativeActivityViewOpen()) {
+      if (sectionEnhancementMounted()) clearSectionEnhancement();
+      return;
+    }
     const sources = nativeSectionSources();
     if (!sources) {
       const prioritySource = nativePrioritySource();
@@ -3745,13 +3942,14 @@
 
   function handlePinDocumentClick(event) {
     const button = event.target?.closest?.("button[aria-label]");
-    const action = button?.getAttribute("aria-label");
-    if (action !== "置顶聊天" && action !== "取消置顶聊天") return;
+    const actionLabel = button?.getAttribute("aria-label");
+    if (!isPinActionLabel(actionLabel)) return;
+    const action = canonicalPinActionLabel(actionLabel);
     const row = button.closest(ROW_SELECTOR);
     const id = normalizedThreadId(row?.getAttribute("data-app-action-sidebar-thread-id"));
     if (!id) return;
     const key = pinnedThreadStorageKey(id);
-    if (action === "置顶聊天") {
+    if (action === "pin") {
       pinnedThreadIds.add(id);
       pinnedThreadTimes[key] = Date.now();
     } else {
@@ -3812,7 +4010,7 @@
       const existingActions = document.querySelector(`#${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-actions-source="${CSS.escape(id)}"]`);
       const rowActions = Array.from(row.children).find((child) =>
         Array.from(child.querySelectorAll?.("button") || []).some((button) =>
-          button.getAttribute("aria-label") === `${label} 的项目操作`,
+          isProjectActionsLabel(button.getAttribute("aria-label"), label),
         ),
       );
       const threadTitles = Array.from(folder.querySelectorAll(ROW_SELECTOR))
@@ -3853,7 +4051,7 @@
   function requestCompleteNativeFolderList(sources) {
     const expandButton = Array.from(sources.listRoot.children)
       .map((child) => child.querySelector(":scope > button"))
-      .find((button) => button?.textContent?.trim() === "展开显示");
+      .find((button) => isShowMoreLabel(button?.textContent));
     if (!expandButton || expandButton.dataset.codexSidebarFolderListExpansionRequested === "true") return false;
     expandButton.dataset.codexSidebarFolderListExpansionRequested = "true";
     expandButton.click();
@@ -3986,7 +4184,7 @@
       return;
     }
     const expandButton = Array.from(item.folder.querySelectorAll("button"))
-      .find((button) => button.textContent?.trim() === "展开显示");
+      .find((button) => isShowMoreLabel(button.textContent));
     if (!expandButton) return;
     if (folderSearchExpansionPending?.id === item.id
       && folderSearchExpansionPending?.rowCount === rows.length) return;
@@ -4033,10 +4231,41 @@
 
   function nativeFolderCreateButton(item) {
     if (!item?.actions) return null;
-    const expectedLabel = `在 ${item.label} 中开始新聊天`;
     return Array.from(item.actions.querySelectorAll("button")).find((button) =>
-      button.getAttribute("aria-label") === expectedLabel,
+      isFolderCreateLabel(button.getAttribute("aria-label"), item.label),
     ) || null;
+  }
+
+  function syncCurrentFolderNewChatButton(item) {
+    const button = document.querySelector(`#${SECTION_TABS_ID} [data-codex-sidebar-current-folder-new-chat]`);
+    if (!button) return;
+    const source = !item?.virtual && item?.id === activeFolderId
+      ? nativeFolderCreateButton(item)
+      : null;
+    if (!source?.isConnected) {
+      button.hidden = true;
+      button.dataset.codexSidebarCurrentFolderNewChat = "";
+      button.setAttribute("aria-label", "在当前文件夹中新建对话");
+      button.title = "在当前文件夹中新建对话";
+      return;
+    }
+    button.hidden = false;
+    button.dataset.codexSidebarCurrentFolderNewChat = item.id;
+    button.setAttribute("aria-label", `在“${item.label}”中新建对话`);
+    button.title = `在“${item.label}”中新建对话`;
+  }
+
+  function handleCurrentFolderNewChat(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const item = folderSources.get(activeFolderId);
+    const source = nativeFolderCreateButton(item);
+    if (!source?.isConnected) {
+      syncCurrentFolderNewChatButton(null);
+      scheduleSync();
+      return;
+    }
+    source.click();
   }
 
   function moveActiveFolderActions(item) {
@@ -4059,10 +4288,11 @@
         create.dataset.codexSidebarFolderCreateOriginalTitle = create.getAttribute("title") || "";
       }
       create.dataset.codexSidebarFolderCreate = item.id;
-      create.title = `在“${item.label}”文件夹下创建项目`;
+      create.title = `在“${item.label}”中新建对话`;
     }
     if (item.actions.parentElement !== host) host.appendChild(item.actions);
     host.hidden = false;
+    syncCurrentFolderNewChatButton(item);
   }
 
   function conversationRoute(rawThreadId) {
@@ -4537,12 +4767,15 @@
     expand.hidden = tagItems.length <= 6;
     expand.setAttribute("aria-expanded", String(folderTagsExpanded));
     expand.querySelector("span").textContent = folderTagsExpanded ? "收起" : "展开全部";
-    moveActiveFolderActions(allSelected ? null : items.find((item) => item.id === activeFolderId));
-    revealFolderSearchMatch(allSelected ? null : items.find((item) => item.id === activeFolderId));
+    const activeItem = allSelected ? null : items.find((item) => item.id === activeFolderId);
+    moveActiveFolderActions(activeItem);
+    syncCurrentFolderNewChatButton(activeItem);
+    revealFolderSearchMatch(activeItem);
   }
 
   function clearFolderEnhancement() {
     restoreFolderActions();
+    syncCurrentFolderNewChatButton(null);
     document.getElementById(FOLDER_SWITCHER_ID)?.remove();
     document.getElementById(ALL_PROJECTS_PANEL_ID)?.remove();
     document.querySelectorAll("[data-codex-sidebar-virtual-folder-panel]").forEach((panel) => panel.remove());
@@ -4699,7 +4932,9 @@
     }
     button.onpointerdown = handleViewTogglePointerDown;
     button.onclick = handleViewToggleClick;
-    if (button.parentElement !== host || button.nextElementSibling !== searchSlot) host.insertBefore(button, searchSlot);
+    const settingsButton = document.getElementById(SHORTCUT_SETTINGS_BUTTON_ID);
+    const before = settingsButton?.parentElement === host ? settingsButton : searchSlot;
+    if (button.parentElement !== host || button.nextElementSibling !== before) host.insertBefore(button, before);
     ensureUsageStatus(host, button);
     updateViewState();
   }
@@ -4724,17 +4959,39 @@
       button.dataset.codexSidebarShortcutSettings = "true";
       button.dataset.codexPreviewRuntime = RUNTIME_TOKEN;
       button.setAttribute("aria-label", "管理快捷入口");
-      button.title = "快捷入口设置";
+      button.title = "AIYOUcodex 快捷入口设置";
       button.innerHTML = settingsShortcutSvg();
     }
-    button.onclick = openShortcutSettings;
-    const notification = document.querySelector('button[aria-label^="查看活动"], button[aria-label^="View activity"], button[aria-label*="通知"], button[aria-label*="Notification"]');
-    let notificationSlot = notification;
-    while (notificationSlot?.parentElement && notificationSlot.parentElement !== host) {
-      notificationSlot = notificationSlot.parentElement;
+    button.onpointerdown = handleShortcutSettingsPointerDown;
+    button.onclick = handleShortcutSettingsClick;
+    if (button.parentElement !== host || button.nextElementSibling !== searchSlot) host.insertBefore(button, searchSlot);
+  }
+
+  function handleShortcutSettingsPointerDown(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openShortcutSettings();
+  }
+
+  function handleShortcutSettingsClick(event) {
+    if (event.detail > 0) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
     }
-    const before = notificationSlot?.parentElement === host ? notificationSlot : searchSlot;
-    if (button.parentElement !== host || button.nextElementSibling !== before) host.insertBefore(button, before);
+    openShortcutSettings();
+  }
+
+  function handleNativeActivityClick(event) {
+    const button = event.target?.closest?.("button[aria-label]");
+    const label = normalizedNativeLabel(button?.getAttribute("aria-label"));
+    if (!/^(?:查看活动|关闭活动视图|view activity|close activity view|通知|notifications?)(?:[，,\s]|$)/iu.test(label)) return;
+    window.setTimeout(() => {
+      if (destroyed) return;
+      if (nativeActivityViewOpen() && sectionEnhancementMounted()) clearSectionEnhancement();
+      scheduleSync();
+    }, 0);
   }
 
   function openRow() {
@@ -4840,6 +5097,12 @@
     resumeSkillsGroupingOpenRequest();
     ensureViewToggle();
     ensureShortcutSettingsButton();
+    if (nativeActivityViewOpen()) {
+      if (sectionEnhancementMounted()) clearSectionEnhancement();
+      ensureRecoveredConversationHistory();
+      document.getElementById(FALLBACK_TOOLTIP_ID)?.remove();
+      return;
+    }
     ensureSectionTabs();
     ensureFolderSwitcher();
     ensureRecoveredConversationHistory();
@@ -5055,6 +5318,7 @@
     document.addEventListener("pointerout", handlePreviewPointerOut, true);
     document.addEventListener("pointerdown", handleStatusDocumentPointerDown, true);
     document.addEventListener("click", handlePinDocumentClick, true);
+    document.addEventListener("click", handleNativeActivityClick, true);
     document.addEventListener("keydown", handleWorkspaceEnhancementKeydown, true);
     document.addEventListener("click", handleWorkspaceCommandClick, true);
     window.addEventListener("message", handleAssetConsoleMessage);
@@ -5076,6 +5340,7 @@
     document.removeEventListener("pointerout", handlePreviewPointerOut, true);
     document.removeEventListener("pointerdown", handleStatusDocumentPointerDown, true);
     document.removeEventListener("click", handlePinDocumentClick, true);
+    document.removeEventListener("click", handleNativeActivityClick, true);
     document.removeEventListener("keydown", handleWorkspaceEnhancementKeydown, true);
     document.removeEventListener("click", handleWorkspaceCommandClick, true);
     window.removeEventListener("message", handleAssetConsoleMessage);

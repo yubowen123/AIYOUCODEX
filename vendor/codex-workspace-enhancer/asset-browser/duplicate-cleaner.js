@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
+import { isIgnoredAssetPath, yieldToEventLoop } from "./asset-index-update-utils.js";
 
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif", ".bmp", ".tif", ".tiff"]);
+const MAX_PENDING_CANDIDATES = 512;
 
 function clampNumber(value, fallback, minimum, maximum) {
   const parsed = Number(value);
@@ -94,6 +96,7 @@ export function normalizeDeduplication(raw = {}, { defaultQuarantinePath = "" } 
   const source = raw && typeof raw === "object" ? raw : {};
   return {
     enabled: source.enabled !== false,
+    automaticSweep: source.automaticSweep === true,
     exactContentOnly: true,
     sameDirectoryOnly: true,
     settleSeconds: clampNumber(source.settleSeconds, 5, 2, 60),
@@ -140,6 +143,7 @@ export class ExactDuplicateCleaner {
     const key = absolutePath.toLowerCase();
     const previous = this.pending.get(key);
     if (previous) clearTimeout(previous);
+    if (!previous && this.pending.size >= MAX_PENDING_CANDIDATES) return;
     const timer = setTimeout(() => {
       this.pending.delete(key);
       this.enqueue(async () => {
@@ -236,9 +240,11 @@ export class ExactDuplicateCleaner {
       return;
     }
     const cutoff = config.recentSweepHours > 0 ? Date.now() - config.recentSweepHours * 60 * 60 * 1000 : 0;
+    let processed = 0;
     for (const entry of entries) {
       if (entry.name.startsWith(".") || entry.isSymbolicLink()) continue;
       const fullPath = path.join(root, entry.name);
+      if (isIgnoredAssetPath(fullPath, root)) continue;
       if (entry.isDirectory()) {
         if (!isInside(config.quarantinePath, fullPath) && !isInside(fullPath, config.quarantinePath)) {
           await this.collectRecentImages(fullPath, config, output);
@@ -249,6 +255,8 @@ export class ExactDuplicateCleaner {
           output.push({ path: fullPath, size: stats.size });
         }
       }
+      processed += 1;
+      if (processed % 128 === 0) await yieldToEventLoop();
     }
   }
 

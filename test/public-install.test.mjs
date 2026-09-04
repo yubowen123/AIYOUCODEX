@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+
+import { isPrivateConfigPath } from "../scripts/verify-public-boundary.mjs";
 
 const projectRoot = path.resolve(".");
 const macOnly = { skip: process.platform !== "darwin" };
@@ -27,7 +29,8 @@ test("public installer copies a portable runtime and activates it under the curr
     });
 
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /Codex Sidebar Enhancer installed/);
+    assert.match(result.stdout, /AIYOUcodex installed/);
+    await access(path.join(testHome, "Applications", "AIYOUcodex.app"));
     await access(path.join(installDir, "scripts", "injector.mjs"));
     await access(path.join(installDir, "scripts", "runtime.mjs"));
     await access(path.join(installDir, "inject", "conversation-preview.user.js"));
@@ -44,8 +47,11 @@ test("public installer copies a portable runtime and activates it under the curr
       await readFile(path.join(installDir, "scripts", "injector.mjs"), "utf8"),
       await readFile(path.join(installDir, "inject", "conversation-preview.user.js"), "utf8"),
     ].join("\n");
-    assert.doesNotMatch(publicRuntime, /dz-ailab\.dzkjm\.cn|__codexTvHostV1|TV_SHORTCUT_URL/,
-      "The public installer must not ship the private TV entry or its fixed service URL");
+    assert.match(publicRuntime, /readManagedShortcuts\(\)/,
+      "the public runtime must keep loading normalized shortcuts from the external local profile");
+    const installedPaths = await readdir(installDir, { recursive: true });
+    assert.deepEqual(installedPaths.filter(isPrivateConfigPath), [],
+      "the installed public runtime must not contain local-only profiles");
     assert.match(publicRuntime, /HIDDEN_SHORTCUT_NAMES = new Set\(\)/,
       "The public UI must expose every native shortcut, including bundled project management");
     const plistPath = path.join(testHome, "Library", "LaunchAgents", "com.yubowen.codex-sidebar-enhancer.plist");
@@ -86,9 +92,10 @@ test("public uninstaller removes only the installed runtime, LaunchAgent, launch
       env: sharedEnv,
     });
     assert.equal(removed.status, 0, removed.stderr);
-    assert.match(removed.stdout, /Codex Sidebar Enhancer uninstalled/);
+    assert.match(removed.stdout, /AIYOUcodex uninstalled/);
     await assert.rejects(access(installDir));
     await assert.rejects(access(path.join(testHome, "Library", "LaunchAgents", "com.yubowen.codex-sidebar-enhancer.plist")));
+    await assert.rejects(access(path.join(testHome, "Applications", "AIYOUcodex.app")));
     await assert.rejects(access(path.join(testHome, "Applications", "Codex Sidebar Enhancer.app")));
     await assert.rejects(access(path.join(testHome, "Library", "Logs", "CodexSidebarEnhancer")));
   } finally {

@@ -95,7 +95,7 @@ if ($runningApp) {
   Add-Type -AssemblyName PresentationFramework
   $answer = [Windows.MessageBox]::Show(
     "Codex or ChatGPT must restart once to enable the sidebar enhancement.",
-    "Codex Sidebar Enhancer",
+    "AIYOUcodex",
     [Windows.MessageBoxButton]::YesNo,
     [Windows.MessageBoxImage]::Information
   )
@@ -112,7 +112,7 @@ if (-not $appPath) {
   Add-Type -AssemblyName PresentationFramework
   [Windows.MessageBox]::Show(
     "ChatGPT or Codex was not found. Install the Windows desktop app first.",
-    "Codex Sidebar Enhancer",
+    "AIYOUcodex",
     [Windows.MessageBoxButton]::OK,
     [Windows.MessageBoxImage]::Error
   ) | Out-Null

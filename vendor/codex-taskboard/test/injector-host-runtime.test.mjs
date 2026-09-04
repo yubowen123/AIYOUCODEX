@@ -5,6 +5,7 @@ import {
   codexStartupAction,
   findResidentInjectorPids,
   handleHostBindingPayload,
+  injectionRuntimeNeedsRefresh,
   reconcileManagedCodexRuntime,
   reconcileInjectionRuntime,
   restartResidentInjector,
@@ -55,6 +56,26 @@ test("Codex target selection excludes the avatar overlay and keeps the main wind
 
   assert.equal(typeof injectorRuntime.selectCodexTargets, "function");
   assert.deepEqual(injectorRuntime.selectCodexTargets(targets), [targets[1]]);
+});
+
+test("resident target health detects a reset renderer without duplicating a healthy injection", () => {
+  assert.equal(injectionRuntimeNeedsRefresh(null, "current-hash"), true);
+  assert.equal(injectionRuntimeNeedsRefresh({
+    sourceHash: null,
+    entryMounted: false,
+  }, "current-hash"), true);
+  assert.equal(injectionRuntimeNeedsRefresh({
+    sourceHash: "stale-hash",
+    entryMounted: true,
+  }, "current-hash"), true);
+  assert.equal(injectionRuntimeNeedsRefresh({
+    sourceHash: "current-hash",
+    entryMounted: false,
+  }, "current-hash"), true);
+  assert.equal(injectionRuntimeNeedsRefresh({
+    sourceHash: "current-hash",
+    entryMounted: true,
+  }, "current-hash"), false);
 });
 
 test("attach-existing injectors wait for the canonical Taskboard instead of spawning a second server", () => {

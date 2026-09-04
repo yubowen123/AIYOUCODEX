@@ -9,6 +9,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 
 test("public package contains every managed runtime and excludes local-only output", () => {
+  const packageMetadata = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  assert.equal(packageMetadata.name, "aiyoucodex");
+  assert.match(packageMetadata.description, /^AIYOUcodex\b/);
   const result = JSON.parse(execFileSync(npm, ["pack", "--dry-run", "--json"], {
     cwd: root,
     encoding: "utf8",

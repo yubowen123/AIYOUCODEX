@@ -25,6 +25,12 @@ test("installer dry-run renders portable user paths and XML-safe launch configur
     assert.equal(plan.port, 9231);
     assert.equal(plan.label, "com.yubowen.codex-sidebar-enhancer");
     assert.equal(plan.plistPath, path.join(testHome, "Library", "LaunchAgents", `${plan.label}.plist`));
+    assert.equal(plan.launcherPath, path.join(testHome, "Applications", "AIYOUcodex.app"));
+    assert.deepEqual(plan.legacyLauncherPaths, [
+      path.join(testHome, "Applications", "Codex Sidebar Enhancer.app"),
+    ]);
+    assert.match(plan.launcherInfoPlist, /<string>AIYOUcodex<\/string>/);
+    assert.match(plan.launcherInfoPlist, /com\.yubowen\.codex-sidebar-enhancer\.launcher/);
     assert.match(plan.plist, /Codex &amp; Sidebar/);
     assert.doesNotMatch(plan.plist, /\/Users\/yubowen/);
   } finally {
@@ -37,8 +43,11 @@ test("installer activation writes a loadable user LaunchAgent without invoking l
   try {
     const launchAgentsDir = path.join(testHome, "Library", "LaunchAgents");
     const legacyPlistPath = path.join(launchAgentsDir, "com.yubowen.codex-conversation-preview.plist");
+    const legacyLauncherPath = path.join(testHome, "Applications", "Codex Sidebar Enhancer.app");
     await mkdir(launchAgentsDir, { recursive: true });
     await writeFile(legacyPlistPath, "legacy");
+    await mkdir(legacyLauncherPath, { recursive: true });
+    await writeFile(path.join(legacyLauncherPath, "legacy.txt"), "legacy");
     const result = spawnSync(process.execPath, [
       "scripts/install.mjs",
       "--activate",
@@ -55,9 +64,12 @@ test("installer activation writes a loadable user LaunchAgent without invoking l
     const plist = await readFile(activation.plistPath, "utf8");
     assert.match(plist, new RegExp(process.execPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(plist, /scripts\/runtime\.mjs/);
-    assert.equal(activation.launcherPath, path.join(testHome, "Applications", "Codex Sidebar Enhancer.app"));
+    assert.equal(activation.launcherPath, path.join(testHome, "Applications", "AIYOUcodex.app"));
     await access(path.join(activation.launcherPath, "Contents", "Info.plist"));
-    const launcherExecutable = path.join(activation.launcherPath, "Contents", "MacOS", "Codex Sidebar Enhancer");
+    const launcherInfo = await readFile(path.join(activation.launcherPath, "Contents", "Info.plist"), "utf8");
+    assert.match(launcherInfo, /<string>AIYOUcodex<\/string>/);
+    assert.match(launcherInfo, /com\.yubowen\.codex-sidebar-enhancer\.launcher/);
+    const launcherExecutable = path.join(activation.launcherPath, "Contents", "MacOS", "AIYOUcodex");
     const launcherSource = await readFile(launcherExecutable, "utf8");
     assert.match(launcherSource, /PORT=9231/);
     assert.match(launcherSource, /--remote-debugging-port=\$\{PORT\}/);
@@ -67,6 +79,7 @@ test("installer activation writes a loadable user LaunchAgent without invoking l
     );
     assert.ok((await stat(launcherExecutable)).mode & 0o100, "launcher must be executable by its owner");
     await assert.rejects(access(legacyPlistPath));
+    await assert.rejects(access(legacyLauncherPath));
   } finally {
     await rm(testHome, { recursive: true, force: true });
   }

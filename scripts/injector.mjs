@@ -4,18 +4,20 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { connectMainCodex, readTargets, selectMainCodexTarget } from "./cdp-client.mjs";
+import { connectCodexTarget, readTargets, selectMainCodexTargets } from "./cdp-client.mjs";
 import { PreviewRepository } from "../lib/preview-data.mjs";
 import { presentCardPreview } from "../lib/card-view.mjs";
 import { presentRateLimit } from "../lib/usage-data.mjs";
 import {
   DesktopAppRecovery,
   needsPreviewAttachment,
+  reconcileRendererSessions,
 } from "../lib/injector-state.mjs";
 import { createDesktopAppRuntime } from "../lib/desktop-runtime.mjs";
 import { readActiveTaskThreads } from "../lib/taskboard-status.mjs";
 import { AssetConsoleBridge } from "../lib/asset-console-bridge.mjs";
 import { readInstalledSkillCatalog } from "../lib/skill-catalog.mjs";
+import { readManagedShortcuts } from "../lib/managed-shortcuts.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(root, "inject", "conversation-preview.user.js");
@@ -33,45 +35,89 @@ function parseArgs(argv) {
   return options;
 }
 
-async function targetId(port) {
-  try {
-    return selectMainCodexTarget(await readTargets(port))?.id || null;
-  } catch {
-    return null;
-  }
-}
-
 const options = parseArgs(process.argv.slice(2));
 const repository = new PreviewRepository();
 
 let stopped = false;
-let attachedTargetId = null;
-let client = null;
-let registeredScriptIdentifier = null;
-let deliveredHistoryKey = "";
+const sessions = new Map();
 let skillCatalog = [];
 let nextSkillCatalogRefreshAt = 0;
 const desktopAppRecovery = new DesktopAppRecovery();
 const desktopAppRuntime = createDesktopAppRuntime();
-const assetConsoleBridge = new AssetConsoleBridge({
+const assetConsoleOptions = {
   staticRoot: process.env.CODEX_ASSET_CONSOLE_STATIC_ROOT
     || path.join(root, "vendor", "codex-workspace-enhancer", "asset-console", "public"),
   tokenPath: process.env.CODEX_ASSET_CONSOLE_TOKEN_FILE,
   port: Number(process.env.CODEX_ASSET_CONSOLE_PORT || 5177),
   logger: (message) => process.stdout.write(`[asset-console] ${message}\n`),
-});
+};
 
-async function closeClient() {
-  const closingClient = client;
-  if (assetConsoleBridge.client === closingClient) await assetConsoleBridge.dispose();
-  closingClient?.close();
-  if (client === closingClient) client = null;
-  deliveredHistoryKey = "";
+function createAssetConsoleBridge() {
+  return new AssetConsoleBridge(assetConsoleOptions);
 }
 
-async function attach() {
-  const nextTargetId = await targetId(options.port);
-  if (!nextTargetId && options.watch) {
+async function disposeRendererSession(session, { destroy = false } = {}) {
+  if (!session) return;
+  if (destroy) {
+    try { await session.client.evaluate("window.__codexConversationPreviewInjection__?.destroy?.()") } catch {}
+  }
+  await session.assetConsoleBridge.dispose();
+  session.client.close();
+  session.deliveredHistoryKey = "";
+}
+
+async function attachTarget(target) {
+  const client = await connectCodexTarget(target);
+  const assetConsoleBridge = createAssetConsoleBridge();
+  try {
+    const oldIdentifier = await client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] || null`);
+    if (oldIdentifier) {
+      try { await client.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: oldIdentifier }); } catch {}
+    }
+    const [userSource, managedShortcuts] = await Promise.all([
+      readFile(sourcePath, "utf8"),
+      readManagedShortcuts().catch((error) => {
+        process.stderr.write(`[managed-shortcuts] ${error.message}\n`);
+        return [];
+      }),
+    ]);
+    const rendererSource = `if (window.top === window) { window.__CODEX_SIDEBAR_MANAGED_SHORTCUTS__ = ${JSON.stringify(managedShortcuts)}; ${userSource}\n}`;
+    const registered = await client.send("Page.addScriptToEvaluateOnNewDocument", { source: rendererSource });
+    await client.evaluate(rendererSource);
+    await client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] = ${JSON.stringify(registered.identifier)}`);
+    await assetConsoleBridge.install(client);
+    process.stdout.write(`Codex conversation preview attached to renderer ${target.id}\n`);
+    return {
+      targetId: target.id,
+      client,
+      assetConsoleBridge,
+      registeredScriptIdentifier: registered.identifier,
+      deliveredHistoryKey: "",
+    };
+  } catch (error) {
+    await assetConsoleBridge.dispose().catch(() => {});
+    client.close();
+    throw error;
+  }
+}
+
+async function reconcileTargets() {
+  let targets = [];
+  try {
+    targets = selectMainCodexTargets(await readTargets(options.port));
+  } catch {}
+  const reconciliation = await reconcileRendererSessions({
+    targets,
+    sessions,
+    attach: attachTarget,
+    dispose: (session) => disposeRendererSession(session),
+    isHealthy: async (session, target) => !await needsPreviewAttachment({
+      client: session.client,
+      attachedTargetId: session.targetId,
+      nextTargetId: target.id,
+    }),
+  });
+  if (!targets.length && options.watch) {
     let app = null;
     try { app = await desktopAppRuntime.readProcess(); } catch {}
     const action = desktopAppRecovery.next({ targetAvailable: false, app });
@@ -85,37 +131,15 @@ async function attach() {
       desktopAppRecovery.markLaunched();
       process.stdout.write(`Launching ${action.appPath} with sidebar enhancement enabled\n`);
     }
-    return false;
+    return reconciliation;
   }
-  desktopAppRecovery.next({ targetAvailable: Boolean(nextTargetId), app: null });
-  if (!await needsPreviewAttachment({ client, attachedTargetId, nextTargetId })) return false;
-
-  if (!client || nextTargetId !== attachedTargetId) {
-    await closeClient();
-    client = await connectMainCodex(options.port);
-    registeredScriptIdentifier = null;
-  }
-
-  const oldIdentifier = registeredScriptIdentifier
-    || await client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] || null`);
-  if (oldIdentifier) {
-    try { await client.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: oldIdentifier }); } catch {}
-  }
-  const userSource = await readFile(sourcePath, "utf8");
-  const rendererSource = `if (window.top === window) { ${userSource}\n}`;
-  const registered = await client.send("Page.addScriptToEvaluateOnNewDocument", { source: rendererSource });
-  registeredScriptIdentifier = registered.identifier;
-  await client.evaluate(rendererSource);
-  await client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] = ${JSON.stringify(registered.identifier)}`);
-  await assetConsoleBridge.install(client);
-  attachedTargetId = nextTargetId;
-  process.stdout.write(`Codex conversation preview attached to renderer ${nextTargetId}\n`);
-  return true;
+  desktopAppRecovery.next({ targetAvailable: targets.length > 0, app: null });
+  return reconciliation;
 }
 
-async function readActiveConversationContext() {
-  if (!client || !attachedTargetId) return { threadId: "", title: "" };
-  return client.evaluate(`(() => {
+async function readActiveConversationContext(session) {
+  if (!session?.client) return { threadId: "", title: "" };
+  return session.client.evaluate(`(() => {
     const active = document.querySelector('[data-app-action-sidebar-thread-active="true"], [data-app-action-sidebar-thread-selected="true"], [data-app-action-sidebar-thread-row][aria-current="page"]');
     return {
       threadId: active?.getAttribute('data-app-action-sidebar-thread-id') || '',
@@ -124,9 +148,9 @@ async function readActiveConversationContext() {
   })()`);
 }
 
-async function pushConversationHistory(activeContext = null) {
-  if (!client || !attachedTargetId) return;
-  const context = activeContext || await readActiveConversationContext();
+async function pushConversationHistory(session, activeContext = null) {
+  if (!session?.client) return;
+  const context = activeContext || await readActiveConversationContext(session);
   let conversationHistory = null;
   try {
     if (context?.threadId) {
@@ -135,21 +159,21 @@ async function pushConversationHistory(activeContext = null) {
   } catch {}
   const lastMessage = conversationHistory?.messages?.at(-1);
   const historyKey = conversationHistory
-    ? `${attachedTargetId}:${conversationHistory.threadId}:${conversationHistory.totalCount}:${lastMessage?.id || lastMessage?.timestamp || ""}`
-    : `${attachedTargetId}:none`;
-  if (historyKey === deliveredHistoryKey) return;
-  deliveredHistoryKey = historyKey;
-  await client.evaluate(`window.__codexConversationPreviewInjection__?.setConversationHistory?.(${JSON.stringify(conversationHistory)})`);
+    ? `${session.targetId}:${conversationHistory.threadId}:${conversationHistory.totalCount}:${lastMessage?.id || lastMessage?.timestamp || ""}`
+    : `${session.targetId}:none`;
+  if (historyKey === session.deliveredHistoryKey) return;
+  session.deliveredHistoryKey = historyKey;
+  await session.client.evaluate(`window.__codexConversationPreviewInjection__?.setConversationHistory?.(${JSON.stringify(conversationHistory)})`);
 }
 
-async function pushPreviews() {
-  if (!client || !attachedTargetId) return;
+async function pushPreviews(session) {
+  if (!session?.client) return;
   if (!skillCatalog.length || Date.now() >= nextSkillCatalogRefreshAt) {
     skillCatalog = await readInstalledSkillCatalog();
     nextSkillCatalogRefreshAt = Date.now() + 5 * 60_000;
   }
   const [requests, activeContext, recentCatalog, pinnedThreadIds, taskboardStatus] = await Promise.all([
-    client.evaluate(`(() => {
+    session.client.evaluate(`(() => {
       const seen = new Set();
       const allPanel = document.getElementById('codex-sidebar-all-projects');
       const rows = allPanel
@@ -166,7 +190,7 @@ async function pushPreviews() {
         return [{ key, id, title }];
       });
     })()`),
-    readActiveConversationContext(),
+    readActiveConversationContext(session),
     repository.readRecentCatalog(),
     repository.readPinnedThreadIds(),
     readActiveTaskThreads(),
@@ -194,7 +218,7 @@ async function pushPreviews() {
   ]);
   const previews = rawPreviews.map((preview) => presentCardPreview(preview));
   const usage = presentRateLimit(rawUsage, { timeZone: "Asia/Shanghai" });
-  await client.evaluate(`(() => {
+  await session.client.evaluate(`(() => {
     const api = window.__codexConversationPreviewInjection__;
     api?.setPreviews?.(${JSON.stringify(previews)});
     api?.setUsage?.(${JSON.stringify(usage)});
@@ -205,14 +229,15 @@ async function pushPreviews() {
     api?.setActiveProjectThreads?.(${JSON.stringify(taskboardStatus.activeThreadIds)});
     api?.setSkillCatalog?.(${JSON.stringify(skillCatalog)});
   })()`);
-  await pushConversationHistory(activeContext);
+  await pushConversationHistory(session, activeContext);
 }
 
 async function stop() {
   if (stopped) return;
   stopped = true;
-  try { await client?.evaluate("window.__codexConversationPreviewInjection__?.destroy?.()") } catch {}
-  await closeClient();
+  const closing = [...sessions.values()];
+  sessions.clear();
+  await Promise.allSettled(closing.map((session) => disposeRendererSession(session, { destroy: true })));
 }
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
@@ -226,17 +251,26 @@ let nextFullRefreshAt = 0;
 try {
   while (!stopped) {
     try {
-      const attached = await attach();
-      if (attached || Date.now() >= nextFullRefreshAt) {
-        await pushPreviews();
+      const reconciliation = await reconcileTargets();
+      for (const failure of reconciliation.errors) {
+        process.stderr.write(`[renderer ${failure.targetId}] ${failure.phase} failed: ${failure.error?.message || failure.error}\n`);
+      }
+      const fullRefresh = reconciliation.attachedTargetIds.length > 0 || Date.now() >= nextFullRefreshAt;
+      for (const [targetId, session] of [...sessions]) {
+        try {
+          if (fullRefresh) await pushPreviews(session);
+          else await pushConversationHistory(session);
+        } catch (error) {
+          sessions.delete(targetId);
+          await disposeRendererSession(session).catch(() => {});
+          process.stderr.write(`[renderer ${targetId}] update failed: ${error.message}\n`);
+          if (!options.watch) throw error;
+        }
+      }
+      if (fullRefresh) {
         nextFullRefreshAt = Date.now() + 5_000;
-      } else {
-        await pushConversationHistory();
       }
     } catch (error) {
-      attachedTargetId = null;
-      registeredScriptIdentifier = null;
-      await closeClient();
       if (!options.watch) throw error;
     }
     if (!options.watch) break;

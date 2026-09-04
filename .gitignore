@@ -7,3 +7,9 @@ output/
 codex-*-verification*.png
 codex-conversation-preview-verification.png
 .DS_Store
+
+# Local-only shortcut profiles and private overrides must never be committed.
+managed-shortcuts.json
+*.private.json
+*.local.json
+.aiyoucodex-private/

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { needsPreviewAttachment } from "../lib/injector-state.mjs";
+import {
+  needsPreviewAttachment,
+  reconcileRendererSessions,
+} from "../lib/injector-state.mjs";
 
 test("a same-id renderer is reattached when a reload removed the preview runtime", async () => {
   const expressions = [];
@@ -38,6 +41,87 @@ test("a new renderer target always needs attachment", async () => {
     attachedTargetId: "renderer-1",
     nextTargetId: "renderer-2",
   }), true);
+});
+
+test("renderer sessions are attached and retained independently for every Codex window", async () => {
+  const sessions = new Map();
+  const attached = [];
+  const disposed = [];
+  const attach = async (target) => {
+    attached.push(target.id);
+    return { targetId: target.id, healthy: true };
+  };
+  const dispose = async (session, context) => disposed.push([session.targetId, context.reason]);
+  const isHealthy = async (session) => session.healthy;
+
+  let result = await reconcileRendererSessions({
+    targets: [{ id: "window-1" }, { id: "window-2" }],
+    sessions,
+    attach,
+    dispose,
+    isHealthy,
+  });
+  assert.deepEqual(result.attachedTargetIds, ["window-1", "window-2"]);
+  assert.deepEqual([...sessions.keys()], ["window-1", "window-2"]);
+
+  result = await reconcileRendererSessions({
+    targets: [{ id: "window-1" }, { id: "window-2" }],
+    sessions,
+    attach,
+    dispose,
+    isHealthy,
+  });
+  assert.deepEqual(result.attachedTargetIds, []);
+  assert.deepEqual(attached, ["window-1", "window-2"], "healthy windows must not be injected twice");
+  assert.deepEqual(disposed, []);
+});
+
+test("closing and reloading one Codex window does not tear down the other window", async () => {
+  const sessions = new Map([
+    ["window-1", { targetId: "window-1", healthy: true }],
+    ["window-2", { targetId: "window-2", healthy: false }],
+  ]);
+  const attached = [];
+  const disposed = [];
+
+  const result = await reconcileRendererSessions({
+    targets: [{ id: "window-2" }, { id: "window-3" }],
+    sessions,
+    attach: async (target) => {
+      attached.push(target.id);
+      return { targetId: target.id, healthy: true };
+    },
+    dispose: async (session, context) => disposed.push([session.targetId, context.reason]),
+    isHealthy: async (session) => session.healthy,
+  });
+
+  assert.deepEqual(result.removedTargetIds, ["window-1"]);
+  assert.deepEqual(result.attachedTargetIds, ["window-2", "window-3"]);
+  assert.deepEqual(disposed, [
+    ["window-1", "closed"],
+    ["window-2", "unhealthy"],
+  ]);
+  assert.deepEqual([...sessions.keys()], ["window-2", "window-3"]);
+  assert.deepEqual(attached, ["window-2", "window-3"]);
+});
+
+test("one failed Codex window attachment does not block another window", async () => {
+  const sessions = new Map();
+  const result = await reconcileRendererSessions({
+    targets: [{ id: "broken" }, { id: "healthy" }],
+    sessions,
+    attach: async (target) => {
+      if (target.id === "broken") throw new Error("connection refused");
+      return { targetId: target.id };
+    },
+    dispose: async () => {},
+    isHealthy: async () => true,
+  });
+
+  assert.deepEqual(result.attachedTargetIds, ["healthy"]);
+  assert.equal(result.errors.length, 1);
+  assert.equal(result.errors[0].targetId, "broken");
+  assert.deepEqual([...sessions.keys()], ["healthy"]);
 });
 
 test("a normally launched desktop app is relaunched once with the enhancement port", async () => {

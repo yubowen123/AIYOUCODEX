@@ -85,6 +85,195 @@ export function selectCodexTargets(targets) {
   );
 }
 
+export function injectionRuntimeNeedsRefresh(currentStatus, expectedSourceHash) {
+  return !currentStatus
+    || currentStatus.sourceHash !== expectedSourceHash
+    || currentStatus.entryMounted !== true;
+}
+
+export class CdpConnection {
+  constructor(url, { connectTimeoutMs = 3_000, requestTimeoutMs = 15_000 } = {}) {
+    this.url = url;
+    this.connectTimeoutMs = connectTimeoutMs;
+    this.requestTimeoutMs = requestTimeoutMs;
+    this.socket = null;
+    this.sequence = 0;
+    this.pending = new Map();
+    this.eventWaiters = new Map();
+    this.eventHandlers = new Map();
+    this.closed = false;
+  }
+
+  rejectPending(error) {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+
+  rejectEventWaiters(error) {
+    for (const waiters of this.eventWaiters.values()) {
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timer);
+        waiter.reject(error);
+      }
+    }
+    this.eventWaiters.clear();
+  }
+
+  markClosed(error = new Error("CDP WebSocket closed")) {
+    this.closed = true;
+    this.rejectPending(error);
+    this.rejectEventWaiters(error);
+    this.eventHandlers.clear();
+  }
+
+  async open() {
+    if (typeof globalThis.WebSocket !== "function") {
+      throw new Error("This installer requires Node.js 22 or newer with native WebSocket support");
+    }
+    if (this.socket) throw new Error("CDP WebSocket connection already initialized");
+
+    const socket = new globalThis.WebSocket(this.url);
+    this.socket = socket;
+    socket.addEventListener("message", (event) => {
+      let message;
+      try {
+        message = JSON.parse(String(event.data));
+      } catch {
+        return;
+      }
+      if (!message.id) {
+        const waiters = this.eventWaiters.get(message.method) || [];
+        this.eventWaiters.delete(message.method);
+        waiters.forEach((waiter) => {
+          clearTimeout(waiter.timer);
+          waiter.resolve(message.params);
+        });
+        const handlers = this.eventHandlers.get(message.method) || [];
+        handlers.forEach((handler) => {
+          try {
+            Promise.resolve(handler(message.params)).catch((error) => {
+              console.error(`CDP ${message.method} handler failed: ${error.message}`);
+            });
+          } catch (error) {
+            console.error(`CDP ${message.method} handler failed: ${error.message}`);
+          }
+        });
+        return;
+      }
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      this.pending.delete(message.id);
+      clearTimeout(pending.timer);
+      if (message.error) pending.reject(new Error(message.error.message));
+      else pending.resolve(message.result);
+    });
+
+    let connectSettled = false;
+    let rejectConnect = null;
+    socket.addEventListener("close", () => {
+      const error = new Error("CDP WebSocket closed");
+      if (!connectSettled) {
+        connectSettled = true;
+        rejectConnect?.(error);
+      }
+      this.markClosed(error);
+    });
+    socket.addEventListener("error", (event) => {
+      const detail = event?.error?.message || event?.message || "WebSocket error";
+      const error = new Error(`CDP WebSocket connection failed: ${detail}`);
+      if (!connectSettled) {
+        connectSettled = true;
+        rejectConnect?.(error);
+      }
+      this.markClosed(error);
+    });
+
+    await new Promise((resolve, reject) => {
+      rejectConnect = reject;
+      const timer = setTimeout(() => {
+        if (connectSettled) return;
+        connectSettled = true;
+        reject(new Error(`CDP WebSocket connection timed out after ${this.connectTimeoutMs}ms`));
+        this.markClosed();
+        try { socket.close(); } catch {}
+      }, this.connectTimeoutMs);
+      socket.addEventListener("open", () => {
+        if (connectSettled) return;
+        connectSettled = true;
+        clearTimeout(timer);
+        this.closed = false;
+        resolve();
+      }, { once: true });
+      socket.addEventListener("close", () => clearTimeout(timer), { once: true });
+      socket.addEventListener("error", () => clearTimeout(timer), { once: true });
+    });
+  }
+
+  send(method, params = {}, { timeoutMs = this.requestTimeoutMs } = {}) {
+    if (!this.socket || this.socket.readyState !== 1 || this.closed) {
+      return Promise.reject(new Error("CDP WebSocket is not open"));
+    }
+    const id = ++this.sequence;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (!this.pending.delete(id)) return;
+        reject(new Error(`CDP ${method} timed out after ${timeoutMs}ms`));
+        try { this.socket?.close(); } catch {}
+      }, timeoutMs);
+      this.pending.set(id, { resolve, reject, timer });
+      try {
+        this.socket.send(JSON.stringify({ id, method, params }));
+      } catch (error) {
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        this.pending.delete(id);
+        clearTimeout(pending.timer);
+        pending.reject(new Error(`CDP ${method} send failed: ${error.message}`));
+      }
+    });
+  }
+
+  waitFor(method, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const waiters = this.eventWaiters.get(method) || [];
+      const waiter = { resolve: null, reject, timer: null };
+      waiter.timer = setTimeout(() => {
+        this.eventWaiters.set(
+          method,
+          (this.eventWaiters.get(method) || []).filter((candidate) => candidate !== waiter),
+        );
+        reject(new Error(`Timed out waiting for CDP event ${method}`));
+      }, timeoutMs);
+      waiter.resolve = (value) => {
+        clearTimeout(waiter.timer);
+        resolve(value);
+      };
+      waiters.push(waiter);
+      this.eventWaiters.set(method, waiters);
+    });
+  }
+
+  on(method, handler) {
+    const handlers = this.eventHandlers.get(method) || [];
+    handlers.push(handler);
+    this.eventHandlers.set(method, handlers);
+    return () => {
+      this.eventHandlers.set(
+        method,
+        (this.eventHandlers.get(method) || []).filter((candidate) => candidate !== handler),
+      );
+    };
+  }
+
+  close() {
+    this.markClosed();
+    try { this.socket?.close(); } catch {}
+  }
+}
+
 function parseHostRequest(payload, parseAutomationRequest) {
   if (typeof payload !== "string" || payload.length > 24_000) {
     return { id: null, request: null, error: HOST_REQUEST_ERROR };

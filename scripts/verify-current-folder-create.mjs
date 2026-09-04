@@ -47,7 +47,7 @@ async function clickAt(client, selector) {
 const client = await connectMainCodex(9231);
 const activeThreadId = await client.evaluate(`document.querySelector('[data-app-action-sidebar-thread-active="true"]')
   ?.getAttribute('data-app-action-sidebar-thread-id')
-  ?.replace(/^(?:local|cloud):/i, '')`);
+  ?.replace(/^(?:local|cloud):/i, '')`) || process.env.CODEX_THREAD_ID || "";
 assert.match(activeThreadId || "", /^[0-9a-f-]{36}$/i,
   "verification must start from a routable active task");
 const threadRoute = `/local/${activeThreadId}`;
@@ -66,23 +66,31 @@ try {
 
     const target = await client.evaluate(`(() => {
       const tag = document.querySelector('[data-codex-sidebar-folder-tag][aria-pressed="true"]');
-      const button = document.querySelector('[data-codex-sidebar-folder-create]');
+      const source = document.querySelector('[data-codex-sidebar-folder-create]');
+      const button = document.querySelector('[data-codex-sidebar-current-folder-new-chat]');
       return {
         id: tag?.dataset.codexSidebarFolderTag,
         label: tag?.dataset.codexSidebarFolderLabel,
-        buttonTarget: button?.dataset.codexSidebarFolderCreate,
+        buttonTarget: button?.dataset.codexSidebarCurrentFolderNewChat,
         title: button?.title,
         ariaLabel: button?.getAttribute('aria-label'),
+        sourceTitle: source?.title,
+        sourceAriaLabel: source?.getAttribute('aria-label'),
       };
     })()`);
     assert.equal(target.buttonTarget, target.id,
-      "create control must be explicitly bound to the currently selected folder id");
-    assert.equal(target.title, `在“${label}”文件夹下创建项目`);
-    assert.equal(target.ariaLabel, `在 ${label} 中开始新聊天`,
+      "new-chat proxy must be explicitly bound to the currently selected folder id");
+    assert.equal(target.title, `在“${label}”中新建对话`);
+    assert.equal(target.ariaLabel, `在“${label}”中新建对话`);
+    assert.equal(target.sourceTitle, `在“${label}”中新建对话`);
+    assert.equal(target.sourceAriaLabel, `在 ${label} 中开始新聊天`,
       "native per-folder create action must remain the click source");
 
-    await clickAt(client, `[data-codex-sidebar-folder-create="${target.id}"]`);
-    assert.equal(await waitFor(client, `document.body.innerText.includes(${JSON.stringify(`要在 ${label} 内开发什么？`)})`), true,
+    await clickAt(client, `[data-codex-sidebar-current-folder-new-chat="${target.id}"]`);
+    assert.equal(await waitFor(client, `[
+      ${JSON.stringify(`要在 ${label} 内开发什么？`)},
+      ${JSON.stringify(`在 ${label} 中构建什么？`)},
+    ].some((text) => document.body.innerText.includes(text))`), true,
       `real click must open the composer scoped to ${label}`);
     verified.push({ label, id: target.id });
 
@@ -93,10 +101,13 @@ try {
 
   await client.evaluate(`document.querySelector('[data-codex-sidebar-folder-label="全部"]')?.click()`);
   assert.equal(await waitFor(client, `document.querySelector('[data-codex-sidebar-folder-tag][aria-pressed="true"]')?.dataset.codexSidebarFolderLabel === '全部'`), true);
-  assert.equal(await client.evaluate(`document.querySelectorAll('[data-codex-sidebar-folder-create]').length`), 0,
-    "all-projects aggregation has no single folder target and must not expose the create control");
+  assert.deepEqual(await client.evaluate(`(() => {
+    const button = document.querySelector('[data-codex-sidebar-current-folder-new-chat]');
+    return { hidden: button?.hidden, target: button?.dataset.codexSidebarCurrentFolderNewChat };
+  })()`), { hidden: true, target: "" },
+  "all-projects aggregation has no single folder target and must hide the new-chat proxy");
 
-  process.stdout.write(`${JSON.stringify({ verified, allViewCreateCount: 0 }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ verified, allViewNewChatHidden: true }, null, 2)}\n`);
 } finally {
   try {
     await client.evaluate(`(() => {

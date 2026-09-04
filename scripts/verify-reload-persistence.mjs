@@ -29,7 +29,20 @@ try {
       document.getElementById('codex-conversation-view-toggle')?.click();
     }
   })()`);
+  const expectedFolderIds = await client.evaluate(`Array.from(document.querySelectorAll('[data-codex-sidebar-folder-tag]'))
+    .map((tag) => tag.dataset.codexSidebarFolderTag)
+    .filter(Boolean)`);
+  assert.ok(expectedFolderIds.length >= 2, "reload verification requires the current folder inventory");
+  const activeThreadId = await client.evaluate(`document.querySelector('[data-app-action-sidebar-thread-active="true"]')
+    ?.getAttribute('data-app-action-sidebar-thread-id')
+    ?.replace(/^(?:local|cloud):/i, '')`) || process.env.CODEX_THREAD_ID || "";
   await client.send("Page.reload", { ignoreCache: true });
+  if (!await waitFor(client, `Boolean(document.body.innerText.trim())`, 3_000) && activeThreadId) {
+    await client.evaluate(`window.postMessage({
+      type: "navigate-to-route",
+      path: ${JSON.stringify(`/local/${activeThreadId}`)},
+    }, "*")`);
+  }
 
   assert.equal(await waitFor(client, `(() => {
     const root = document.getElementById('codex-sidebar-folder-switcher');
@@ -44,7 +57,8 @@ try {
     return Boolean(root)
       && document.querySelector('[data-codex-sidebar-section-tab="项目"]')?.getAttribute('aria-selected') === 'true'
       && document.documentElement.dataset.codexConversationView === 'card'
-      && tags.length === 12
+      && tags.length === ${expectedFolderIds.length}
+      && ${JSON.stringify(expectedFolderIds)}.every((id) => tags.some((tag) => tag.dataset.codexSidebarFolderTag === id))
       && tags.find((tag) => tag.getAttribute('aria-pressed') === 'true')?.dataset.codexSidebarFolderLabel === '管理优化'
       && document.querySelector('[data-codex-sidebar-folder-expand]')?.getAttribute('aria-expanded') === 'false'
       && document.querySelectorAll('[data-codex-sidebar-folder-panel]:not([hidden])').length === 1
@@ -64,6 +78,7 @@ try {
       view: document.documentElement.dataset.codexConversationView,
       visiblePanels: Array.from(document.querySelectorAll('[data-codex-sidebar-folder-panel]:not([hidden])')).map((panel) => panel.dataset.codexSidebarFolderPanel),
       actionCount: document.querySelectorAll('[data-codex-sidebar-folder-actions] button').length,
+      folderCount: tags.length,
     };
   })()`);
   process.stdout.write(`${JSON.stringify(actual, null, 2)}\n`);

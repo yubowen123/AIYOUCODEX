@@ -1,4 +1,5 @@
 .git/
+.githooks/
 .github/
 .runtime/
 .task-description.md
@@ -10,3 +11,9 @@ output/
 codex-*-verification*.png
 codex-conversation-preview-verification.png
 .DS_Store
+
+# Local-only shortcut profiles and private overrides must never be published.
+managed-shortcuts.json
+*.private.json
+*.local.json
+.aiyoucodex-private/

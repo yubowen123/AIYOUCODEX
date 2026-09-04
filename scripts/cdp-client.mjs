@@ -4,13 +4,28 @@ export async function readTargets(port = 9231) {
   return response.json();
 }
 
-export function selectMainCodexTarget(targets) {
-  return targets.find((target) =>
-    target.type === "page"
-      && ["Codex", "ChatGPT"].includes(target.title)
-      && target.url === "app://-/index.html"
-      && target.webSocketDebuggerUrl,
+export function isMainCodexTarget(target) {
+  if (target?.type !== "page"
+      || !["Codex", "ChatGPT"].includes(target.title)
+      || !target.webSocketDebuggerUrl) return false;
+  let url;
+  try { url = new URL(target.url); } catch { return false; }
+  if (url.protocol !== "app:" || url.hostname !== "-" || url.pathname !== "/index.html") return false;
+  const initialRoute = url.searchParams.get("initialRoute") || "";
+  return !["/avatar-overlay", "/global-dictation"].some(
+    (route) => initialRoute === route || initialRoute.startsWith(`${route}/`),
   );
+}
+
+export function selectMainCodexTargets(targets) {
+  return targets.filter(isMainCodexTarget);
+}
+
+export function selectMainCodexTarget(targets) {
+  const candidates = selectMainCodexTargets(targets);
+  return candidates.find((target) => {
+    try { return Boolean(new URL(target.url).searchParams.get("initialRoute")); } catch { return false; }
+  }) || candidates[0];
 }
 
 export class CdpClient {
@@ -162,6 +177,11 @@ export async function connectMainCodex(port = 9231) {
   const targets = await readTargets(port);
   const target = selectMainCodexTarget(targets);
   if (!target) throw new Error("Main Codex renderer target not found");
+  return connectCodexTarget(target);
+}
+
+export async function connectCodexTarget(target) {
+  if (!target?.webSocketDebuggerUrl) throw new Error("Codex renderer target has no debugger URL");
   const client = new CdpClient(target.webSocketDebuggerUrl);
   await client.connect();
   return client;

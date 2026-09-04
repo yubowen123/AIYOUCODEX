@@ -100,13 +100,15 @@ function Suspend-LegacyTaskboard([string]$StartupDirectory, [string]$MarkerPath)
   }
 }
 
-$repository = Get-Setting "CODEX_SIDEBAR_REPOSITORY" "yubowen123/codex-sidebar-enhancer"
+$repository = Get-Setting "CODEX_SIDEBAR_REPOSITORY" "yubowen123/AIYOUCODEX"
 $repositoryRef = Get-Setting "CODEX_SIDEBAR_REF" "main"
 $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
 $installDir = Get-Setting "CODEX_SIDEBAR_INSTALL_DIR" (Join-Path $localAppData "Codex Sidebar Enhancer")
 $logsDir = Get-Setting "CODEX_SIDEBAR_LOGS_DIR" (Join-Path $localAppData "CodexSidebarEnhancer\Logs")
 $startupDir = Get-Setting "CODEX_SIDEBAR_STARTUP_DIR" ([Environment]::GetFolderPath("Startup"))
-$startMenuDir = Get-Setting "CODEX_SIDEBAR_START_MENU_DIR" (Join-Path ([Environment]::GetFolderPath("Programs")) "Codex Sidebar Enhancer")
+$programsDir = [Environment]::GetFolderPath("Programs")
+$startMenuDir = Get-Setting "CODEX_SIDEBAR_START_MENU_DIR" (Join-Path $programsDir "AIYOUcodex")
+$legacyStartMenuDir = Get-Setting "CODEX_SIDEBAR_LEGACY_START_MENU_DIR" (Join-Path $programsDir "Codex Sidebar Enhancer")
 $sourceDir = Get-Setting "CODEX_SIDEBAR_SOURCE_DIR" ""
 $port = [int](Get-Setting "CODEX_SIDEBAR_PORT" "9231")
 if ($port -lt 1 -or $port -gt 65535) { throw "Invalid debugging port: $port" }
@@ -178,14 +180,28 @@ try {
   $powerShellPath = (Get-Process -Id $PID).Path
   $launcherPath = Join-Path $fullInstallDir "windows\launcher.ps1"
   $commonArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcherPath`""
-  New-Shortcut (Join-Path $startupDir "Codex Sidebar Enhancer.lnk") $powerShellPath "$commonArgs -InjectorOnly" $fullInstallDir
-  New-Shortcut (Join-Path $startMenuDir "Codex Sidebar Enhancer.lnk") $powerShellPath $commonArgs $fullInstallDir
+  New-Shortcut (Join-Path $startupDir "AIYOUcodex.lnk") $powerShellPath "$commonArgs -InjectorOnly" $fullInstallDir
+  New-Shortcut (Join-Path $startMenuDir "AIYOUcodex.lnk") $powerShellPath $commonArgs $fullInstallDir
+  $legacyShortcuts = @(
+    (Join-Path $startupDir "Codex Sidebar Enhancer.lnk"),
+    (Join-Path $startMenuDir "Codex Sidebar Enhancer.lnk"),
+    (Join-Path $legacyStartMenuDir "Codex Sidebar Enhancer.lnk")
+  ) | Select-Object -Unique
+  foreach ($legacyShortcut in $legacyShortcuts) {
+    if (Test-Path -LiteralPath $legacyShortcut -PathType Leaf) {
+      Remove-Item -LiteralPath $legacyShortcut -Force
+    }
+  }
+  if ((Test-Path -LiteralPath $legacyStartMenuDir -PathType Container) -and
+      -not (Get-ChildItem -LiteralPath $legacyStartMenuDir -Force | Select-Object -First 1)) {
+    Remove-Item -LiteralPath $legacyStartMenuDir -Force
+  }
 
   if (Test-Path -LiteralPath $backupDir) { Remove-Item -LiteralPath $backupDir -Recurse -Force }
   if ((Get-Setting "CODEX_SIDEBAR_SKIP_OPEN" "0") -ne "1") {
     & $powerShellPath -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $launcherPath
   }
-  Write-Output "Codex Sidebar Enhancer installed for Windows."
+  Write-Output "AIYOUcodex installed for Windows."
   Write-Output "Launcher: $startMenuDir"
   Write-Output "Logs: $logsDir"
 } catch {

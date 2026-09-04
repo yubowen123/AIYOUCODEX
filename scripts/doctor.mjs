@@ -112,7 +112,7 @@ const report = {
 
 if (options.json) process.stdout.write(`${JSON.stringify(report)}\n`);
 else {
-  process.stdout.write(`Package: ${report.package.ready ? "ready" : "incomplete"}\n`);
+  process.stdout.write(`AIYOUcodex package: ${report.package.ready ? "ready" : "incomplete"}\n`);
   process.stdout.write(`Taskboard: ${report.package.taskboardVersion || "missing"} (${report.taskboard.reachable ? "running" : "stopped"})\n`);
   process.stdout.write(`Codex CDP: ${report.codex.reachable ? "reachable" : "not running"}\n`);
   process.stdout.write(`Asset Console: ${report.assetConsole.packaged ? "packaged" : "missing"} (${report.assetConsole.reachable ? "running" : "stopped"})\n`);

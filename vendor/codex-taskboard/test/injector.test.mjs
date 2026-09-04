@@ -84,6 +84,18 @@ test("attach reconciles the renderer against a hashed current injection source",
   assert.match(source, /expectedSourceHash/);
 });
 
+test("the resident watch loop revalidates same-id renderers before publishing its heartbeat", () => {
+  assert.match(source, /injectionRuntimeNeedsRefresh\(currentStatus, sourceHash\)/);
+  assert.match(source, /attachExisting \|\| reattachExisting/);
+  assert.match(source, /AbortSignal\.timeout\(1_500\)/);
+  assert.match(source, /publishHostHeartbeat[\s\S]*timeoutMs: 2_500/);
+  assert.ok(
+    source.indexOf("const results = await injectAll(")
+      < source.lastIndexOf("await publishHostHeartbeat(connection, options.startupToken)"),
+    "target reconciliation must run before stale-connection heartbeats",
+  );
+});
+
 test("a completed web build refreshes an already-open Codex iframe", () => {
   assert.match(packageJson.scripts.build, /--refresh-if-running/);
   assert.match(packageJson.scripts["codex:refresh"], /--refresh/);
