@@ -31,6 +31,18 @@ export function isIgnoredAssetPath(filePath, root = "") {
     .some((segment) => IGNORED_DIRECTORY_NAMES.has(segment.toLocaleLowerCase("en-US")) || segment.startsWith(".asset-"));
 }
 
+export function isIgnoredAssetPathWithinRoots(filePath, roots = []) {
+  const absolute = path.resolve(String(filePath || ""));
+  let containingRoot = "";
+  for (const root of roots) {
+    const value = String(root || "").trim();
+    if (!value) continue;
+    const resolved = path.resolve(value);
+    if (resolved.length > containingRoot.length && isPathInside(resolved, absolute)) containingRoot = resolved;
+  }
+  return containingRoot ? isIgnoredAssetPath(absolute, containingRoot) : false;
+}
+
 export function changeAffectsProject(project, change, assignments = {}) {
   const changedPath = path.resolve(String(change?.changedPath || change || ""));
   const candidates = Array.isArray(change?.candidates) ? change.candidates : [];

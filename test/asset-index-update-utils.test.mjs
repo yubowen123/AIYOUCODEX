@@ -7,6 +7,7 @@ import {
   CoalescingPathUpdateQueue,
   createPathPrefixMatcher,
   isIgnoredAssetPath,
+  isIgnoredAssetPathWithinRoots,
 } from "../vendor/codex-workspace-enhancer/asset-browser/asset-index-update-utils.js";
 
 test("asset changes are routed by project roots without scanning existing assets", () => {
@@ -47,4 +48,12 @@ test("generated dependency and cache folders are ignored by scans and watchers",
   assert.equal(isIgnoredAssetPath("/workspace/project/node_modules/pkg/icon.png", "/workspace/project"), true);
   assert.equal(isIgnoredAssetPath("/workspace/project/dist/report/preview.png", "/workspace/project"), true);
   assert.equal(isIgnoredAssetPath("/workspace/project/角色/hero.png", "/workspace/project"), false);
+});
+
+test("ignored-directory checks do not reject assets because of system temp ancestors", () => {
+  const scanRoot = path.join(path.parse(process.cwd()).root, "Temp", "asset-project");
+  const assetPath = path.join(scanRoot, "角色", "hero.png");
+  assert.equal(isIgnoredAssetPath(assetPath), true, "the old absolute-path check reproduces the Windows Temp false positive");
+  assert.equal(isIgnoredAssetPathWithinRoots(assetPath, [scanRoot]), false);
+  assert.equal(isIgnoredAssetPathWithinRoots(path.join(scanRoot, "node_modules", "pkg", "icon.png"), [scanRoot]), true);
 });

@@ -22,6 +22,7 @@ import {
   CoalescingPathUpdateQueue,
   createPathPrefixMatcher,
   isIgnoredAssetPath,
+  isIgnoredAssetPathWithinRoots,
   yieldToEventLoop,
 } from "./asset-index-update-utils.js";
 import { CodexPromptAssociationStore } from "./codex-prompt-associations.js";
@@ -2282,10 +2283,11 @@ function notifyClients(event = "asset-change") {
 }
 
 async function syncAssetIndexPaths(changedPaths = []) {
-  const paths = [...new Set(changedPaths.map((filePath) => path.resolve(String(filePath || ""))).filter(Boolean))]
-    .filter((filePath) => !isIgnoredAssetPath(filePath));
-  if (!paths.length) return { paths: 0, projects: 0 };
   const config = await loadConfig();
+  const watchRoots = config.projects.flatMap((project) => project.folders);
+  const paths = [...new Set(changedPaths.map((filePath) => path.resolve(String(filePath || ""))).filter(Boolean))]
+    .filter((filePath) => !isIgnoredAssetPathWithinRoots(filePath, watchRoots));
+  if (!paths.length) return { paths: 0, projects: 0 };
   const expanded = [];
   for (let index = 0; index < paths.length; index += 1) {
     const changedPath = paths[index];
