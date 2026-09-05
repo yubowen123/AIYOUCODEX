@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import vm from "node:vm";
 import test from "node:test";
 import { CdpClient } from "../scripts/cdp-client.mjs";
+import { waitForBrowserState } from "./helpers/browser-state.mjs";
 
 const source = await readFile(new URL("../inject/conversation-preview.user.js", import.meta.url), "utf8");
 function functionSource(name) {
@@ -87,7 +88,8 @@ test("isolated browser: sidebar ownership, overflow scope, idle stability, batch
     searchCatalog: [{ projectId: "fixture-project", projectName: "测试文件夹", threadId: "11111111-1111-4111-8111-111111111111", title: "测试任务", updatedAt: "2026-09-05T10:00:00Z" }],
     recentCatalog: [], interruptedCatalog: [], pinnedThreads: [], activeProjectThreads: [], skillCatalog: [] };
   await client.evaluate(`window.__codexConversationPreviewInjection__.setSnapshot(${JSON.stringify(payload)})`);
-  await delay(450);
+  await waitForBrowserState(client, "document.querySelectorAll('[data-codex-sidebar-section-tab]').length===4&&!!document.querySelector('[data-codex-sidebar-folder-search]')", "Sidebar snapshot mounts tabs and folder search");
+  await delay(180);
   const initial = await client.evaluate(`(()=>{ const api=window.__codexConversationPreviewInjection__;return {health:api.getHealth(), tabs:[...document.querySelectorAll('[data-codex-sidebar-section-tab]')].map(x=>x.textContent), search:!!document.querySelector('[data-codex-sidebar-folder-search]'), overflowHidden:getComputedStyle(document.getElementById('native-explore')).display==='none',bodyUntouched:getComputedStyle(document.getElementById('conversation-explore')).display!=='none',parentsPreserved:window.__nativeParents[0]===document.getElementById('native-actions').parentElement&&window.__nativeParents[1]===document.getElementById('native-explore').parentElement};})()`);
   assert.deepEqual(initial.tabs, ["置顶", "项目", "最近", "中断"], "Missing native sections get local virtual fallbacks");
   assert.equal(initial.search, true);
@@ -103,7 +105,8 @@ test("isolated browser: sidebar ownership, overflow scope, idle stability, batch
   payload.usage.remainingPercent = 41;
   payload.recentCatalog = payload.searchCatalog;
   await client.evaluate(`window.__codexConversationPreviewInjection__.setSnapshot(${JSON.stringify(payload)})`);
-  await delay(220);
+  await waitForBrowserState(client, `window.__codexConversationPreviewInjection__.getHealth().syncCount>${beforeBatch}`, "Changed snapshot commits a render");
+  await delay(180);
   const afterBatch = await client.evaluate("window.__codexConversationPreviewInjection__.getHealth().syncCount");
   assert.equal(afterBatch, beforeBatch + 1, "Multiple setter updates commit one render");
   await client.evaluate(`window.__codexConversationPreviewInjection__.setSnapshot(${JSON.stringify(payload)})`);
@@ -113,7 +116,7 @@ test("isolated browser: sidebar ownership, overflow scope, idle stability, batch
   assert.equal(await client.evaluate(`(async()=>{let mutations=0;const watcher=new MutationObserver(records=>mutations+=records.length);watcher.observe(document.documentElement,{subtree:true,childList:true,attributes:true});window.__codexConversationPreviewInjection__.getHealth();window.__codexConversationPreviewInjection__.getHealth();await new Promise(resolve=>setTimeout(resolve,0));watcher.disconnect();return mutations;})()`), 0,
     "Health probes are read-only");
   await client.evaluate("document.getElementById('codex-sidebar-shortcut-grid').remove()");
-  await delay(200);
+  await waitForBrowserState(client, "!!document.getElementById('codex-sidebar-shortcut-grid')", "A native render removing an enhancement root still triggers local remount");
   assert.equal(await client.evaluate("!!document.getElementById('codex-sidebar-shortcut-grid')"), true,
     "A native render removing an enhancement root still triggers local remount");
   await client.evaluate(`window.__clicks=[];document.querySelector('#native-actions button').onclick=()=>window.__clicks.push('old');
@@ -130,7 +133,7 @@ test("isolated browser: sidebar ownership, overflow scope, idle stability, batch
   assert.equal(await client.evaluate("document.getElementById('native-actions').parentElement===window.__nativeParents[0]"), true);
   await client.evaluate(`(()=>{const target=document.querySelector('#native-actions button');target.setAttribute('aria-haspopup','menu');target.onclick=()=>{target.setAttribute('aria-controls','fixture-menu');const wrapper=document.createElement('div');wrapper.setAttribute('data-radix-popper-content-wrapper','');wrapper.style.cssText='position:fixed;left:0;top:0;width:100px;height:30px;transform:translate(0px,0px)';wrapper.innerHTML='<div role="menu" id="fixture-menu">保留的原生选项</div>';document.body.appendChild(wrapper);};})()`);
   await realClick();
-  await delay(70);
+  await waitForBrowserState(client, `(()=>{const proxy=document.querySelector('#proxy-host button');const menu=document.getElementById('fixture-menu');if(!proxy||!menu)return false;const b=proxy.getBoundingClientRect(),m=menu.getBoundingClientRect(),w=menu.parentElement.getBoundingClientRect();return m.x===b.x&&m.y===(b.bottom+w.height+12<=innerHeight?b.bottom+4:Math.max(8,b.top-w.height-4))})()`, "Native menu reaches the visible proxy after animation-frame positioning");
   const menu = await client.evaluate(`(()=>{const b=document.querySelector('#proxy-host button').getBoundingClientRect();const m=document.getElementById('fixture-menu').getBoundingClientRect();const wrapper=document.getElementById('fixture-menu').parentElement.getBoundingClientRect();return {buttonX:b.x,expectedY:b.bottom+wrapper.height+12<=innerHeight?b.bottom+4:Math.max(8,b.top-wrapper.height-4),menuX:m.x,menuY:m.y,body:document.getElementById('fixture-menu').textContent}})()`);
   assert.equal(menu.body, "保留的原生选项");
   assert.equal(menu.menuX, menu.buttonX);

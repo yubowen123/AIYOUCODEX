@@ -10,6 +10,7 @@ import vm from "node:vm";
 import test from "node:test";
 import { CdpClient, connectCodexTarget } from "../scripts/cdp-client.mjs";
 import { RENDERER_HEALTH_EXPRESSION, acceptDocumentHealth, canReuseRenderer } from "../lib/renderer-health.mjs";
+import { waitForBrowserState } from "./helpers/browser-state.mjs";
 
 const injectorSource = await readFile(new URL("../scripts/injector.mjs", import.meta.url), "utf8");
 const userSourcePath = new URL("../inject/conversation-preview.user.js", import.meta.url);
@@ -67,6 +68,10 @@ test("production attach and delivery survive CDP reconnect; real document reload
   const inspect = new CdpClient(target.webSocketDebuggerUrl);
   await inspect.connect();
   clients.add(inspect);
+  await waitForBrowserState(inspect, `location.origin===${JSON.stringify(origin)}&&document.readyState==='complete'&&!!document.querySelector('main')`, "Fixture navigation and native panel mount are ready before attach");
+  const shortcutLoaded = `(()=>{const frame=document.querySelector('iframe[data-codex-custom-shortcut-frame]');return !!frame&&frame.contentDocument?.readyState==='complete'&&frame.contentWindow.location.href===${JSON.stringify(`${origin}/panel`)}})()`;
+  const assetVisible = "!!document.getElementById('codex-asset-console-frame')&&!document.getElementById('codex-asset-console-page').hidden";
+  const assetLoaded = `(()=>{const frame=document.getElementById('codex-asset-console-frame');return !!frame&&!document.getElementById('codex-asset-console-page').hidden&&frame.contentDocument?.readyState==='complete'&&frame.contentWindow.location.href===${JSON.stringify(`${origin}/panel`)}})()`;
   const shortcuts = [{ id: "local-fixture", name: "Local fixture", url: `${origin}/panel`, icon: "link", openMode: "internal", keepAlive: true }];
   const catalog = [{ projectId: "fixture-project", projectName: "Fixture project", threadId: "11111111-1111-4111-8111-111111111111", title: "Fixture thread", updatedAt: "2026-09-05T10:00:00Z" }];
   const history = { ...catalog[0], totalCount: 1, sourceSize: 100,
@@ -92,9 +97,16 @@ test("production attach and delivery survive CDP reconnect; real document reload
   const installDeliveryCounters = async () => inspect.evaluate(`(()=>{const api=window.__codexConversationPreviewInjection__;window.__fixtureDeliveries={snapshot:0,history:0,destroy:0};for(const [method,key]of [['setSnapshot','snapshot'],['setConversationHistory','history'],['destroy','destroy']]){const original=api[method];api[method]=(...args)=>{window.__fixtureDeliveries[key]+=1;return original(...args)}}})()`);
   let session = await context.attachTarget(target);
   await installDeliveryCounters();
+  // The real watcher retries when a native mount is temporarily unavailable.
+  // Verify that it does not incorrectly acknowledge readiness on that attempt.
+  await inspect.evaluate("window.__fixtureDetachedMain=document.querySelector('main');window.__fixtureDetachedMain.remove()");
   await context.ensurePersistentManagedShortcuts(session);
+  assert.equal(session.persistentShortcutReady.size, 0, "No mount must leave keepalive eligible for a watcher retry");
+  await inspect.evaluate("document.body.appendChild(window.__fixtureDetachedMain)");
+  await context.ensurePersistentManagedShortcuts(session);
+  assert.equal(session.persistentShortcutReady.size, 1, "Watcher retry mounts and acknowledges the persistent shortcut");
   await context.pushPreviews(session);
-  await delay(250);
+  await waitForBrowserState(inspect, shortcutLoaded, "Persistent shortcut loads its actual document before recording navigation identity");
   assert.deepEqual(await inspect.evaluate("window.__fixtureDeliveries"), { snapshot: 1, history: 1, destroy: 0 });
   const first = await inspect.evaluate(`(()=>{const f=document.querySelector('iframe[data-codex-custom-shortcut-frame]');window.__fixtureOriginalFrame=f;return {epoch:window.__codexConversationPreviewInjection__.getHealth().documentEpoch,origin:f.contentWindow.performance.timeOrigin}})()`);
   await context.pushPreviews(session);
@@ -135,14 +147,14 @@ test("production attach and delivery survive CDP reconnect; real document reload
   assert.equal(session.persistentShortcutReady.size, 1);
   assert.equal(await inspect.evaluate("!!document.querySelector('iframe[data-codex-custom-shortcut-frame]')"), true);
   await inspect.evaluate(`(()=>{const ownMount=document.createElement('main');ownMount.id='fixture-asset-mount';document.querySelector('main').before(ownMount);window.codexSidebarOpenAssetConsole=()=>{};const api=window.__codexConversationPreviewInjection__;api.setAssetConsole({available:true,mode:'embedded'});api.openAssetConsolePanel();api.setAssetConsolePanel({state:'ready',url:${JSON.stringify(`${origin}/panel`)}});window.__fixtureAssetFrame=document.getElementById('codex-asset-console-frame');api.refresh();})()`);
-  await delay(100);
+  await waitForBrowserState(inspect, assetLoaded, "Asset document is loaded before testing its mount lifecycle");
   assert.equal(await inspect.evaluate("window.__fixtureAssetFrame===document.getElementById('codex-asset-console-frame')&&!document.getElementById('codex-asset-console-page').hidden"), true,
     "Ordinary sidebar refresh must not close or replace the asset panel");
   await inspect.evaluate(`(()=>{const notice=document.createElement('button');notice.setAttribute('aria-label','关闭活动视图');document.querySelector('nav').appendChild(notice);window.__codexConversationPreviewInjection__.refresh();})()`);
   assert.equal(await inspect.evaluate("window.__fixtureAssetFrame===document.getElementById('codex-asset-console-frame')&&!document.getElementById('codex-asset-console-page').hidden"), true,
     "Native activity layout replaces sidebar sections without disposing the asset panel");
   await inspect.evaluate(`(()=>{window.__fixtureRecoveryActions=[];window.__privateFrameBefore=document.querySelector('iframe[data-codex-custom-shortcut-frame]');window.__assetContextBefore=window.__fixtureAssetFrame.contentWindow.performance.timeOrigin;window.codexSidebarOpenAssetConsole=(raw)=>{const action=JSON.parse(raw).action;window.__fixtureRecoveryActions.push(action);if(action==='open')queueMicrotask(()=>window.__codexConversationPreviewInjection__.setAssetConsolePanel({state:'ready',url:${JSON.stringify(`${origin}/panel`)}}));};const fresh=document.createElement('main');fresh.id='fixture-asset-mount';document.getElementById('fixture-asset-mount').replaceWith(fresh);})()`);
-  await delay(220);
+  await waitForBrowserState(inspect, assetLoaded, "Lost asset mount recovers through the production observer and bridge");
   const recovered = await inspect.evaluate(`(()=>{const page=document.getElementById('codex-asset-console-page');const frame=document.getElementById('codex-asset-console-frame');return {visible:!!page&&!page.hidden,parent:page?.parentElement?.id,newFrame:!!frame&&frame!==window.__fixtureAssetFrame,newContext:!!frame&&frame.contentWindow.performance.timeOrigin!==window.__assetContextBefore,actions:window.__fixtureRecoveryActions,privateUntouched:window.__privateFrameBefore===document.querySelector('iframe[data-codex-custom-shortcut-frame]')}})()`);
   assert.deepEqual(recovered, { visible: true, parent: "fixture-asset-mount", newFrame: true, newContext: true, actions: ["open"], privateUntouched: true },
     "A replaced native mount locally rebuilds the lost asset context without disturbing another panel");
@@ -151,12 +163,11 @@ test("production attach and delivery survive CDP reconnect; real document reload
   assert.deepEqual(await inspect.evaluate("window.__fixtureRecoveryActions"), ["open", "close"], "Closed assets must not be reopened by a host layout update");
   assert.equal(await inspect.evaluate("!!document.getElementById('codex-asset-console-frame')"), false);
   await inspect.evaluate("window.__codexConversationPreviewInjection__.openAssetConsolePanel()");
-  await delay(100);
+  await waitForBrowserState(inspect, assetVisible, "Explicit reopen repairs the detached closed asset panel");
   assert.equal(await inspect.evaluate("!!document.getElementById('codex-asset-console-frame')&&!document.getElementById('codex-asset-console-page').hidden"), true,
     "An explicit reopen repairs a detached closed panel instead of returning a dead reference");
 
   const intentKey = "aiyoucodex:asset-console-open:v1";
-  const assetVisible = "!!document.getElementById('codex-asset-console-frame')&&!document.getElementById('codex-asset-console-page').hidden";
   const reloadIsolatedDocument = async () => {
     const oldEpoch = await inspect.evaluate("window.__codexConversationPreviewInjection__.getHealth().documentEpoch");
     await inspect.send("Page.reload", { ignoreCache: true });
@@ -183,7 +194,7 @@ test("production attach and delivery survive CDP reconnect; real document reload
   await delay(120);
   assert.equal(await inspect.evaluate(assetVisible), false, "Reload must wait for a usable asset bridge before restoring");
   await connectFixtureAssetBridge();
-  await delay(180);
+  await waitForBrowserState(inspect, assetVisible, "Previously open asset panel restores after document reload");
   assert.equal(await inspect.evaluate(assetVisible), true, "An asset panel left open is restored after true document reload");
   assert.deepEqual(await inspect.evaluate("window.__restoredAssetActions"), ["open"]);
   await inspect.evaluate("window.__codexConversationPreviewInjection__.refresh();window.__codexConversationPreviewInjection__.setAssetConsole({available:true,mode:'embedded'});");
@@ -223,6 +234,6 @@ test("production attach and delivery survive CDP reconnect; real document reload
     await delay(50);
   }
   await connectFixtureAssetBridge();
-  await delay(160);
+  await waitForBrowserState(inspect, assetVisible, "Renderer upgrade restores the previously open asset panel");
   assert.equal(await inspect.evaluate(assetVisible), true, "A renderer upgrade cleanup preserves the user's previously open panel");
 });
