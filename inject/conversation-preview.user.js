@@ -2,6 +2,8 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
+  const RUNTIME_VERSION = "2026-09-05.1";
+  const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
   const SWITCH_THUMB_CLASS = "codex-conversation-view-switch-thumb";
@@ -17,12 +19,14 @@
   const SHORTCUT_SETTINGS_BUTTON_ID = "codex-sidebar-shortcut-settings-button";
   const SHORTCUT_SETTINGS_STORAGE_KEY = "codex-conversation-preview:shortcut-settings";
   const MANAGED_SHORTCUTS_GLOBAL = "__CODEX_SIDEBAR_MANAGED_SHORTCUTS__";
+  const RENDERER_TARGET_ID_GLOBAL = "__CODEX_SIDEBAR_RENDERER_TARGET_ID__";
   const CUSTOM_SHORTCUT_PAGE_ID = "codex-custom-shortcut-page";
   const CUSTOM_SHORTCUT_FRAME_ID = "codex-custom-shortcut-frame";
   const CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE = "data-codex-custom-shortcut-hidden";
   const CUSTOM_SHORTCUT_HOST_ATTRIBUTE = "data-codex-custom-shortcut-host";
   const ASSET_CONSOLE_PAGE_ID = "codex-asset-console-page";
   const ASSET_CONSOLE_FRAME_ID = "codex-asset-console-frame";
+  const ASSET_CONSOLE_OPEN_INTENT_KEY = "aiyoucodex:asset-console-open:v1";
   const RECOVERED_HISTORY_FLOW_ATTRIBUTE = "data-codex-recovered-history-flow";
   const RECOVERED_HISTORY_MESSAGE_ATTRIBUTE = "data-codex-recovered-history-message";
   const RECOVERED_HISTORY_CONTENT_ATTRIBUTE = "data-codex-recovered-history-content";
@@ -64,6 +68,7 @@
     ["更多", "更多"],
     ["more", "更多"],
     ["explore", "更多"],
+    ["探索", "更多"],
   ]);
   const NATIVE_SECTION_LABEL_ALIASES = new Map([
     ["置顶", "置顶"],
@@ -87,7 +92,6 @@
   const VIEW_STORAGE_KEY = "codex-conversation-preview:view-mode";
   const THREAD_STATUS_STORAGE_KEY = "codex-conversation-preview:thread-statuses";
   const NATIVE_ANCHOR_GRACE_MS = 1_800;
-  const FOLDER_DUPLICATE_WINDOW_MS = 15 * 60 * 1000;
   const STATUS_BUTTON_CLASS = "codex-conversation-status-button";
   const STATUS_MENU_ID = "codex-conversation-status-menu";
   const SUMMARY_CLASS = "codex-conversation-core-summary";
@@ -105,9 +109,15 @@
   let destroyed = false;
   let observer = null;
   let syncTimer = null;
+  let syncing = false;
+  let lastSyncAt = null;
+  let syncCount = 0;
+  let componentErrors = {};
+  const snapshotSignatures = new Map();
   let anchorRetryTimer = null;
   let previews = new Map();
   let shortcutSources = new Map();
+  let shortcutSourcesMissingSince = 0;
   let shortcutCatalog = [];
   let shortcutSettings = {
     schemaVersion: 4,
@@ -116,11 +126,18 @@
   };
   let customShortcutPage = null;
   let customShortcutFrame = null;
+  let customShortcutFrames = new Map();
   let customShortcutLastFocusedElement = null;
   let assetConsole = { available: false, label: "资产控制台", mode: "embedded" };
   let assetConsolePage = null;
   let assetConsoleFrame = null;
   let assetConsoleReturnFocus = null;
+  let assetConsoleRestorePending = false;
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(ASSET_CONSOLE_OPEN_INTENT_KEY) || "null");
+    const targetId = String(window[RENDERER_TARGET_ID_GLOBAL] || "");
+    assetConsoleRestorePending = saved?.open === true && saved.targetId === targetId;
+  } catch {}
   let conversationHistory = null;
   let historySignature = "";
   let recoveredHistorySignature = "";
@@ -954,31 +971,76 @@
         pointer-events: auto;
       }
       #${CUSTOM_SHORTCUT_PAGE_ID}[hidden] { display: none !important; }
+      #${CUSTOM_SHORTCUT_PAGE_ID}[data-codex-custom-shortcut-state="parked"] {
+        display: grid !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: -12000px !important;
+        width: var(--codex-workspace-panel-width, min(680px, 48vw)) !important;
+        height: 100vh !important;
+        min-width: 420px !important;
+        max-width: 1000px !important;
+        opacity: 0 !important;
+        box-shadow: none !important;
+        pointer-events: none !important;
+      }
       #${CUSTOM_SHORTCUT_PAGE_ID} .codex-custom-shortcut-header {
         display: flex;
+        position: relative;
+        z-index: 4;
         align-items: center;
         justify-content: space-between;
-        padding: 0 12px 0 16px;
+        padding: 0 52px 0 16px;
         border-bottom: 0.5px solid color-mix(in srgb, currentColor 12%, transparent);
         font-size: 13px;
         font-weight: 620;
+        pointer-events: auto !important;
+        -webkit-app-region: no-drag !important;
       }
       #${CUSTOM_SHORTCUT_PAGE_ID} [data-codex-custom-shortcut-close] {
-        width: 30px;
-        height: 30px;
+        position: relative;
+        z-index: 5;
+        display: grid;
+        place-items: center;
+        flex: 0 0 40px;
+        width: 40px;
+        height: 40px;
+        min-width: 40px;
+        min-height: 40px;
         padding: 0;
         border: 0;
         border-radius: 9px;
         background: color-mix(in srgb, currentColor 6%, transparent);
         color: inherit;
         font-size: 20px;
+        line-height: 1;
         cursor: pointer;
+        pointer-events: auto !important;
+        touch-action: manipulation;
+        -webkit-app-region: no-drag !important;
       }
-      #${CUSTOM_SHORTCUT_FRAME_ID} {
+      #${CUSTOM_SHORTCUT_PAGE_ID} .codex-custom-shortcut-frame-stack {
+        position: relative;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+      }
+      #${CUSTOM_SHORTCUT_PAGE_ID} iframe[data-codex-custom-shortcut-frame] {
+        position: absolute;
+        inset: 0;
         width: 100%;
         height: 100%;
         border: 0;
         background: Canvas;
+      }
+      #${CUSTOM_SHORTCUT_PAGE_ID} iframe[data-codex-custom-shortcut-active="false"] {
+        position: fixed !important;
+        top: 44px !important;
+        left: -12000px !important;
+        width: var(--codex-workspace-panel-width, min(680px, 48vw)) !important;
+        height: calc(100vh - 44px) !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
       }
       [data-codex-sidebar-section-heading-hidden="true"] {
         display: none !important;
@@ -2178,6 +2240,7 @@
         url,
         icon: Object.hasOwn(SHORTCUT_ICON_PRESETS, raw.icon) ? raw.icon : "link",
         openMode: raw.openMode === "browser" ? "browser" : "internal",
+        keepAlive: raw.keepAlive === true && raw.openMode !== "browser",
         managed: true,
       }];
     });
@@ -2290,6 +2353,7 @@
     const page = document.createElement("section");
     page.id = CUSTOM_SHORTCUT_PAGE_ID;
     page.hidden = true;
+    page.dataset.codexCustomShortcutState = "hidden";
     const header = document.createElement("header");
     header.className = "codex-custom-shortcut-header";
     const title = document.createElement("span");
@@ -2301,8 +2365,93 @@
     close.textContent = "×";
     close.onclick = () => closeCustomShortcutPanel();
     header.append(title, close);
-    page.appendChild(header);
+    const frameStack = document.createElement("div");
+    frameStack.className = "codex-custom-shortcut-frame-stack";
+    page.append(header, frameStack);
     return initializeWorkspacePanel(page, "custom");
+  }
+
+  function updateCustomShortcutKeepAliveState() {
+    if (!customShortcutPage) return;
+    const mounted = Array.from(customShortcutFrames.values()).some((record) =>
+      record.keepAlive && record.frame.isConnected,
+    );
+    if (mounted) customShortcutPage.dataset.codexCustomShortcutKeepAliveMounted = "true";
+    else customShortcutPage.removeAttribute("data-codex-custom-shortcut-keep-alive-mounted");
+  }
+
+  function customShortcutPageIsVisible() {
+    return customShortcutPage?.dataset.codexCustomShortcutState === "visible"
+      && customShortcutPage.hidden === false;
+  }
+
+  function setCustomShortcutPageVisibility(visible) {
+    if (!customShortcutPage) return;
+    const keepAliveMounted = customShortcutPage.dataset.codexCustomShortcutKeepAliveMounted === "true";
+    if (visible) {
+      customShortcutPage.hidden = false;
+      customShortcutPage.dataset.codexCustomShortcutState = "visible";
+      customShortcutPage.setAttribute("aria-hidden", "false");
+      return;
+    }
+    customShortcutPage.dataset.codexCustomShortcutState = keepAliveMounted ? "parked" : "hidden";
+    customShortcutPage.hidden = !keepAliveMounted;
+    customShortcutPage.setAttribute("aria-hidden", "true");
+  }
+
+  function removeCustomShortcutFrame(key) {
+    const record = customShortcutFrames.get(key);
+    if (!record) return;
+    record.frame.remove();
+    customShortcutFrames.delete(key);
+    if (customShortcutFrame === record.frame) customShortcutFrame = null;
+    updateCustomShortcutKeepAliveState();
+  }
+
+  function ensureCustomShortcutFrame(item, url) {
+    const key = shortcutItemKey(item);
+    const existing = customShortcutFrames.get(key);
+    if (existing?.frame?.isConnected && existing.url === url) {
+      existing.keepAlive = item.keepAlive === true;
+      existing.frame.dataset.codexCustomShortcutKeepAlive = String(existing.keepAlive);
+      updateCustomShortcutKeepAliveState();
+      return { ...existing, created: false };
+    }
+    if (existing) removeCustomShortcutFrame(key);
+    const frame = document.createElement("iframe");
+    frame.title = item.name;
+    frame.name = `codex-managed-shortcut|${encodeURIComponent(key)}|${encodeURIComponent(String(window[RENDERER_TARGET_ID_GLOBAL] || ""))}`;
+    frame.src = url;
+    frame.referrerPolicy = "no-referrer";
+    frame.dataset.codexCustomShortcutFrame = key;
+    frame.dataset.codexCustomShortcutActive = "false";
+    frame.dataset.codexCustomShortcutKeepAlive = String(item.keepAlive === true);
+    frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals allow-presentation");
+    frame.setAttribute("allow", "clipboard-read; clipboard-write; fullscreen");
+    customShortcutPage.querySelector(".codex-custom-shortcut-frame-stack")?.appendChild(frame);
+    const record = { key, url, keepAlive: item.keepAlive === true, frame };
+    customShortcutFrames.set(key, record);
+    updateCustomShortcutKeepAliveState();
+    return { ...record, created: true };
+  }
+
+  function activateCustomShortcutFrame(record) {
+    for (const candidate of customShortcutFrames.values()) {
+      const active = candidate.key === record.key;
+      candidate.frame.dataset.codexCustomShortcutActive = String(active);
+      if (active) candidate.frame.id = CUSTOM_SHORTCUT_FRAME_ID;
+      else candidate.frame.removeAttribute("id");
+    }
+    customShortcutFrame = record.frame;
+    for (const [key, candidate] of customShortcutFrames) {
+      if (key !== record.key && !candidate.keepAlive) removeCustomShortcutFrame(key);
+    }
+  }
+
+  function ensureCustomShortcutPage(mount) {
+    if (!customShortcutPage) customShortcutPage = createCustomShortcutPage();
+    if (customShortcutPage.parentElement !== mount.surface) mount.surface.appendChild(customShortcutPage);
+    return customShortcutPage;
   }
 
   function openCustomShortcutPanel(item) {
@@ -2311,36 +2460,52 @@
     const mount = findCustomShortcutPageMount();
     if (!mount) return false;
     closeOtherWorkspacePanels("custom");
-    if (!customShortcutPage) customShortcutPage = createCustomShortcutPage();
+    ensureCustomShortcutPage(mount);
     customShortcutLastFocusedElement = document.activeElement;
-    if (customShortcutPage.parentElement !== mount.surface) mount.surface.appendChild(customShortcutPage);
     customShortcutPage.querySelector("[data-codex-custom-shortcut-title]").textContent = item.name;
     customShortcutPage.dataset.codexCustomShortcutItem = shortcutItemKey(item);
-    customShortcutFrame?.remove();
-    const frame = document.createElement("iframe");
-    frame.id = CUSTOM_SHORTCUT_FRAME_ID;
-    frame.title = item.name;
-    frame.src = url;
-    frame.referrerPolicy = "no-referrer";
-    frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals allow-presentation");
-    frame.setAttribute("allow", "clipboard-read; clipboard-write; fullscreen");
-    customShortcutFrame = frame;
-    customShortcutPage.appendChild(frame);
-    customShortcutPage.hidden = false;
+    const record = ensureCustomShortcutFrame(item, url);
+    activateCustomShortcutFrame(record);
+    setCustomShortcutPageVisibility(true);
+    setWorkspacePanelHostLayer(customShortcutPage, true);
     document.documentElement.setAttribute("data-codex-custom-shortcut-open", "true");
     scheduleSync();
     return true;
   }
 
   function closeCustomShortcutPanel(restoreFocus = true) {
-    if (customShortcutPage) customShortcutPage.hidden = true;
-    customShortcutFrame?.remove();
-    customShortcutFrame = null;
+    const key = customShortcutPage?.dataset.codexCustomShortcutItem || "";
+    const active = customShortcutFrames.get(key);
+    setWorkspacePanelHostLayer(customShortcutPage, false);
+    if (active && !active.keepAlive) removeCustomShortcutFrame(key);
+    setCustomShortcutPageVisibility(false);
     restoreCustomShortcutNativeContent();
     document.documentElement.removeAttribute("data-codex-custom-shortcut-open");
     customShortcutPage?.removeAttribute("data-codex-custom-shortcut-item");
     if (restoreFocus) customShortcutLastFocusedElement?.focus?.();
     customShortcutLastFocusedElement = null;
+  }
+
+  function ensureManagedShortcut(shortcutId, options = {}) {
+    const item = normalizedManagedShortcuts().find((candidate) =>
+      candidate.id === String(shortcutId || "") && candidate.openMode === "internal",
+    );
+    if (!item) return { ok: false, reason: "shortcut-not-found" };
+    if (options?.visible === true) {
+      const opened = openCustomShortcutPanel(item);
+      return opened
+        ? { ok: true, visible: true, created: false }
+        : { ok: false, visible: false, created: false, reason: "panel-mount-unavailable" };
+    }
+    if (item.keepAlive !== true) return { ok: false, reason: "keep-alive-disabled" };
+    const mount = findCustomShortcutPageMount();
+    const url = validShortcutUrl(item.url);
+    if (!mount || !url) return { ok: false, reason: "panel-mount-unavailable" };
+    ensureCustomShortcutPage(mount);
+    const record = ensureCustomShortcutFrame(item, url);
+    if (!customShortcutPageIsVisible()) setCustomShortcutPageVisibility(false);
+    scheduleSync();
+    return { ok: true, visible: customShortcutPageIsVisible(), created: record.created };
   }
 
   function currentCodexTaskContext() {
@@ -2527,7 +2692,7 @@
     if (!threadId || !messages.length) {
       conversationHistory = null;
       historySignature = "";
-      clearRecoveredConversationHistory();
+      scheduleSync();
       return;
     }
     historySignature = `${threadId}:${source.sourceSize || 0}:${messages.length}`;
@@ -2541,7 +2706,7 @@
       assistantCount: messages.filter((message) => message.role === "assistant").length,
       messages,
     };
-    ensureRecoveredConversationHistory();
+    scheduleSync();
   }
 
   function notifyAssetConsole(action) {
@@ -2555,11 +2720,11 @@
     }
   }
 
-  function setAssetConsoleHostLayer(active) {
-    const host = assetConsolePage?.parentElement;
+  function setWorkspacePanelHostLayer(page, active) {
+    const host = page?.parentElement;
     if (!host) return;
-    const marker = "data-codex-asset-console-host-layer";
-    const previous = "data-codex-asset-console-host-z-index";
+    const marker = "data-codex-workspace-panel-host-layer";
+    const previous = "data-codex-workspace-panel-host-z-index";
     if (active) {
       if (!host.hasAttribute(marker)) {
         host.setAttribute(marker, "true");
@@ -2604,15 +2769,73 @@
     return initializeWorkspacePanel(page, "asset");
   }
 
+  function setAssetConsoleOpenIntent(open) {
+    assetConsoleRestorePending = false;
+    try {
+      if (open) sessionStorage.setItem(ASSET_CONSOLE_OPEN_INTENT_KEY, JSON.stringify({
+        open: true, targetId: String(window[RENDERER_TARGET_ID_GLOBAL] || ""),
+      }));
+      else sessionStorage.removeItem(ASSET_CONSOLE_OPEN_INTENT_KEY);
+    } catch {}
+  }
+
+  function restoreAssetConsoleOpenIntent() {
+    if (!assetConsoleRestorePending || destroyed || !assetConsole.available
+      || typeof globalThis.codexSidebarOpenAssetConsole !== "function" || document.readyState === "loading") return;
+    const anotherPanelVisible = Array.from(document.querySelectorAll(`[${WORKSPACE_PANEL_ATTRIBUTE}], #codex-taskboard-page`))
+      .some((panel) => panel.id !== ASSET_CONSOLE_PAGE_ID && !panel.hidden && panel.getAttribute("aria-hidden") !== "true");
+    if (anotherPanelVisible) { setAssetConsoleOpenIntent(false); return; }
+    if (!findCustomShortcutPageMount()) return;
+    // One attempt per restored document; a failed service connection remains a
+    // visible retry state rather than repeatedly opening or stealing focus.
+    assetConsoleRestorePending = false;
+    openAssetConsolePanel();
+  }
+
+  function mountAssetConsolePage(surface) {
+    if (!assetConsolePage || !surface) return false;
+    const detached = !assetConsolePage.isConnected;
+    const changingParent = assetConsolePage.parentElement !== surface;
+    if ((detached || changingParent) && assetConsoleFrame) {
+      // Removing an iframe's ancestor destroys its browsing context. Reusing
+      // this detached reference as "ready" would display a dead/blank frame.
+      assetConsoleFrame.remove();
+      assetConsoleFrame = null;
+      assetConsolePage.dataset.state = "loading";
+    }
+    if (changingParent) surface.appendChild(assetConsolePage);
+    return detached;
+  }
+
+  function restoreDetachedAssetConsolePanel() {
+    // Restore only a panel the user left open. Closing/switching panels is an
+    // explicit visibility decision and must not be undone by a DOM observer.
+    if (!assetConsolePage || assetConsolePage.hidden || assetConsolePage.isConnected) return;
+    const mount = findCustomShortcutPageMount();
+    if (!mount) { scheduleAnchorRetry(); return; }
+    mountAssetConsolePage(mount.surface);
+    setWorkspacePanelHostLayer(assetConsolePage, true);
+    assetConsolePage.dataset.state = "loading";
+    setTextIfChanged(assetConsolePage.querySelector(".codex-asset-console-message"), "界面结构已变化，正在重新连接资产库…");
+    document.documentElement.setAttribute("data-codex-asset-console-open", "true");
+    // This is a local recovery, not a keep-alive promise: obtain a fresh proxy
+    // for the new browsing context without reinstalling the surrounding UI.
+    if (!notifyAssetConsole("open")) {
+      assetConsolePage.dataset.state = "error";
+      setTextIfChanged(assetConsolePage.querySelector(".codex-asset-console-message"), "本机连接尚未就绪，请点击重新连接");
+    }
+  }
+
   function openAssetConsolePanel(options = {}) {
     pendingAssetConsoleQuery = typeof options?.query === "string" ? options.query.trim() : "";
     closeOtherWorkspacePanels("asset");
     const mount = findCustomShortcutPageMount();
     if (!mount) return false;
     if (!assetConsolePage) assetConsolePage = createAssetConsolePage();
+    setAssetConsoleOpenIntent(true);
     assetConsoleReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    if (assetConsolePage.parentElement !== mount.surface) mount.surface.appendChild(assetConsolePage);
-    setAssetConsoleHostLayer(true);
+    mountAssetConsolePage(mount.surface);
+    setWorkspacePanelHostLayer(assetConsolePage, true);
     assetConsolePage.hidden = false;
     if (assetConsoleFrame?.isConnected && assetConsolePage.dataset.state === "ready") {
       if (pendingAssetConsoleQuery) {
@@ -2635,9 +2858,10 @@
     return true;
   }
 
-  function closeAssetConsolePanel({ notify = true, restoreFocus = true } = {}) {
+  function closeAssetConsolePanel({ notify = true, restoreFocus = true, preserveIntent = false } = {}) {
+    if (!preserveIntent) setAssetConsoleOpenIntent(false);
     if (assetConsolePage) assetConsolePage.hidden = true;
-    setAssetConsoleHostLayer(false);
+    setWorkspacePanelHostLayer(assetConsolePage, false);
     if (notify) {
       assetConsoleFrame?.remove();
       assetConsoleFrame = null;
@@ -2652,7 +2876,7 @@
 
   function setAssetConsolePanel(value) {
     const state = value && typeof value === "object" ? value : {};
-    if (!assetConsolePage || assetConsolePage.hidden) return;
+    if (!assetConsolePage?.isConnected || assetConsolePage.hidden) return;
     if (state.state !== "ready" || typeof state.url !== "string" || !state.url) {
       assetConsoleFrame?.remove();
       assetConsoleFrame = null;
@@ -2661,6 +2885,10 @@
       return;
     }
     const body = assetConsolePage.querySelector(".codex-asset-console-body");
+    if (assetConsoleFrame?.isConnected && assetConsoleFrame.src === state.url) {
+      assetConsolePage.dataset.state = "ready";
+      return;
+    }
     assetConsoleFrame?.remove();
     const frame = document.createElement("iframe");
     frame.id = ASSET_CONSOLE_FRAME_ID;
@@ -3246,9 +3474,17 @@
 
   function findNativeShortcutButton(name) {
     const canonicalName = canonicalShortcutLabel(name);
-    return Array.from(document.querySelectorAll("button")).find((button) =>
+    const sidebar = sidebarRoot();
+    return Array.from(sidebar?.querySelectorAll("button") || []).find((button) =>
       !button.closest(`#${SHORTCUT_GRID_ID}`) && shortcutLabel(button) === canonicalName,
     );
+  }
+
+  function sidebarRoot() {
+    return document.getElementById("app-shell-sidebar")
+      || document.querySelector('[data-app-action-sidebar-scroll]')?.closest('nav, [role="navigation"]')
+      || document.querySelector(ROW_SELECTOR)?.closest('nav, [role="navigation"]')
+      || null;
   }
 
   function shortcutGroupButtons(group) {
@@ -3270,8 +3506,12 @@
     const newConversation = findNativeShortcutButton("新对话");
     const pullRequests = findNativeShortcutButton("拉取请求");
     const overflowButton = findNativeShortcutButton("更多");
-    const navigationGroup = shortcutSiblingGroup(pullRequests);
-    const overflowGroup = overflowButton?.parentElement?.parentElement || null;
+    const navigationGroup = shortcutSiblingGroup(pullRequests)
+      || shortcutSiblingGroup(findNativeShortcutButton("已安排"))
+      || shortcutSiblingGroup(findNativeShortcutButton("插件"));
+    // Hide only the actual overflow trigger; its parent can include unrelated
+    // navigation groups after a host update. Never remove React-owned nodes.
+    const overflowGroup = overflowButton || null;
     let newConversationRow = newConversation?.parentElement;
     while (newConversationRow && !newConversationRow.matches("nav, [data-app-action-sidebar-scroll]")) {
       const rowButtons = Array.from(newConversationRow.querySelectorAll("button"));
@@ -3281,10 +3521,11 @@
     if (newConversationRow?.matches("nav, [data-app-action-sidebar-scroll]")) {
       newConversationRow = newConversation?.parentElement;
     }
-    const header = newConversation?.parentElement?.parentElement?.parentElement?.parentElement;
-    if (!newConversation || !navigationGroup || !header) return null;
+    const header = newConversationRow?.parentElement;
+    if (!newConversation || !header || !sidebarRoot()?.contains(header)) return null;
 
-    const navigationButtons = shortcutGroupButtons(navigationGroup);
+    const navigationButtons = navigationGroup ? shortcutGroupButtons(navigationGroup)
+      : ["拉取请求", "站点", "已安排", "插件", "项目管理"].map(findNativeShortcutButton).filter(Boolean);
     const quickButton = Array.from(newConversationRow.querySelectorAll("button"))
       .find((button) => button !== newConversation) || null;
     const sourceItems = [
@@ -3437,9 +3678,17 @@
   function ensureShortcutGrid() {
     const sources = nativeShortcutSources();
     if (!sources || sources.items.length < 2) {
-      if (document.getElementById(SHORTCUT_GRID_ID)) clearShortcutEnhancement();
+      if (document.getElementById(SHORTCUT_GRID_ID)) {
+        shortcutSourcesMissingSince ||= Date.now();
+        if (Date.now() - shortcutSourcesMissingSince < NATIVE_ANCHOR_GRACE_MS) {
+          scheduleAnchorRetry();
+          return;
+        }
+        clearShortcutEnhancement();
+      }
       return;
     }
+    shortcutSourcesMissingSince = 0;
     let grid = document.getElementById(SHORTCUT_GRID_ID);
     const needsRebuild = grid?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN
       || grid?.parentElement !== sources.header
@@ -3458,10 +3707,11 @@
     }
     shortcutCatalog = sources.catalogItems;
     sources.newConversationRow.setAttribute("data-codex-sidebar-shortcut-source-hidden", "true");
-    sources.navigationGroup.setAttribute("data-codex-sidebar-shortcut-source-group-hidden", "true");
+    sources.navigationGroup?.setAttribute("data-codex-sidebar-shortcut-source-group-hidden", "true");
     sources.overflowGroup?.setAttribute("data-codex-sidebar-shortcut-source-group-hidden", "true");
     for (const item of sources.sourceItems) {
       item.button.dataset.codexSidebarShortcutSourceName = item.name;
+      if (item.name !== "新对话") item.button.dataset.codexSidebarShortcutSourceHidden = "true";
     }
     for (const item of sources.items) {
       updateShortcutCard(grid, item);
@@ -3487,9 +3737,10 @@
       || Array.from(document.querySelectorAll("button[data-app-action-sidebar-section-toggle]"))
         .find((candidate) => !candidate.closest(`#${SECTION_TABS_ID}`) && sectionLabel(candidate) === canonicalName);
     if (!button) return null;
+    const section = nativeSection || button.closest("section");
     let heading = button.parentElement;
-    while (heading && !heading.classList.contains("group/nav-section-title")) heading = heading.parentElement;
-    const section = heading?.closest("section");
+    while (heading && heading.parentElement !== section
+      && !heading.classList.contains("group/nav-section-title")) heading = heading.parentElement;
     if (!heading || !section) return null;
     return { name: canonicalName, button, heading, section, panelHost: null, actions: null };
   }
@@ -3508,20 +3759,20 @@
   }
 
   function nativeSectionSources() {
-    const items = NATIVE_SECTION_NAMES.map(nativeSectionSource);
-    if (items.some((item) => !item)) return null;
+    const items = NATIVE_SECTION_NAMES.map(nativeSectionSource).filter(Boolean);
+    if (!items.length) return null;
     const common = commonAncestor(items.map((item) => item.section));
     if (!common) return null;
     for (const item of items) item.panelHost = topLevelPanelHost(item.section, common);
-    const existingActions = document.querySelector(`#${SECTION_TABS_ID} [data-codex-sidebar-project-actions-source]`);
-    items.find((item) => item.name === "项目").actions = items.find((item) => item.name === "项目").heading.children[1]
-      || existingActions
-      || null;
+    const project = items.find((item) => item.name === "项目");
+    if (project) project.actions = Array.from(project.heading.children).find((child) =>
+      !child.contains(project.button) && child.querySelector("button"),
+    ) || null;
     return { common, items };
   }
 
   function nativePrioritySource() {
-    const list = Array.from(document.querySelectorAll('[role="list"]')).find((candidate) => {
+    const list = Array.from(sidebarRoot()?.querySelectorAll('[role="list"]') || []).find((candidate) => {
       if (!candidate.querySelector(ROW_SELECTOR)) return false;
       return Array.from(candidate.querySelectorAll("div,span,h1,h2,h3,h4")).some((node) =>
         node.childElementCount === 0 && canonicalSectionLabel(node.textContent) === "优先级",
@@ -3570,6 +3821,7 @@
     if (pending?.button === item.button && pending.desired === desired && Date.now() - pending.startedAt < 1_200) return;
     sectionTogglePending.set(item.name, { button: item.button, desired, startedAt: Date.now() });
     item.button.click();
+    scheduleSync();
   }
 
   function updateSectionTabState(items, { syncNative = true } = {}) {
@@ -3659,23 +3911,14 @@
   }
 
   function restoreProjectActions() {
-    const project = sectionSources.get("项目");
-    const actions = project?.actions;
-    if (!actions) return;
-    actions.removeAttribute("data-codex-sidebar-project-actions-source");
-    actions.querySelectorAll("button[data-codex-sidebar-project-action-source]").forEach((button) => {
-      button.removeAttribute("data-codex-sidebar-project-action-source");
-    });
-    if (project.heading?.isConnected && actions.parentElement !== project.heading && project.heading.children.length < 2) {
-      project.heading.appendChild(actions);
-    }
+    document.querySelector(`#${SECTION_TABS_ID} [data-codex-native-action-proxies]`)?.remove();
   }
 
   function clearSectionEnhancement() {
     clearFolderEnhancement();
     restoreProjectActions();
     document.getElementById(RECENT_LIST_ID)?.remove();
-    document.querySelectorAll(`#${INTERRUPTED_PANEL_ID}, [data-codex-sidebar-section-panel="中断"]`).forEach((panel) => {
+    document.querySelectorAll(`#${INTERRUPTED_PANEL_ID}, [data-codex-sidebar-virtual-section], [data-codex-sidebar-section-panel="中断"]`).forEach((panel) => {
       panel.remove();
     });
     document.querySelectorAll('[data-codex-sidebar-recent-native-hidden="true"]').forEach((node) => {
@@ -3776,36 +4019,34 @@
       || bar?.parentElement !== sources.common
       || sources.items.some((item) => sectionSources.get(item.name)?.section !== item.section)
       || sectionSources.get("项目")?.actions !== projectActions
-      || !sectionSources.get("中断")?.section?.isConnected;
+      || SECTION_NAMES.some((name) => !sectionSources.get(name)?.section?.isConnected);
     if (needsRebuild) {
       clearSectionEnhancement();
       bar = createSectionTabs();
       sources.common.insertBefore(bar, sources.common.firstChild);
       sectionSources = new Map(sources.items.map((item) => [item.name, item]));
-      const interruptedPanel = document.createElement("section");
-      interruptedPanel.id = INTERRUPTED_PANEL_ID;
-      interruptedPanel.dataset.codexPreviewRuntime = RUNTIME_TOKEN;
-      sources.common.insertBefore(interruptedPanel, bar.nextSibling);
-      sectionSources.set("中断", {
-        name: "中断",
+      for (const name of SECTION_NAMES.filter((name) => !sectionSources.has(name))) {
+        const interruptedPanel = document.createElement("section");
+        interruptedPanel.id = name === "中断" ? INTERRUPTED_PANEL_ID : sectionPanelId(name);
+        interruptedPanel.dataset.codexPreviewRuntime = RUNTIME_TOKEN;
+        interruptedPanel.dataset.codexSidebarVirtualSection = name;
+        sources.common.insertBefore(interruptedPanel, bar.nextSibling);
+        sectionSources.set(name, {
+        name,
         virtual: true,
         button: null,
         heading: null,
         section: interruptedPanel,
         panelHost: interruptedPanel,
         actions: null,
-      });
+        });
+      }
     }
     const project = sources.items.find((item) => item.name === "项目");
     const actionsHost = bar.querySelector("[data-codex-sidebar-project-actions]");
-    if (project?.actions && project.actions.parentElement !== actionsHost) {
-      project.actions.dataset.codexSidebarProjectActionsSource = "true";
-      project.actions.querySelectorAll("button").forEach((button) => {
-        const label = button.getAttribute("aria-label") || "项目操作";
-        button.dataset.codexSidebarProjectActionSource = label;
-      });
-      actionsHost.appendChild(project.actions);
-    }
+    syncNativeActionProxies(actionsHost, () => nativeSectionSource("项目")?.heading
+      ? nativeSectionSources()?.items.find((item) => item.name === "项目")?.actions?.querySelectorAll("button") || []
+      : [], "project");
     updateSectionTabState(SECTION_NAMES.map((name) => sectionSources.get(name)).filter(Boolean));
   }
 
@@ -4007,7 +4248,6 @@
       while (listRoot && listRoot.getAttribute("role") !== "list") listRoot = listRoot.parentElement;
       if (!id || !label || !folder || !listRoot) return [];
       const panelHost = topLevelPanelHost(folder, listRoot);
-      const existingActions = document.querySelector(`#${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-actions-source="${CSS.escape(id)}"]`);
       const rowActions = Array.from(row.children).find((child) =>
         Array.from(child.querySelectorAll?.("button") || []).some((button) =>
           isProjectActionsLabel(button.getAttribute("aria-label"), label),
@@ -4034,7 +4274,7 @@
         folder,
         listRoot,
         panelHost,
-        actions: rowActions || existingActions || null,
+        actions: rowActions || null,
         sourceIndex,
         threadTitles,
         catalogEntries,
@@ -4126,19 +4366,14 @@
       .sort((left, right) => Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
     const visible = [];
     const suppressedIds = new Set();
-    const newestByKey = new Map();
+    const seenIds = new Set();
     for (const entry of entries) {
       const threadId = normalizedThreadId(entry.threadId);
-      const title = normalizedThreadTitle(entry.title);
-      const key = String(entry.dedupeKey || "").trim() || (title ? `title:${title}` : "");
-      const time = Date.parse(entry.updatedAt || "");
-      const newest = key ? newestByKey.get(key) : null;
-      if (threadId && newest && Number.isFinite(time) && newest.time - time <= FOLDER_DUPLICATE_WINDOW_MS) {
-        suppressedIds.add(threadId);
-        continue;
-      }
+      // Titles, contents and nearby timestamps are not conversation identities.
+      // Duplicate records of one UUID collapse; distinct UUIDs always survive.
+      if (threadId && seenIds.has(threadId)) continue;
       visible.push(entry);
-      if (key && Number.isFinite(time)) newestByKey.set(key, { time, threadId });
+      if (threadId) seenIds.add(threadId);
     }
     return { entries: visible, suppressedIds };
   }
@@ -4204,29 +4439,64 @@
     if (pending?.row === item.row) return;
     folderTogglePending.set(item.id, { row: item.row, startedAt: Date.now() });
     item.row.click();
+    scheduleSync();
   }
 
   function restoreFolderActions() {
-    const source = document.querySelector(`#${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-actions-source]`);
-    if (!source) return;
-    const id = source.getAttribute("data-codex-sidebar-folder-actions-source");
-    const item = folderSources.get(id);
-    const row = item?.row || document.querySelector(`[data-app-action-sidebar-project-id="${CSS.escape(id)}"]`);
-    source.removeAttribute("data-codex-sidebar-folder-actions-source");
-    source.querySelectorAll("[data-codex-sidebar-folder-action-source]").forEach((button) => {
-      button.removeAttribute("data-codex-sidebar-folder-action-source");
-    });
-    source.querySelectorAll("[data-codex-sidebar-folder-create]").forEach((button) => {
-      const originalTitle = button.getAttribute("data-codex-sidebar-folder-create-original-title");
-      if (originalTitle) button.title = originalTitle;
-      else button.removeAttribute("title");
-      button.removeAttribute("data-codex-sidebar-folder-create");
-      button.removeAttribute("data-codex-sidebar-folder-create-original-title");
-    });
-    if (row?.isConnected && source.parentElement !== row) {
-      const selectProject = Array.from(row.children).find((child) => child.matches?.("button[data-app-action-sidebar-select-project]"));
-      row.insertBefore(source, selectProject || null);
+    document.querySelector(`#${FOLDER_SWITCHER_ID} [data-codex-native-action-proxies]`)?.remove();
+  }
+
+  function syncNativeActionProxies(host, resolveButtons, kind) {
+    if (!host) return;
+    const sources = Array.from(resolveButtons() || []);
+    let group = host.querySelector("[data-codex-native-action-proxies]");
+    if (!sources.length) { group?.remove(); return; }
+    if (!group) {
+      group = document.createElement("div");
+      group.dataset.codexNativeActionProxies = kind;
+      group.setAttribute(`data-codex-sidebar-${kind}-actions-source`, "proxy");
+      host.appendChild(group);
     }
+    const signature = JSON.stringify(sources.map((button) => [
+      button.getAttribute("aria-label"), button.getAttribute("title"), button.disabled,
+      button.querySelector("svg")?.outerHTML || button.textContent,
+    ]));
+    if (group.dataset.signature === signature) return;
+    group.dataset.signature = signature;
+    group.replaceChildren(...sources.map((source, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      const label = source.getAttribute("aria-label") || source.title || source.textContent.trim() || "项目操作";
+      button.setAttribute("aria-label", label);
+      button.title = source.title || label;
+      button.disabled = source.disabled;
+      button.setAttribute(`data-codex-sidebar-${kind}-action-source`, label);
+      const icon = source.querySelector("svg")?.cloneNode(true);
+      if (icon) button.appendChild(icon);
+      else button.textContent = source.textContent || "…";
+      button.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const current = Array.from(resolveButtons() || []);
+        const target = current.find((candidate) => (candidate.getAttribute("aria-label") || candidate.title
+          || candidate.textContent.trim() || "项目操作") === label) || current[index];
+        if (!target?.isConnected || target.disabled) { scheduleSync(); return; }
+        target.click();
+        // Native menu triggers are intentionally still in their hidden React
+        // heading. Move only the portal presentation to the visible proxy.
+        if (target.getAttribute("aria-haspopup") === "menu") requestAnimationFrame(() => {
+          const menu = document.getElementById(target.getAttribute("aria-controls") || "");
+          const wrapper = menu?.closest("[data-radix-popper-content-wrapper]");
+          if (!wrapper || !button.isConnected) return;
+          const rect = button.getBoundingClientRect();
+          const { width, height } = wrapper.getBoundingClientRect();
+          const top = rect.bottom + height + 12 <= innerHeight ? rect.bottom + 4 : Math.max(8, rect.top - height - 4);
+          wrapper.style.transform = `translate(${Math.max(8, Math.min(rect.left, innerWidth - width - 8))}px, ${top}px)`;
+        });
+        scheduleSync();
+      };
+      return button;
+    }));
   }
 
   function nativeFolderCreateButton(item) {
@@ -4272,25 +4542,13 @@
     const root = document.getElementById(FOLDER_SWITCHER_ID);
     const host = root?.querySelector("[data-codex-sidebar-folder-actions]");
     if (!host) return;
-    const current = host.querySelector("[data-codex-sidebar-folder-actions-source]");
-    if (current && current !== item?.actions) restoreFolderActions();
     if (!item?.actions) {
+      restoreFolderActions();
       host.hidden = true;
       return;
     }
-    item.actions.dataset.codexSidebarFolderActionsSource = item.id;
-    item.actions.querySelectorAll("button").forEach((button) => {
-      button.dataset.codexSidebarFolderActionSource = button.getAttribute("aria-label") || item.label;
-    });
-    const create = nativeFolderCreateButton(item);
-    if (create) {
-      if (!create.hasAttribute("data-codex-sidebar-folder-create-original-title")) {
-        create.dataset.codexSidebarFolderCreateOriginalTitle = create.getAttribute("title") || "";
-      }
-      create.dataset.codexSidebarFolderCreate = item.id;
-      create.title = `在“${item.label}”中新建对话`;
-    }
-    if (item.actions.parentElement !== host) host.appendChild(item.actions);
+    syncNativeActionProxies(host, () => nativeFolderSources()?.items.find((candidate) => candidate.id === activeFolderId)
+      ?.actions?.querySelectorAll("button") || [], "folder");
     host.hidden = false;
     syncCurrentFolderNewChatButton(item);
   }
@@ -4397,32 +4655,21 @@
       }
     }
 
-    // Codex initially renders a newly created conversation with a client-new-thread id,
-    // then persists it under a UUID. The catalog can see that UUID before React replaces
-    // the temporary row, so compare the exact title only for temporary ids during this
-    // hand-off. Permanent conversations continue to be matched strictly by id.
-    const catalogEntriesByTitle = new Map();
+    // A temporary-to-permanent handoff must be explicitly supplied by the host.
+    // Even temporary titles are not enough to identify a persisted conversation.
+    const catalogEntriesByClientId = new Map();
     for (const entry of item.catalogEntries) {
-      const title = normalizedThreadTitle(entry.title);
-      if (!title) continue;
-      const entries = catalogEntriesByTitle.get(title) || [];
-      entries.push(entry);
-      catalogEntriesByTitle.set(title, entries);
-    }
-    for (const entries of catalogEntriesByTitle.values()) {
-      entries.sort((left, right) => Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
+      const clientId = normalizedThreadId(entry.clientThreadId || entry.temporaryThreadId);
+      if (isTemporaryThreadId(clientId)) catalogEntriesByClientId.set(clientId, entry);
     }
     const temporaryNativeCatalogId = new Map();
     const nativeAliasByCatalogId = new Map();
     const claimedCatalogIds = new Set();
     for (const native of nativeRows) {
-      if (!isTemporaryThreadId(native.threadId) || !native.title) continue;
-      const candidate = (catalogEntriesByTitle.get(native.title) || []).find((entry) => {
-        const catalogId = normalizedThreadId(entry.threadId);
-        return catalogId && !claimedCatalogIds.has(catalogId);
-      });
+      if (!isTemporaryThreadId(native.threadId)) continue;
+      const candidate = catalogEntriesByClientId.get(native.threadId);
       const catalogId = normalizedThreadId(candidate?.threadId);
-      if (!catalogId) continue;
+      if (!catalogId || claimedCatalogIds.has(catalogId)) continue;
       claimedCatalogIds.add(catalogId);
       temporaryNativeCatalogId.set(native.threadId, catalogId);
       if (!nativeById.has(catalogId)) nativeAliasByCatalogId.set(catalogId, native.listItem);
@@ -4756,17 +5003,17 @@
       (count, item) => count + catalogMatchesForFolder(item).length,
       0,
     );
-    result.textContent = allSelected
+    setTextIfChanged(result, allSelected
       ? `全部 ${entries.length} 个对话 · 最近请求优先`
       : !ranked.length
       ? "没有匹配的项目"
       : searching
         ? `找到 ${ranked.length} 个项目 · ${matchingConversationCount} 个对话`
-        : `${ranked.length} 个文件夹 · 最近使用优先`;
+        : `${ranked.length} 个文件夹 · 最近使用优先`);
     const expand = root.querySelector("[data-codex-sidebar-folder-expand]");
     expand.hidden = tagItems.length <= 6;
     expand.setAttribute("aria-expanded", String(folderTagsExpanded));
-    expand.querySelector("span").textContent = folderTagsExpanded ? "收起" : "展开全部";
+    setTextIfChanged(expand.querySelector("span"), folderTagsExpanded ? "收起" : "展开全部");
     const activeItem = allSelected ? null : items.find((item) => item.id === activeFolderId);
     moveActiveFolderActions(activeItem);
     syncCurrentFolderNewChatButton(activeItem);
@@ -4864,8 +5111,8 @@
     const remaining = Number(usage.remainingPercent);
     const available = usage.available === true && Number.isFinite(remaining);
     const normalizedRemaining = available ? Math.min(100, Math.max(0, Math.round(remaining))) : null;
-    status.querySelector(`.${USAGE_TEXT_CLASS}`).textContent = label;
-    status.querySelector(`.${USAGE_VALUE_CLASS}`).textContent = value;
+    setTextIfChanged(status.querySelector(`.${USAGE_TEXT_CLASS}`), label);
+    setTextIfChanged(status.querySelector(`.${USAGE_VALUE_CLASS}`), value);
     status.querySelector(`.${USAGE_FILL_CLASS}`).style.width = `${normalizedRemaining ?? 0}%`;
     status.dataset.tone = ["normal", "warning", "critical", "muted"].includes(usage.tone) ? usage.tone : "muted";
     status.dataset.remainingPercent = normalizedRemaining == null ? "" : String(normalizedRemaining);
@@ -5090,22 +5337,42 @@
     fallback.style.top = `${top}px`;
   }
 
+  function syncFeature(name, render) {
+    try { render(); delete componentErrors[name]; }
+    catch (error) { componentErrors[name] = { code: "component-render-failed", at: Date.now() }; }
+  }
+
+  function setTextIfChanged(node, value) {
+    const text = String(value ?? "");
+    if (node && node.textContent !== text) node.textContent = text;
+  }
+
   function sync() {
+    if (destroyed || syncing) return;
+    syncing = true;
+    // React still owns the native subtrees. Ignore only our synchronous render
+    // mutations, then immediately resume observing native asynchronous updates.
+    // Native expansion requests explicitly schedule their follow-up pass.
+    observer?.disconnect();
+    try { renderFeatures(); lastSyncAt = Date.now(); syncCount += 1; }
+    finally { syncing = false; observeHost(); }
+  }
+
+  function renderFeatures() {
     if (destroyed) return;
-    ensureShortcutGrid();
-    ensureSkillOrganizer();
-    resumeSkillsGroupingOpenRequest();
-    ensureViewToggle();
-    ensureShortcutSettingsButton();
+    syncFeature("panels", () => { restoreAssetConsoleOpenIntent(); restoreDetachedAssetConsolePanel(); });
+    syncFeature("shortcuts", ensureShortcutGrid);
+    syncFeature("skills", () => { ensureSkillOrganizer(); resumeSkillsGroupingOpenRequest(); });
+    syncFeature("header", () => { ensureViewToggle(); ensureShortcutSettingsButton(); });
     if (nativeActivityViewOpen()) {
       if (sectionEnhancementMounted()) clearSectionEnhancement();
-      ensureRecoveredConversationHistory();
+      syncFeature("history", ensureRecoveredConversationHistory);
       document.getElementById(FALLBACK_TOOLTIP_ID)?.remove();
       return;
     }
-    ensureSectionTabs();
-    ensureFolderSwitcher();
-    ensureRecoveredConversationHistory();
+    syncFeature("sections", ensureSectionTabs);
+    syncFeature("folders", ensureFolderSwitcher);
+    syncFeature("history", ensureRecoveredConversationHistory);
     const rows = visibleRows();
     const anchor = !layoutAnchored
       ? rows.find((row) => row.getAttribute("aria-current") === "page")
@@ -5115,25 +5382,25 @@
           return rect.bottom > 0 && rect.top < innerHeight;
         })
       : null;
-    for (const row of rows) {
-      applySummary(row, previewForRow(row));
-    }
-    ensureVirtualPinnedRows();
-    ensureGlobalRecentRows();
-    ensureInterruptedRows();
-    sortNativePinnedRows();
+    syncFeature("cards", () => {
+      for (const row of rows) applySummary(row, previewForRow(row));
+      ensureVirtualPinnedRows();
+      ensureGlobalRecentRows();
+      ensureInterruptedRows();
+      sortNativePinnedRows();
+    });
     if (anchor) {
       anchor.scrollIntoView({ block: viewMode === "card" ? "center" : "nearest" });
       layoutAnchored = true;
     }
-    enhanceTooltip();
+    syncFeature("tooltip", enhanceTooltip);
   }
 
   function setPreviews(items) {
     for (const preview of Array.isArray(items) ? items : []) {
       if (preview?.key) previews.set(preview.key, preview);
     }
-    sync();
+    scheduleSync();
   }
 
   function setSearchCatalog(items) {
@@ -5148,7 +5415,7 @@
       searchCatalogByProject.set(entry.projectId, entries);
       searchCatalogByThread.set(normalizedThreadId(entry.threadId), entry);
     }
-    sync();
+    scheduleSync();
   }
 
   function setRecentCatalog(items) {
@@ -5164,7 +5431,7 @@
       .sort((left, right) => right.time - left.time)
       .map(({ time, ...entry }) => entry);
     recentCatalogByThread = new Map(recentCatalog.map((entry) => [normalizedThreadId(entry.threadId), entry]));
-    sync();
+    scheduleSync();
   }
 
   function setInterruptedCatalog(items) {
@@ -5172,7 +5439,7 @@
       .filter((entry) => normalizedThreadId(entry?.threadId) && typeof entry?.title === "string")
       .sort((left, right) => Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
     interruptedCatalogByThread = new Map(interruptedCatalog.map((entry) => [normalizedThreadId(entry.threadId), entry]));
-    sync();
+    scheduleSync();
   }
 
   function setPinnedThreads(items) {
@@ -5194,12 +5461,12 @@
     }
     pinnedThreadIds = next;
     if (changed) persistPinnedThreadTimes();
-    sync();
+    scheduleSync();
   }
 
   function setActiveProjectThreads(items) {
     activeProjectThreadIds = new Set((Array.isArray(items) ? items : []).map(normalizedThreadId).filter(Boolean));
-    sync();
+    scheduleSync();
   }
 
   function setUsage(value) {
@@ -5210,7 +5477,7 @@
       tone: "muted",
       ariaLabel: "Codex 剩余量暂不可用",
     };
-    sync();
+    scheduleSync();
   }
 
   function setAssetConsole(value) {
@@ -5223,7 +5490,48 @@
     scheduleSync();
   }
 
+  function setSnapshot(snapshot = {}) {
+    const setters = { previews: setPreviews, usage: setUsage, searchCatalog: setSearchCatalog,
+      recentCatalog: setRecentCatalog, interruptedCatalog: setInterruptedCatalog,
+      pinnedThreads: setPinnedThreads, activeProjectThreads: setActiveProjectThreads,
+      skillCatalog: setSkillCatalog, conversationHistory: setConversationHistory };
+    for (const [key, setter] of Object.entries(setters)) {
+      if (!Object.hasOwn(snapshot, key)) continue;
+      const signature = JSON.stringify(snapshot[key]);
+      if (snapshotSignatures.get(key) === signature) continue;
+      setter(snapshot[key]);
+      snapshotSignatures.set(key, signature);
+    }
+    return { documentEpoch: DOCUMENT_EPOCH, accepted: true };
+  }
+
+  function getHealth() {
+    const state = (name, mounted, optional = false) => componentErrors[name]
+      ? "degraded" : mounted ? "ready" : optional ? "not-mounted" : "unsupported";
+    const emptyFolders = searchCatalogByProject.size === 0
+      && !sidebarRoot()?.querySelector('[data-app-action-sidebar-project-row]');
+    return {
+      runtimeVersion: RUNTIME_VERSION, documentEpoch: DOCUMENT_EPOCH,
+      ready: !destroyed && Boolean(document.getElementById(STYLE_ID)), disposed: destroyed,
+      lastSyncAt, syncCount, errors: { ...componentErrors },
+      components: {
+        sidebar: state("sidebar", sidebarRoot()),
+        header: state("header", document.getElementById(TOGGLE_ID)),
+        shortcuts: state("shortcuts", document.getElementById(SHORTCUT_GRID_ID)),
+        sections: state("sections", document.getElementById(SECTION_TABS_ID), nativeActivityViewOpen()),
+        folders: state("folders", document.getElementById(FOLDER_SWITCHER_ID), activeSectionTab !== "项目" || emptyFolders),
+        skills: state("skills", document.getElementById(SKILL_ORGANIZER_ID), true),
+        panels: state("panels", document.querySelector(`[${WORKSPACE_PANEL_ATTRIBUTE}]`), true),
+      },
+    };
+  }
+
   function handleWorkspaceEnhancementKeydown(event) {
+    if (event.key === "Escape" && customShortcutPageIsVisible()) {
+      event.preventDefault();
+      closeCustomShortcutPanel();
+      return;
+    }
     if (event.key === "Escape" && assetConsolePage && !assetConsolePage.hidden) {
       event.preventDefault();
       closeAssetConsolePanel();
@@ -5301,6 +5609,27 @@
     }, 80);
   }
 
+  function observeHost() {
+    if (!destroyed && observer) observer.observe(document.documentElement, {
+      childList: true, subtree: true, attributes: true,
+      attributeFilter: ["data-state", "aria-expanded", "data-app-action-sidebar-thread-id", "data-app-action-sidebar-thread-title"],
+    });
+  }
+
+  function handleHostMutations(records) {
+    const owned = `#${SHORTCUT_GRID_ID}, #${SECTION_TABS_ID}, #${FOLDER_SWITCHER_ID}, #${SHORTCUT_SETTINGS_ID}, #${SKILL_ORGANIZER_ID}, #${CUSTOM_SHORTCUT_PAGE_ID}, #${ASSET_CONSOLE_PAGE_ID}, #${USAGE_ID}, #${TOGGLE_ID}, #${FALLBACK_TOOLTIP_ID}, .${CARD_CONTENT_CLASS}, .${SUMMARY_CLASS}, .${STATUS_BUTTON_CLASS}`;
+    if (records.some((record) => {
+      const target = record.target?.nodeType === 1 ? record.target : record.target?.parentElement;
+      if (target?.closest?.(owned)) return false;
+      if (record.type === "childList") {
+        const changed = [...record.addedNodes, ...record.removedNodes];
+        if (!record.removedNodes.length && changed.length
+          && changed.every((node) => node.nodeType === 1 && node.matches?.(owned))) return false;
+      }
+      return true;
+    })) scheduleSync();
+  }
+
   function scheduleAnchorRetry() {
     if (destroyed || anchorRetryTimer) return;
     anchorRetryTimer = setTimeout(() => {
@@ -5312,8 +5641,8 @@
   function start() {
     installStyles();
     updateViewState();
-    observer = new MutationObserver(scheduleSync);
-    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-state", "aria-expanded"] });
+    observer = new MutationObserver(handleHostMutations);
+    observeHost();
     document.addEventListener("pointerover", handlePreviewPointerOver, true);
     document.addEventListener("pointerout", handlePreviewPointerOut, true);
     document.addEventListener("pointerdown", handleStatusDocumentPointerDown, true);
@@ -5363,7 +5692,7 @@
     clearSectionEnhancement();
     closeCustomShortcutPanel(false);
     clearRecoveredConversationHistory();
-    closeAssetConsolePanel({ notify: true, restoreFocus: false });
+    closeAssetConsolePanel({ notify: true, restoreFocus: false, preserveIntent: true });
     assetConsolePage?.remove();
     assetConsolePage = null;
     assetConsoleFrame = null;
@@ -5371,6 +5700,7 @@
     customShortcutPage?.remove();
     customShortcutPage = null;
     customShortcutFrame = null;
+    customShortcutFrames.clear();
     document.documentElement.removeAttribute("data-codex-conversation-view");
     document.querySelectorAll(`.${SUMMARY_CLASS}, .${DETAILS_CLASS}, .${CARD_CONTENT_CLASS}`).forEach((node) => node.remove());
     document.querySelectorAll(`.${STATUS_BUTTON_CLASS}`).forEach((node) => node.remove());
@@ -5393,6 +5723,10 @@
   }
 
   window[SENTINEL] = {
+    runtimeVersion: RUNTIME_VERSION,
+    documentEpoch: DOCUMENT_EPOCH,
+    getHealth,
+    setSnapshot,
     destroy,
     refresh: sync,
     setPreviews,
@@ -5406,6 +5740,7 @@
     setAssetConsole,
     setAssetConsolePanel,
     setSkillCatalog,
+    ensureManagedShortcut,
     openSkillsGrouping,
     openAssetConsolePanel,
     routeWorkspaceCommand,

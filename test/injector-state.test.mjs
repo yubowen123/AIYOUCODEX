@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   needsPreviewAttachment,
   reconcileRendererSessions,
+  selectPersistentOwnerTargetId,
 } from "../lib/injector-state.mjs";
 
 test("a same-id renderer is reattached when a reload removed the preview runtime", async () => {
@@ -122,6 +123,33 @@ test("one failed Codex window attachment does not block another window", async (
   assert.equal(result.errors.length, 1);
   assert.equal(result.errors[0].targetId, "broken");
   assert.deepEqual([...sessions.keys()], ["healthy"]);
+});
+
+test("persistent shortcuts keep one stable renderer owner across focus changes", () => {
+  const sessions = new Map([["window-1", {}], ["window-2", {}]]);
+  assert.equal(selectPersistentOwnerTargetId({
+    sessions,
+    focusedTargetIds: ["window-2"],
+  }), "window-2");
+  assert.equal(selectPersistentOwnerTargetId({
+    sessions,
+    currentOwnerTargetId: "window-2",
+    focusedTargetIds: ["window-1"],
+  }), "window-2", "focus changes must not create a second persistent iframe");
+  sessions.delete("window-2");
+  assert.equal(selectPersistentOwnerTargetId({
+    sessions,
+    currentOwnerTargetId: "window-2",
+  }), "window-1", "a closed owner is transferred only when one target remains");
+});
+
+test("persistent shortcut ownership fails closed when multiple windows are ambiguous", () => {
+  const sessions = new Map([["window-1", {}], ["window-2", {}]]);
+  assert.equal(selectPersistentOwnerTargetId({ sessions }), "");
+  assert.equal(selectPersistentOwnerTargetId({
+    sessions,
+    focusedTargetIds: ["window-1", "window-2"],
+  }), "");
 });
 
 test("a normally launched desktop app is relaunched once with the enhancement port", async () => {

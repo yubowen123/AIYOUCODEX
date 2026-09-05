@@ -30,4 +30,5 @@ test("embedded Asset Console rewrites local assets and stale transport headers",
     { name: "content-type", value: "text/css" },
     { name: "content-length", value: "42" },
   ]);
+  assert.equal(responseHeadersForCdp({ "content-length": "2147483648" }, 0, { method: "HEAD" }).find((header) => header.name === "content-length").value, "2147483648");
 });

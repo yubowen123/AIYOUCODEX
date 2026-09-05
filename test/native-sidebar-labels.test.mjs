@@ -44,6 +44,7 @@ function loadNativeLabelApi() {
   const storage = new Map();
   const sandbox = {
     console,
+    performance: { timeOrigin: 1 },
     document: {
       readyState: "loading",
       addEventListener() {},
@@ -80,6 +81,7 @@ test("native shortcut labels canonicalize current English and legacy Chinese DOM
     ["Plugins", "插件"],
     ["更多", "更多"],
     ["Explore", "更多"],
+    ["探索", "更多"],
     ["More", "更多"],
   ];
   for (const [input, expected] of cases) {

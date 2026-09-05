@@ -78,12 +78,14 @@ export function yieldToEventLoop() {
 }
 
 export class CoalescingPathUpdateQueue {
-  constructor(worker) {
+  constructor(worker, { maxAttempts = 3, retryDelayMs = 150 } = {}) {
     if (typeof worker !== "function") throw new Error("Path update worker is required");
     this.worker = worker;
     this.pending = new Set();
     this.waiters = [];
     this.running = false;
+    this.maxAttempts = Math.max(1, maxAttempts);
+    this.retryDelayMs = Math.max(0, retryDelayMs);
   }
 
   enqueue(paths = []) {
@@ -105,7 +107,20 @@ export class CoalescingPathUpdateQueue {
         const waiters = this.waiters.splice(0);
         this.pending.clear();
         try {
-          const result = await this.worker(batch);
+          let retryPaths = batch;
+          let result;
+          for (let attempt = 0; retryPaths.length && attempt < this.maxAttempts; attempt += 1) {
+            try {
+              result = await this.worker(retryPaths);
+              retryPaths = [...new Set(result?.retryPaths || [])];
+            } catch (error) {
+              if (attempt + 1 >= this.maxAttempts) throw error;
+            }
+            if (retryPaths.length && attempt + 1 < this.maxAttempts) {
+              await new Promise((resolve) => setTimeout(resolve, this.retryDelayMs * (2 ** attempt)));
+            }
+          }
+          if (retryPaths.length) throw Object.assign(new Error("部分资产同步失败，已达到本轮重试上限；保留旧索引，稍后校准。"), { failedPaths: retryPaths });
           waiters.forEach(({ resolve }) => resolve(result));
         } catch (error) {
           waiters.forEach(({ reject }) => reject(error));

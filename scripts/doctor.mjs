@@ -3,16 +3,21 @@
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 import { createRuntimePlan } from "../lib/runtime-plan.mjs";
 import { TASKBOARD_VERSION } from "../lib/runtime-plan.mjs";
 import { trustedTaskboardRuntimeBaseUrl } from "../lib/taskboard-status.mjs";
+import { CdpClient, readTargets, selectMainCodexTargets } from "./cdp-client.mjs";
+import { RENDERER_HEALTH_EXPRESSION, rendererReadiness } from "../lib/renderer-health.mjs";
+import { readManagedShortcuts } from "../lib/managed-shortcuts.mjs";
 
 function parseArgs(argv) {
-  const options = { json: false, port: 9231 };
+  const options = { json: false, strict: false, port: 9231 };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--json") options.json = true;
+    else if (arg === "--strict") options.strict = true;
     else if (arg === "--port") options.port = Number(argv[++index]);
     else throw new Error(`Unknown option: ${arg}`);
   }
@@ -43,6 +48,9 @@ const required = [
   runtimePlan.assetConsole.serverPath,
   path.join(runtimePlan.assetConsole.staticRoot, "index.html"),
   path.join(runtimePlan.assetConsole.staticRoot, "app.js"),
+  path.join(runtimePlan.assetConsole.staticRoot, "asset-metadata-ui.js"),
+  path.join(runtimePlan.assetConsole.staticRoot, "asset-library-state.js"),
+  path.join(runtimePlan.assetConsole.staticRoot, "asset-media-lifecycle.js"),
   path.join(runtimePlan.assetConsole.staticRoot, "ui-v3.css"),
 ];
 const missing = [];
@@ -54,6 +62,7 @@ try { manifest = JSON.parse(await readFile(manifestPath, "utf8")); } catch { mis
 const [major, minor] = process.versions.node.split(".").map(Number);
 let runtimeFile = process.env.CODEX_SIDEBAR_TASKBOARD_RUNTIME_FILE || runtimePlan.taskboardRuntimeFile;
 let runtimeUrl = null;
+let runtimeDescriptor = null;
 const runtimeCandidates = process.env.CODEX_SIDEBAR_TASKBOARD_RUNTIME_FILE
   ? [runtimeFile]
   : [runtimeFile, path.join(process.env.HOME || "", ".codex", "taskboard-data", "runtime.json")];
@@ -63,13 +72,14 @@ for (const candidate of runtimeCandidates) {
     const descriptor = JSON.parse(await readFile(candidate, "utf8"));
     const baseUrl = trustedTaskboardRuntimeBaseUrl(descriptor);
     if (baseUrl) {
-      const trustedRuntime = { file: candidate, url: new URL(`${baseUrl}/`) };
+      const trustedRuntime = { file: candidate, url: new URL(`${baseUrl}/`), descriptor };
       const managedByCurrentPackage = descriptor?.managedBy === "codex-sidebar-enhancer"
         && descriptor?.version === TASKBOARD_VERSION;
       if (!firstTrustedRuntime || managedByCurrentPackage) firstTrustedRuntime = trustedRuntime;
       if (await reachable(`${baseUrl}/health`)) {
         runtimeUrl = trustedRuntime.url;
         runtimeFile = trustedRuntime.file;
+        runtimeDescriptor = descriptor;
         break;
       }
     }
@@ -78,7 +88,11 @@ for (const candidate of runtimeCandidates) {
 if (!runtimeUrl && firstTrustedRuntime) {
   runtimeUrl = firstTrustedRuntime.url;
   runtimeFile = firstTrustedRuntime.file;
+  runtimeDescriptor = firstTrustedRuntime.descriptor;
 }
+const actualAssetPort = Number(runtimeDescriptor?.assetConsolePort);
+const assetPort = Number.isInteger(actualAssetPort) && actualAssetPort > 0 && actualAssetPort <= 65535
+  ? actualAssetPort : runtimePlan.assetConsole.port;
 const taskboardPort = runtimeUrl ? Number(runtimeUrl.port) : Number(process.env.CODEX_TASKBOARD_PORT || 47823);
 const taskboardCheckUrl = runtimeUrl
   ? `${runtimeUrl.href.replace(/\/$/, "")}/api/meta`
@@ -104,11 +118,42 @@ const report = {
     reachable: await reachable(taskboardCheckUrl),
   },
   assetConsole: {
-    port: runtimePlan.assetConsole.port,
-    packaged: required.slice(-4).every((file) => !missing.includes(path.relative(root, file))),
-    reachable: await reachable(`http://127.0.0.1:${runtimePlan.assetConsole.port}/`),
+    port: assetPort,
+    packaged: required.slice(-7).every((file) => !missing.includes(path.relative(root, file))),
+    reachable: await reachable(`http://127.0.0.1:${assetPort}/`),
   },
 };
+
+if (options.strict) {
+  const renderers = [];
+  let expectedSourceHash = null;
+  try {
+    expectedSourceHash = createHash("sha256")
+      .update(await readFile(path.join(root, "inject", "conversation-preview.user.js"), "utf8"))
+      .update(JSON.stringify(await readManagedShortcuts())).digest("hex");
+  } catch {} // An invalid private profile fails readiness without exposing its contents.
+  try {
+    for (const target of selectMainCodexTargets(await readTargets(options.port))) {
+      const client = new CdpClient(target.webSocketDebuggerUrl);
+      try {
+        await client.connect();
+        const snapshot = await client.evaluate(RENDERER_HEALTH_EXPRESSION);
+        const readiness = rendererReadiness(snapshot);
+        if (!expectedSourceHash || snapshot?.sourceHash !== expectedSourceHash) {
+          readiness.ready = false;
+          readiness.failures.push('renderer-source-stale-or-unverified');
+        }
+        renderers.push({ targetId: target.id, ...readiness, health: snapshot?.health || null });
+      } catch (error) {
+        renderers.push({ targetId: target.id, ready: false, failures: ['health-read-failed'], error: error.message });
+      } finally { client.close(); }
+    }
+  } catch {}
+  report.renderers = renderers;
+  report.runtimeReady = report.package.ready && report.node.supported
+    && report.codex.reachable && report.taskboard.reachable && report.assetConsole.reachable
+    && renderers.length > 0 && renderers.every((renderer) => renderer.ready);
+}
 
 if (options.json) process.stdout.write(`${JSON.stringify(report)}\n`);
 else {
@@ -117,6 +162,10 @@ else {
   process.stdout.write(`Codex CDP: ${report.codex.reachable ? "reachable" : "not running"}\n`);
   process.stdout.write(`Asset Console: ${report.assetConsole.packaged ? "packaged" : "missing"} (${report.assetConsole.reachable ? "running" : "stopped"})\n`);
   process.stdout.write(`Node.js: ${report.node.version} (${report.node.supported ? "supported" : "unsupported"})\n`);
+  if (options.strict) {
+    process.stdout.write(`Runtime readiness: ${report.runtimeReady ? "ready" : "NOT READY"} (${report.renderers.length} windows checked)\n`);
+    for (const renderer of report.renderers) if (!renderer.ready) process.stdout.write(`Renderer: ${renderer.failures.join(", ")}\n`);
+  }
   if (missing.length) process.stdout.write(`Missing: ${missing.join(", ")}\n`);
 }
-if (!report.package.ready || !report.node.supported) process.exitCode = 1;
+if (!report.package.ready || !report.node.supported || (options.strict && !report.runtimeReady)) process.exitCode = 1;

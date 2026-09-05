@@ -173,6 +173,9 @@ try {
   Move-Item -LiteralPath $stagingDir -Destination $fullInstallDir
   $installed = $true
 
+  & $nodePath (Join-Path $fullInstallDir "scripts\doctor.mjs") --json --port $port | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Package validation failed; restoring previous runtime." }
+
   New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
   New-Item -ItemType Directory -Path $startupDir -Force | Out-Null
   New-Item -ItemType Directory -Path $startMenuDir -Force | Out-Null
@@ -197,13 +200,14 @@ try {
     Remove-Item -LiteralPath $legacyStartMenuDir -Force
   }
 
-  if (Test-Path -LiteralPath $backupDir) { Remove-Item -LiteralPath $backupDir -Recurse -Force }
+  if (Test-Path -LiteralPath $backupDir) { Write-Output "Previous runtime retained for recovery: $backupDir" }
   if ((Get-Setting "CODEX_SIDEBAR_SKIP_OPEN" "0") -ne "1") {
     & $powerShellPath -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $launcherPath
   }
   Write-Output "AIYOUcodex installed for Windows."
   Write-Output "Launcher: $startMenuDir"
   Write-Output "Logs: $logsDir"
+  Write-Output "Live verification (after Codex opens): node `"$fullInstallDir\scripts\doctor.mjs`" --strict --port $port"
 } catch {
   if ($installed -and (Test-Path -LiteralPath $fullInstallDir)) {
     Remove-Item -LiteralPath $fullInstallDir -Recurse -Force

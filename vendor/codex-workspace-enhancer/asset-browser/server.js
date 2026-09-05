@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { createReadStream, promises as fs, readFileSync, watch } from "node:fs";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
-import { deflateRawSync, inflateRawSync } from "node:zlib";
+import { inflateRawSync } from "node:zlib";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +16,11 @@ import { buildImageSequenceProfiles, classifyLocalAsset } from "./asset-smart-cl
 import { readImageDimensions } from "./image-dimensions.js";
 import { createAssetScanCoordinator } from "./asset-scan-coordinator.js";
 import { filterLibraryResult } from "./asset-library-filter.js";
+import { AssetLibraryPager } from "./asset-library-pagination.js";
 import { PersistentAssetIndex, sameAssetIndexFolders } from "./persistent-asset-index.js";
+import { savePlainTextAsset, textContentRevision, textEditPolicy } from "./text-asset-safety.js";
+import { streamAssetFile } from "./media-file-response.js";
+import { collectAssetDirectory, changedAssetCandidates, isMissingFileError, RecoveringAssetWatchers } from "./asset-index-reconciliation.js";
 import {
   changeAffectsProject,
   CoalescingPathUpdateQueue,
@@ -61,6 +65,10 @@ const audioExts = new Set([".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".og
 const textExts = new Set([".md", ".markdown", ".txt", ".rtf", ".doc", ".docx"]);
 const supportedAssetExts = new Set([...imageExts, ...videoExts, ...audioExts, ...textExts]);
 const libraryScanCoordinator = createAssetScanCoordinator();
+const libraryPager = new AssetLibraryPager();
+const reconciledProjectContexts = new Map();
+const assetCalibrationWarnings = new Map();
+const assetServiceEpoch = randomUUID();
 const defaultAssetTaxonomy = {
   text: ["提示词", "Skills", "剧本", "文档"],
   image: ["角色", "场景", "道具", "分镜图", "参考图", "视频解析帧", "截图", "缩略图", "联系表", "过程图"],
@@ -68,7 +76,6 @@ const defaultAssetTaxonomy = {
   video: ["预告", "成片", "抽卡片段", "素材片段"],
 };
 const sseClients = new Set();
-const watcherHandles = new Map();
 const pendingWatchPaths = new Set();
 const libraryResponseCache = new Map();
 const MAX_LIBRARY_RESPONSE_CACHE_ENTRIES = 4;
@@ -115,6 +122,7 @@ function sendJsonBuffer(res, body, status = 200) {
 }
 
 function rememberLibraryResponse(key, body) {
+  if (body.length > 2 * 1024 * 1024) return body;
   if (libraryResponseCache.has(key)) libraryResponseCache.delete(key);
   libraryResponseCache.set(key, body);
   while (libraryResponseCache.size > MAX_LIBRARY_RESPONSE_CACHE_ENTRIES) {
@@ -128,6 +136,7 @@ function cachedLibraryResponse(library, filters) {
     projectId: library.project?.id || "",
     mode: library.index?.mode || "",
     updatedAt: library.index?.updatedAt || "",
+    revision: library.index?.revision || "",
     settings: library.settings || {},
     filters,
   });
@@ -189,7 +198,7 @@ function contentType(filePath) {
   if (ext === ".tif" || ext === ".tiff") return "image/tiff";
   if (ext === ".avif") return "image/avif";
   if (ext === ".heic" || ext === ".heif") return "image/heic";
-  if (ext === ".mp4") return "video/mp4";
+  if (ext === ".mp4" || ext === ".m4v") return "video/mp4";
   if (ext === ".mov") return "video/quicktime";
   if (ext === ".webm") return "video/webm";
   if (ext === ".mp3") return "audio/mpeg";
@@ -1396,15 +1405,6 @@ function decodeXmlEntities(value) {
     .replace(/&amp;/g, "&");
 }
 
-function escapeXml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
 function readZipEntries(buffer) {
   let eocd = -1;
   for (let index = buffer.length - 22; index >= Math.max(0, buffer.length - 65557); index -= 1) {
@@ -1429,80 +1429,22 @@ function readZipEntries(buffer) {
     const externalAttributes = buffer.readUInt32LE(cursor + 38);
     const localOffset = buffer.readUInt32LE(cursor + 42);
     const name = buffer.subarray(cursor + 46, cursor + 46 + nameLength).toString("utf8");
+    // Preview only the body XML; never inflate embedded images or other ZIP
+    // entries merely to display a text card.
+    if (name !== "word/document.xml") { cursor += 46 + nameLength + extraLength + commentLength; continue; }
     if (flags & 1) throw new Error("不支持加密的 Word 文档");
     if (buffer.readUInt32LE(localOffset) !== 0x04034b50) throw new Error("Word 文档内容损坏");
     const localNameLength = buffer.readUInt16LE(localOffset + 26);
     const localExtraLength = buffer.readUInt16LE(localOffset + 28);
     const dataStart = localOffset + 30 + localNameLength + localExtraLength;
     const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
-    const data = method === 0 ? Buffer.from(compressed) : method === 8 ? inflateRawSync(compressed) : null;
+    if (uncompressedSize > 16 * 1024 * 1024) throw new Error("Word 正文过大，请使用系统编辑器查看");
+    const data = method === 0 ? Buffer.from(compressed) : method === 8 ? inflateRawSync(compressed, { maxOutputLength: 16 * 1024 * 1024 }) : null;
     if (!data || data.length !== uncompressedSize) throw new Error(`不支持的 Word 压缩格式：${method}`);
     entries.push({ name, data, method, modTime, modDate, crc, externalAttributes });
     cursor += 46 + nameLength + extraLength + commentLength;
   }
   return entries;
-}
-
-const crcTable = Array.from({ length: 256 }, (_, value) => {
-  let crc = value;
-  for (let bit = 0; bit < 8; bit += 1) crc = (crc & 1) ? (0xedb88320 ^ (crc >>> 1)) : (crc >>> 1);
-  return crc >>> 0;
-});
-
-function crc32(buffer) {
-  let crc = 0xffffffff;
-  for (const byte of buffer) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-function writeZipEntries(entries) {
-  const localParts = [];
-  const centralParts = [];
-  let offset = 0;
-  for (const entry of entries) {
-    const name = Buffer.from(entry.name, "utf8");
-    const data = Buffer.from(entry.data);
-    const method = entry.name.endsWith("/") || !data.length ? 0 : 8;
-    const compressed = method === 8 ? deflateRawSync(data) : data;
-    const crc = crc32(data);
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0x800, 6);
-    local.writeUInt16LE(method, 8);
-    local.writeUInt16LE(entry.modTime || 0, 10);
-    local.writeUInt16LE(entry.modDate || 0, 12);
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(compressed.length, 18);
-    local.writeUInt32LE(data.length, 22);
-    local.writeUInt16LE(name.length, 26);
-    localParts.push(local, name, compressed);
-
-    const central = Buffer.alloc(46);
-    central.writeUInt32LE(0x02014b50, 0);
-    central.writeUInt16LE(20, 4);
-    central.writeUInt16LE(20, 6);
-    central.writeUInt16LE(0x800, 8);
-    central.writeUInt16LE(method, 10);
-    central.writeUInt16LE(entry.modTime || 0, 12);
-    central.writeUInt16LE(entry.modDate || 0, 14);
-    central.writeUInt32LE(crc, 16);
-    central.writeUInt32LE(compressed.length, 20);
-    central.writeUInt32LE(data.length, 24);
-    central.writeUInt16LE(name.length, 28);
-    central.writeUInt32LE(entry.externalAttributes || 0, 38);
-    central.writeUInt32LE(offset, 42);
-    centralParts.push(central, name);
-    offset += local.length + name.length + compressed.length;
-  }
-  const centralDirectory = Buffer.concat(centralParts);
-  const eocd = Buffer.alloc(22);
-  eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(entries.length, 8);
-  eocd.writeUInt16LE(entries.length, 10);
-  eocd.writeUInt32LE(centralDirectory.length, 12);
-  eocd.writeUInt32LE(offset, 16);
-  return Buffer.concat([...localParts, centralDirectory, eocd]);
 }
 
 function extractDocxText(buffer) {
@@ -1513,21 +1455,6 @@ function extractDocxText(buffer) {
     const body = paragraph[1].replace(/<w:tab\s*\/>/g, "\t").replace(/<w:(?:br|cr)\s*\/>/g, "\n");
     return [...body.matchAll(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>/g)].map((match) => decodeXmlEntities(match[1])).join("");
   }).join("\n");
-}
-
-function replaceDocxText(buffer, text) {
-  const entries = readZipEntries(buffer);
-  const document = entries.find((entry) => entry.name === "word/document.xml");
-  if (!document) throw new Error("Word 文档缺少正文");
-  const xml = document.data.toString("utf8");
-  const match = xml.match(/^([\s\S]*?<w:body\b[^>]*>)([\s\S]*)(<\/w:body>[\s\S]*)$/);
-  if (!match) throw new Error("Word 正文结构无法编辑");
-  const section = match[2].match(/<w:sectPr\b[\s\S]*?<\/w:sectPr>/)?.[0] || "";
-  const paragraphs = String(text || "").split(/\r?\n/).map((line) => line
-    ? `<w:p><w:r><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`
-    : "<w:p/>").join("");
-  document.data = Buffer.from(`${match[1]}${paragraphs}${section}${match[3]}`, "utf8");
-  return writeZipEntries(entries);
 }
 
 async function textAssetContent(filePath, maxBytes = 5 * 1024 * 1024) {
@@ -1593,7 +1520,7 @@ async function buildLibraryAsset(filePath, project, config, assignment, classifi
     directory: path.dirname(filePath),
     assigned: Boolean(assignment),
     promptAssociation,
-    editable: kind === "text" && ![".doc", ".rtf"].includes(path.extname(filePath).toLowerCase()),
+    ...textEditPolicy(filePath),
     preview: kind === "text" ? await readTextPreview(filePath) : "",
     mediaUrl: `/media?id=${encodeURIComponent(assetRef)}`,
     downloadUrl: `/download?id=${encodeURIComponent(assetRef)}`,
@@ -1615,7 +1542,7 @@ function projectContainsAsset(project, filePath, config) {
   return project.folders.some((folder) => isPathInside(folder, resolved));
 }
 
-async function buildLibraryAssets(project, config, candidates, contextPaths = candidates) {
+async function buildLibraryAssets(project, config, candidates, contextPaths = candidates, { failedPaths = [], missingPaths = [] } = {}) {
   const unique = [...new Set(candidates.map((item) => path.resolve(item)))];
   const classificationContext = {
     profiles: buildImageSequenceProfiles(
@@ -1628,19 +1555,39 @@ async function buildLibraryAssets(project, config, candidates, contextPaths = ca
   const assets = [];
   for (const filePath of unique) {
     if (!supportedAssetExts.has(path.extname(filePath).toLowerCase())) continue;
-    if (!projectContainsAsset(project, filePath, config) || !await exists(filePath)) continue;
-    const assignment = config.assetAssignments?.[filePath] || "";
-    const asset = await buildLibraryAsset(filePath, project, config, assignment, classificationContext);
-    assets.push(asset);
+    if (!projectContainsAsset(project, filePath, config)) continue;
+    try {
+      const stats = await fs.lstat(filePath);
+      if (!stats.isFile() || stats.isSymbolicLink()) { missingPaths.push(filePath); continue; }
+      const assignment = config.assetAssignments?.[filePath] || "";
+      assets.push(await buildLibraryAsset(filePath, project, config, assignment, classificationContext));
+    } catch (error) {
+      (isMissingFileError(error) ? missingPaths : failedPaths).push(filePath);
+    }
   }
   return assets;
 }
 
+function calibrationHealth(project) {
+  const warnings = project ? [...assetCalibrationWarnings].filter(([root]) => project.folders.some((folder) => isPathInside(folder, root) || isPathInside(root, folder))) : [];
+  return warnings.length ? { state: "degraded", code: "scan_budget_exceeded", roots: warnings.length, limit: warnings[0][1], message: "关联目录超过本轮 100000 项元数据预算；已保留旧条目，下一轮定时校准继续检查。建议拆分关联目录。" } : { state: "ready" };
+}
+
+function recordCalibrationBudget(directory, collected) {
+  if (!collected.truncated) { assetCalibrationWarnings.delete(directory); return; }
+  if (assetCalibrationWarnings.get(directory) !== collected.limit) console.warn(`Asset calibration budget exceeded (${collected.limit} items); cached rows retained. Split the configured root or wait for periodic calibration.`);
+  assetCalibrationWarnings.set(directory, collected.limit);
+}
+
+function libraryRevision(project, entry, settings) {
+  if (!project) return "missing";
+  if (!entry) return "uninitialized";
+  return createHash("sha256").update(JSON.stringify([assetServiceEpoch, project.id, project.name, project.folders, entry.revision || 0, entry.updatedAt, settings, calibrationHealth(project)])).digest("hex");
+}
+
 function createLibraryResult(project, entry, settings, mode) {
   const assets = (entry?.assets || [])
-    .map((asset) => asset.projectId === project.id && asset.projectName === project.name
-      ? asset
-      : { ...asset, projectId: project.id, projectName: project.name })
+    .map((asset) => ({ ...asset, projectId: project.id, projectName: project.name, ...textEditPolicy(asset.sourcePath || asset.name) }))
     .sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name, "zh-CN", { numeric: true }));
   const counts = { all: assets.length, text: 0, image: 0, audio: 0, video: 0 };
   const smartCounts = { asset: 0, review: 0, noise: 0 };
@@ -1658,6 +1605,8 @@ function createLibraryResult(project, entry, settings, mode) {
       mode,
       initializedAt: entry?.initializedAt || "",
       updatedAt: entry?.updatedAt || "",
+      revision: libraryRevision(project, entry, settings),
+      health: calibrationHealth(project),
       persistent: true,
     },
   };
@@ -1665,14 +1614,29 @@ function createLibraryResult(project, entry, settings, mode) {
 
 async function rebuildLibraryIndex(project, config, mode = "initial-scan") {
   const candidates = [];
-  for (const folder of project.folders) await walkLibrary(folder, candidates);
+  const failedPaths = [];
+  const deferredRoots = new Set();
+  for (const folder of project.folders) {
+    const collected = await collectAssetDirectory(folder, supportedAssetExts);
+    recordCalibrationBudget(folder, collected);
+    if (collected.truncated) deferredRoots.add(folder);
+    candidates.push(...collected.files);
+    failedPaths.push(...collected.failedPaths);
+  }
   for (const [filePath, assignedProjectId] of Object.entries(config.assetAssignments || {})) {
     if (assignedProjectId === project.id && supportedAssetExts.has(path.extname(filePath).toLowerCase())) candidates.push(filePath);
   }
-  const assets = await buildLibraryAssets(project, config, candidates);
+  const assets = await buildLibraryAssets(project, config, candidates, candidates, { failedPaths });
+  const previous = await assetLibraryIndex.getProject(project.id);
+  const matchesFailure = createPathPrefixMatcher(failedPaths);
+  const present = new Set(assets.map((asset) => asset.id));
+  for (const asset of previous?.assets || []) {
+    if (matchesFailure(indexedAssetPath(asset)) && !present.has(asset.id)) assets.push(asset);
+  }
   const entry = await assetLibraryIndex.replaceProject(project, assets);
+  failedPaths.filter((filePath) => !deferredRoots.has(filePath)).forEach(scheduleAssetIndexUpdate);
   invalidateLibraryResponseCache(project.id);
-  return createLibraryResult(project, entry, config.assetManager, mode);
+  return { project, entry, settings: config.assetManager, mode };
 }
 
 async function reconcileIndexedProject(project, config, entry) {
@@ -1691,8 +1655,8 @@ async function reconcileIndexedProject(project, config, entry) {
     const id = encodeAssetRef(filePath);
     if (assignedProjectId === project.id && !existingIds.has(id)) candidates.push(filePath);
   }
-  const upserts = await buildLibraryAssets(project, config, candidates, [...existingPaths, ...candidates]);
-  if (!removeIds.length && !upserts.length && sameAssetIndexFolders(entry.folders, project.folders)) return entry;
+  const upserts = candidates.length ? await buildLibraryAssets(project, config, candidates, [...existingPaths, ...candidates]) : [];
+  if (!removeIds.length && !upserts.length && entry.projectName === project.name && sameAssetIndexFolders(entry.folders, project.folders)) return entry;
   const patched = await assetLibraryIndex.patchProject(project, {
     upserts,
     removeIds,
@@ -1702,23 +1666,42 @@ async function reconcileIndexedProject(project, config, entry) {
   return patched;
 }
 
-async function listLibraryAssets(projectId, { force = false } = {}) {
+async function loadLibraryIndexView(projectId, { force = false } = {}) {
   const config = await loadConfig();
-  const project = config.projects.find((item) => item.id === projectId) || config.projects[0];
-  if (!project) return {
-    project: null,
-    assets: [],
-    counts: { all: 0, text: 0, image: 0, audio: 0, video: 0 },
-    smartCounts: { asset: 0, review: 0, noise: 0 },
-    settings: config.assetManager,
-    index: { mode: "empty", initializedAt: "", updatedAt: "", persistent: true },
-  };
+  const project = projectId ? config.projects.find((item) => item.id === projectId) : config.projects[0];
+  if (!project) return { project: null, entry: null, settings: config.assetManager, mode: "empty" };
   if (force) return rebuildLibraryIndex(project, config, "manual-rescan");
-  const existing = await assetLibraryIndex.getProject(project.id);
+  const existing = await assetLibraryIndex.getProjectSnapshot(project.id);
   if (!existing) return rebuildLibraryIndex(project, config, "initial-scan");
+  const contextKey = createHash("sha256").update(JSON.stringify([project.name, project.folders, config.assetAssignments])).digest("hex");
+  if (reconciledProjectContexts.get(project.id) === contextKey) return { project, entry: existing, settings: config.assetManager, mode: "persistent" };
   const entry = await reconcileIndexedProject(project, config, existing);
+  reconciledProjectContexts.set(project.id, contextKey);
   const mode = sameAssetIndexFolders(existing.folders, project.folders) ? "persistent" : "folder-incremental";
-  return createLibraryResult(project, entry, config.assetManager, mode);
+  return { project, entry, settings: config.assetManager, mode };
+}
+
+function listLibraryAssets(view) {
+  if (view.project) return createLibraryResult(view.project, view.entry, view.settings, view.mode);
+  return { project: null, assets: [], counts: { all: 0, text: 0, image: 0, audio: 0, video: 0 }, smartCounts: { asset: 0, review: 0, noise: 0 }, settings: view.settings, index: { mode: "empty", initializedAt: "", updatedAt: "", revision: "missing", persistent: true } };
+}
+
+function paginatedLibraryAssets(view, filters) {
+  const revision = libraryRevision(view.project, view.entry, view.settings);
+  if (filters.revision && filters.revision !== revision) throw Object.assign(new Error("资产索引已更新，请从第一页重新加载，避免遗漏或重复。"), { statusCode: 409 });
+  const page = libraryPager.page({
+    projectId: view.project?.id || "",
+    assets: view.entry?.assets || [],
+    revision,
+    filters,
+    projectAsset: (asset) => ({ ...asset, projectId: view.project.id, projectName: view.project.name, ...textEditPolicy(asset.sourcePath || asset.name) }),
+  });
+  return {
+    project: view.project ? { id: view.project.id, name: view.project.name, folders: view.project.folders } : null,
+    ...page,
+    settings: view.settings,
+    index: { mode: view.mode, initializedAt: view.entry?.initializedAt || "", updatedAt: view.entry?.updatedAt || "", revision, health: calibrationHealth(view.project), persistent: true },
+  };
 }
 
 async function assignAssetToProject(body = {}) {
@@ -1811,25 +1794,21 @@ async function readTextAsset(assetId) {
   const config = await loadConfig();
   const { filePath, stats } = await resolveManagedAsset(config, assetId);
   if (libraryAssetKind(filePath) !== "text") throw new Error("该素材不是文本文件");
-  return { assetId, name: path.basename(filePath), content: await textAssetContent(filePath), size: stats.size, editable: ![".doc", ".rtf"].includes(path.extname(filePath).toLowerCase()) };
+  let policy = textEditPolicy(filePath);
+  // Editable content and its revision must come from the same read.
+  if (stats.size > 5 * 1024 * 1024) throw new Error("文本文件超过 5MB，无法在卡片编辑器中打开");
+  const bytes = policy.editable ? await fs.readFile(filePath) : null;
+  if (bytes) policy = textEditPolicy(filePath, bytes);
+  return { assetId, name: path.basename(filePath), content: bytes ? bytes.toString("utf8") : await textAssetContent(filePath), size: bytes?.length ?? stats.size, revision: bytes ? textContentRevision(bytes) : "", ...policy };
 }
 
 async function saveTextAsset(body = {}) {
   const config = await loadConfig();
   const { filePath } = await resolveManagedAsset(config, body.assetId);
-  const ext = path.extname(filePath).toLowerCase();
-  if (libraryAssetKind(filePath) !== "text" || [".doc", ".rtf"].includes(ext)) throw new Error("该文本格式暂不支持直接保存");
-  const content = String(body.content ?? "");
-  const tempPath = `${filePath}.${process.pid}.${Date.now()}.editing`;
-  if (ext === ".docx") {
-    await fs.writeFile(tempPath, replaceDocxText(await fs.readFile(filePath), content));
-  } else {
-    await fs.writeFile(tempPath, content, "utf8");
-  }
-  await fs.rename(tempPath, filePath);
+  const result = await savePlainTextAsset(filePath, body);
   await enqueueAssetIndexUpdate([filePath]);
   notifyClients("asset-change");
-  return { saved: true, assetId: encodeAssetRef(filePath), size: (await fs.stat(filePath)).size };
+  return { saved: true, assetId: encodeAssetRef(filePath), ...result };
 }
 
 async function updateLibraryAssetMetadata(body = {}) {
@@ -1860,34 +1839,7 @@ async function updateAssetManagerSettings(body = {}) {
 }
 
 async function serveFile(req, res, filePath, asDownload = false) {
-  const stats = await fs.stat(filePath);
-  const headers = {
-    "content-type": contentType(filePath),
-    "accept-ranges": "bytes",
-    "cache-control": "no-store"
-  };
-  if (asDownload) {
-    headers["content-disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(filePath))}`;
-  }
-
-  const range = req.headers.range;
-  if (range && !asDownload) {
-    const match = range.match(/bytes=(\d*)-(\d*)/);
-    if (match) {
-      const start = match[1] ? Number(match[1]) : 0;
-      const end = match[2] ? Number(match[2]) : stats.size - 1;
-      res.writeHead(206, {
-        ...headers,
-        "content-range": `bytes ${start}-${end}/${stats.size}`,
-        "content-length": end - start + 1
-      });
-      createReadStream(filePath, { start, end }).pipe(res);
-      return;
-    }
-  }
-
-  res.writeHead(200, { ...headers, "content-length": stats.size });
-  createReadStream(filePath).pipe(res);
+  return streamAssetFile(req, res, filePath, { contentType: contentType(filePath), asDownload });
 }
 
 async function readRequestBody(req) {
@@ -2289,17 +2241,26 @@ async function syncAssetIndexPaths(changedPaths = []) {
     .filter((filePath) => !isIgnoredAssetPathWithinRoots(filePath, watchRoots));
   if (!paths.length) return { paths: 0, projects: 0 };
   const expanded = [];
+  const retryPaths = [];
   for (let index = 0; index < paths.length; index += 1) {
     const changedPath = paths[index];
-    const stats = await fs.lstat(changedPath).catch(() => null);
+    let stats;
+    try { stats = await fs.lstat(changedPath); }
+    catch (error) {
+      if (!isMissingFileError(error) || watchRoots.some((root) => path.resolve(root) === changedPath)) {
+        retryPaths.push(changedPath);
+        continue;
+      }
+    }
     if (stats?.isDirectory() && !stats.isSymbolicLink()) {
-      const candidates = [];
-      await walkLibrary(changedPath, candidates);
-      expanded.push({ changedPath, candidates, removePrefix: changedPath });
+      const collected = await collectAssetDirectory(changedPath, supportedAssetExts);
+      recordCalibrationBudget(changedPath, collected);
+      if (!collected.truncated) retryPaths.push(...collected.failedPaths);
+      expanded.push({ changedPath, candidates: collected.files, directory: true, failedPaths: collected.failedPaths });
     } else if (stats?.isFile() && !stats.isSymbolicLink() && supportedAssetExts.has(path.extname(changedPath).toLowerCase())) {
-      expanded.push({ changedPath, candidates: [changedPath], removePrefix: "" });
+      expanded.push({ changedPath, candidates: [changedPath] });
     } else {
-      expanded.push({ changedPath, candidates: [], removePrefix: changedPath });
+      expanded.push({ changedPath, candidates: [], deleted: true });
     }
     if (index > 0 && index % 128 === 0) await yieldToEventLoop();
   }
@@ -2312,26 +2273,38 @@ async function syncAssetIndexPaths(changedPaths = []) {
     const relevantChanges = expanded.filter((change) => changeAffectsProject(project, change, config.assetAssignments));
     if (!relevantChanges.length) continue;
 
-    const candidates = relevantChanges.flatMap((change) => change.candidates)
+    const allCandidates = [...new Set(relevantChanges.flatMap((change) => change.candidates))]
       .filter((filePath) => projectContainsAsset(project, filePath, config));
-    const removeIds = relevantChanges.map(({ changedPath }) => encodeAssetRef(changedPath));
-    const removePrefixes = relevantChanges.map(({ removePrefix }) => removePrefix).filter(Boolean);
-    const matchesRemovedPrefix = createPathPrefixMatcher(removePrefixes);
-    const candidateDirectories = new Set(candidates.map((filePath) => path.dirname(filePath)));
+    const directPaths = new Set(relevantChanges.filter((change) => !change.directory).flatMap((change) => change.candidates));
+    const delta = await changedAssetCandidates(allCandidates.filter((filePath) => !directPaths.has(filePath)), entry.assets);
+    const candidates = [...directPaths, ...delta.changed];
+    const failedPaths = [...delta.failedPaths];
+    const missingPaths = [...delta.missingPaths];
+    const scannedCandidates = new Set(allCandidates);
+    const matchesScannedDirectory = createPathPrefixMatcher(relevantChanges.filter((change) => change.directory).map((change) => change.changedPath));
+    const matchesDeleted = createPathPrefixMatcher(relevantChanges.filter((change) => change.deleted).map((change) => change.changedPath));
+    const matchesFailure = createPathPrefixMatcher(relevantChanges.flatMap((change) => change.failedPaths || []));
+    const removeIds = entry.assets.filter((asset) => {
+      const filePath = indexedAssetPath(asset);
+      if (!projectContainsAsset(project, filePath, config)) return true;
+      return matchesDeleted(filePath) || (matchesScannedDirectory(filePath) && !matchesFailure(filePath) && !scannedCandidates.has(filePath));
+    }).map((asset) => asset.id);
+    const candidateDirectories = new Set(allCandidates.map((filePath) => path.dirname(filePath)));
     const retainedContext = existingPaths.filter((filePath) =>
-      candidateDirectories.has(path.dirname(filePath)) && !matchesRemovedPrefix(filePath));
-    const upserts = await buildLibraryAssets(project, config, candidates, [...retainedContext, ...candidates]);
-    projectPatches.push({
-      project,
-      patch: { upserts, removeIds, removePrefixes, folders: project.folders },
-    });
+      candidateDirectories.has(path.dirname(filePath)) && !matchesDeleted(filePath));
+    const upserts = await buildLibraryAssets(project, config, candidates, [...retainedContext, ...allCandidates], { failedPaths, missingPaths });
+    retryPaths.push(...failedPaths);
+    removeIds.push(...missingPaths.map(encodeAssetRef));
+    if (upserts.length || removeIds.length || !sameAssetIndexFolders(entry.folders, project.folders)) {
+      projectPatches.push({ project, patch: { upserts, removeIds, folders: project.folders } });
+    }
     await yieldToEventLoop();
   }
   if (projectPatches.length) {
     await assetLibraryIndex.patchProjects(projectPatches);
     projectPatches.forEach(({ project }) => invalidateLibraryResponseCache(project.id));
   }
-  return { paths: paths.length, projects: projectPatches.length };
+  return { paths: paths.length, projects: projectPatches.length, retryPaths: [...new Set(retryPaths)] };
 }
 
 const assetIndexUpdateQueue = new CoalescingPathUpdateQueue(syncAssetIndexPaths);
@@ -2364,53 +2337,50 @@ async function runDuplicateSweep() {
   }
 }
 
+const assetWatchers = new RecoveringAssetWatchers({
+  watch,
+  onDirty: scheduleAssetIndexUpdate,
+  onError: (error) => console.warn("Asset watcher unavailable:", error.code || error.message),
+  onChange: (changedPath) => {
+    scheduleAssetIndexUpdate(changedPath);
+    // Resolve current configuration rather than retaining a stale project in a
+    // long-lived watcher closure. Duplicate cleanup remains explicitly opt-in.
+    void loadConfig().then((config) => {
+      if (!config.deduplication.automaticSweep) return;
+      const project = config.projects.find((item) => projectContainsAsset(item, changedPath, config));
+      if (project) duplicateCleaner.schedule({ filePath: changedPath, project, config: config.deduplication, onDeduplicated: () => notifyClients("deduplication-change") });
+    }).catch(() => {});
+  },
+});
+
 async function ensureWatchers() {
   const config = await loadConfig();
-  const desiredRoots = new Set(config.projects.flatMap((project) => project.folders.map((folder) => path.resolve(folder))));
-  for (const [watchRoot, watcher] of watcherHandles) {
-    if (desiredRoots.has(watchRoot)) continue;
-    watcher.close();
-    watcherHandles.delete(watchRoot);
-  }
+  await assetWatchers.reconcile(config.projects.flatMap((project) => project.folders));
+}
+
+async function calibrateInitializedAssetIndexes() {
+  const config = await loadConfig();
+  const roots = new Set();
   for (const project of config.projects) {
-    for (const watchRoot of project.folders) {
-      const resolvedWatchRoot = path.resolve(watchRoot);
-      if (!await exists(resolvedWatchRoot)) continue;
-      if (watcherHandles.has(resolvedWatchRoot)) continue;
-      try {
-        const watcher = watch(resolvedWatchRoot, { recursive: true }, (_eventType, filename) => {
-          if (!filename) return;
-          const changedPath = path.resolve(resolvedWatchRoot, String(filename));
-          if (isIgnoredAssetPath(changedPath, resolvedWatchRoot)) return;
-          scheduleAssetIndexUpdate(changedPath);
-          if (!filename) return;
-          duplicateCleaner.schedule({
-            filePath: changedPath,
-            project,
-            config: config.deduplication,
-            onDeduplicated: () => notifyClients("deduplication-change")
-          });
-        });
-        watcher.on("error", (error) => {
-          console.warn(`Asset watcher error (${resolvedWatchRoot}):`, error.message);
-        });
-        watcherHandles.set(resolvedWatchRoot, watcher);
-        console.log(`Watching assets: ${resolvedWatchRoot}`);
-      } catch (error) {
-        console.warn(`Asset watcher unavailable (${resolvedWatchRoot}):`, error.message);
-      }
-    }
+    const existing = await assetLibraryIndex.getProject(project.id);
+    if (!existing) continue;
+    for (const root of project.folders) roots.add(root);
+    const assignedPaths = Object.entries(config.assetAssignments || {}).filter(([, projectId]) => projectId === project.id).map(([filePath]) => filePath);
+    const assignedChanges = await changedAssetCandidates(assignedPaths, existing.assets);
+    for (const filePath of [...assignedChanges.changed, ...assignedChanges.missingPaths, ...assignedChanges.failedPaths]) roots.add(filePath);
   }
+  if (!roots.size) return;
+  await enqueueAssetIndexUpdate([...roots]);
+  notifyClients("asset-change");
 }
 
 function closeProjectWatchers(projectPath) {
   const projectRoot = path.resolve(projectPath);
-  for (const [watchRoot, watcher] of watcherHandles) {
+  for (const watchRoot of assetWatchers.handles.keys()) {
     const relative = path.relative(projectRoot, path.resolve(watchRoot));
     const belongsToProject = relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
     if (!belongsToProject) continue;
-    watcher.close();
-    watcherHandles.delete(watchRoot);
+    assetWatchers.close(watchRoot);
   }
 }
 
@@ -2426,8 +2396,8 @@ const server = createServer(async (req, res) => {
       }
       res.writeHead(204, {
         "access-control-allow-origin": origin || `http://127.0.0.1:${port}`,
-        "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-        "access-control-allow-headers": "content-type,x-asset-console-token",
+        "access-control-allow-methods": "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
+        "access-control-allow-headers": "content-type,x-asset-console-token,range,x-aiyoucodex-bounded-media",
         vary: "origin"
       });
       res.end();
@@ -2620,16 +2590,32 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/api/library/revision" && req.method === "GET") {
+      const config = await loadConfig();
+      const projectId = url.searchParams.get("project") || "";
+      const project = config.projects.find((item) => item.id === projectId);
+      const entry = project ? await assetLibraryIndex.getProjectRevision(project.id) : null;
+      const configRevision = createHash("sha256").update(JSON.stringify(config)).digest("hex");
+      sendJson(res, { projectId, projectExists: Boolean(project), revision: libraryRevision(project, entry, config.assetManager), indexUpdatedAt: entry?.updatedAt || "", configRevision, epoch: assetServiceEpoch, health: calibrationHealth(project) });
+      return;
+    }
+
     if (url.pathname === "/api/library" && req.method === "GET") {
       const projectId = url.searchParams.get("project") || "";
       const force = url.searchParams.get("rescan") === "1";
-      const library = await libraryScanCoordinator.run(projectId, () => listLibraryAssets(projectId, { force }));
+      const view = await libraryScanCoordinator.run(projectId, () => loadLibraryIndexView(projectId, { force }));
       const filters = {
         kind: url.searchParams.get("kind") || "",
         category: url.searchParams.get("category") || "",
         smartGroup: url.searchParams.get("smartGroup") || "",
         query: url.searchParams.get("query") || "",
       };
+      if (url.searchParams.has("limit")) {
+        Object.assign(filters, { limit: url.searchParams.get("limit"), offset: url.searchParams.get("offset"), sort: url.searchParams.get("sort"), revision: url.searchParams.get("revision") });
+        sendJson(res, paginatedLibraryAssets(view, filters));
+        return;
+      }
+      const library = listLibraryAssets(view);
       sendJsonBuffer(res, cachedLibraryResponse(library, filters));
       return;
     }
@@ -2933,7 +2919,8 @@ const server = createServer(async (req, res) => {
     }
     await serveFile(req, res, filePath);
   } catch (error) {
-    sendJson(res, { error: error.message || String(error) }, 500);
+    if (res.headersSent || res.destroyed) { res.destroy(); return; }
+    sendJson(res, { error: error.message || String(error) }, error.statusCode || 500);
   }
 });
 
@@ -2942,7 +2929,12 @@ server.listen(port, "127.0.0.1", () => {
   console.log(`Config: ${configPath}`);
 });
 
-ensureWatchers();
+ensureWatchers().catch((error) => console.warn("Asset watcher setup:", error.message));
+// These are service lifecycle tasks, never tied to opening the library page.
+// Calibration compares stat metadata and retains cached previews for unchanged files.
+calibrateInitializedAssetIndexes().catch((error) => console.warn("Asset startup calibration:", error.message));
+setInterval(() => ensureWatchers().catch((error) => console.warn("Asset watcher recovery:", error.message)), 30000).unref();
+setInterval(() => calibrateInitializedAssetIndexes().catch((error) => console.warn("Asset periodic calibration:", error.message)), 10 * 60 * 1000).unref();
 
 setTimeout(runDuplicateSweep, 8000).unref();
 setInterval(runDuplicateSweep, 6 * 60 * 60 * 1000).unref();

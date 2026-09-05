@@ -27,7 +27,7 @@ test("local asset cards implement media-specific interactions", async () => {
   assert.match(source, /dblclick/);
   const doubleClickHandlers = source.match(/card\.addEventListener\("dblclick",[\s\S]*?\n  \}\);/g) || [];
   assert.equal(doubleClickHandlers.length, 4);
-  doubleClickHandlers.forEach((handler) => assert.match(handler, /useAssetInCodex\(asset\)/));
+  doubleClickHandlers.forEach((handler) => assert.match(handler, /useAssetInCodex\(assetById\(card\.dataset\.assetId\)\)/));
   assert.match(source, /data-action="preview"/);
   assert.match(source, /function previewAsset/);
   assert.match(source, /saveTextAsset/);
@@ -121,7 +121,7 @@ test("Codex-synchronized production projects are visibly identified", async () =
 });
 
 test("embedded and service-served asset manager builds stay synchronized", async () => {
-  for (const file of ["index.html", "app.js", "asset-metadata-ui.js", "ui-v3.css"]) {
+  for (const file of ["index.html", "app.js", "asset-metadata-ui.js", "asset-library-state.js", "asset-media-lifecycle.js", "ui-v3.css"]) {
     const embedded = await readFile(new URL(file, consoleRoot), "utf8");
     const served = await readFile(new URL(`public/${file}`, browserRoot), "utf8");
     assert.equal(embedded, served, `${file} differs between the embedded and service builds`);

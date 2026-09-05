@@ -142,7 +142,7 @@ function createTaskboardSupervisor({ detached, attachExisting }) {
   async function ensure({ force = false } = {}) {
     const action = taskboardServiceAction({
       reachable: await isReachable(taskboardHealthUrl),
-      attachExisting,
+      attachExisting: attachExisting && process.env.CODEX_TASKBOARD_MANAGE_SERVICE !== "1",
     });
     if (action === "ready") {
       return { status: "ok", restarted: false };
@@ -1013,7 +1013,11 @@ async function readInjectionStatus(cdp) {
     })`,
     returnByValue: true,
   }, { timeoutMs: 2_500 });
-  return status.result.value;
+  const value = status.result?.value;
+  if (status.exceptionDetails || !value || typeof value !== "object") {
+    throw new Error("Taskboard renderer health is temporarily unavailable");
+  }
+  return value;
 }
 
 async function waitForInjectionStatus(cdp, shouldOpen, expectedSourceHash, timeoutMs) {
@@ -1079,7 +1083,9 @@ async function injectTarget(
     await cdp.send("Page.setBypassCSP", { enabled: true });
     await cdp.send("Runtime.enable");
     if (keepAlive) await installTaskboardHostBinding(cdp, supervisor);
-    if (keepAlive && attachExisting) {
+    // A resident watch/reconnection must never navigate the user's renderer.
+    // Page.reload below is reserved for a deliberate one-shot manual run.
+    if (keepAlive || attachExisting) {
       const currentStatus = await readInjectionStatus(cdp);
       const reconciled = await reconcileInjectionRuntime({
         currentStatus,
@@ -1117,10 +1123,14 @@ async function injectTarget(
       const frameLoaded = status.frameUrl
         ? await waitForFrame(cdp, status.frameUrl, 15_000)
         : false;
-      retained = true;
+      if (screenshotPath) {
+        const screenshot = await cdp.send("Page.captureScreenshot", { format: "png" });
+        await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
+      }
+      retained = keepAlive;
       return {
-        result: { ...status, cspBypassed: true, frameLoaded },
-        connection: cdp,
+        result: { ...status, cspBypassed: true, frameLoaded, ...(screenshotPath ? { screenshot: screenshotPath } : {}) },
+        connection: retained ? cdp : null,
       };
     }
     const scriptIdentifier = await registerInjectionSource(cdp, source);
@@ -1197,9 +1207,22 @@ async function injectAll(
     if (existingConnection) {
       try {
         const currentStatus = await readInjectionStatus(existingConnection);
+        existingConnection.taskboardHealthFailures = 0;
         if (!injectionRuntimeNeedsRefresh(currentStatus, sourceHash)) continue;
         reattachExisting = true;
-      } catch {}
+      } catch {
+        existingConnection.taskboardHealthFailures = (existingConnection.taskboardHealthFailures || 0) + 1;
+        if (existingConnection.taskboardHealthFailures === 1 || existingConnection.taskboardHealthFailures % 15 === 0) {
+          console.error(JSON.stringify({
+            at: new Date().toISOString(), component: "taskboard-injector", event: "health-read-deferred",
+            targetId: target.id, attempts: existingConnection.taskboardHealthFailures, action: "preserve-renderer",
+          }));
+        }
+        // A timeout/transition is not evidence that UI source is missing. Keep
+        // the connection and panels; retry on the next watch tick. A genuinely
+        // closed transport is removed by the explicit closed check above.
+        continue;
+      }
       existingConnection.close();
       injectedTargets.delete(target.id);
     }
@@ -1212,7 +1235,7 @@ async function injectAll(
       firstTarget ? screenshotPath : null,
       keepAlive,
       supervisor,
-      attachExisting || reattachExisting,
+      keepAlive || attachExisting || reattachExisting,
       startupToken,
     );
     if (connection) injectedTargets.set(target.id, connection);
