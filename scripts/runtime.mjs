@@ -42,6 +42,7 @@ runtimeEnvironment = { ...runtimeEnvironment, CODEX_ASSET_CONSOLE_PORT: String(a
 const plan = createRuntimePlan({ root, port: options.port, taskboardPort, environment: runtimeEnvironment });
 const children = new Map();
 const restartTimers = new Map();
+const restartAttempts = new Map();
 let stopping = false;
 
 for (const child of plan.children) await access(child.args[0]);
@@ -54,29 +55,34 @@ await writeFile(plan.taskboardRuntimeFile, `${JSON.stringify({
   version: plan.children[1].env.CODEX_TASKBOARD_VERSION,
   url: `http://127.0.0.1:${taskboardPort}/`,
   pid: process.pid,
+  assetConsolePort,
   startedAt: new Date().toISOString(),
 }, null, 2)}\n`, { mode: 0o600 });
 
 function start(definition) {
   if (stopping) return;
+  const startedAt = Date.now();
   const child = spawn(definition.command, definition.args, {
     cwd: definition.cwd,
     env: definition.env,
     stdio: "inherit",
   });
   children.set(definition.name, child);
-  process.stdout.write(`[runtime] ${definition.name} started (${child.pid})\n`);
+  process.stdout.write(`[${new Date().toISOString()}] [runtime] ${definition.name} started (${child.pid})\n`);
   child.once("error", (error) => {
-    process.stderr.write(`[runtime] ${definition.name} error: ${error.message}\n`);
+    process.stderr.write(`[${new Date().toISOString()}] [runtime] ${definition.name} error: ${error.message}\n`);
   });
-  child.once("exit", (code, signal) => {
+  child.once("close", (code, signal) => {
     if (children.get(definition.name) === child) children.delete(definition.name);
     if (stopping) return;
-    process.stderr.write(`[runtime] ${definition.name} exited (${signal || code}); restarting\n`);
+    const attempts = Date.now() - startedAt >= 60_000 ? 1 : (restartAttempts.get(definition.name) || 0) + 1;
+    restartAttempts.set(definition.name, attempts);
+    const retryMs = Math.min(30_000, 1_000 * 2 ** Math.min(5, attempts - 1));
+    process.stderr.write(`[${new Date().toISOString()}] [runtime] ${definition.name} exited (${signal || code}); retry in ${retryMs}ms\n`);
     const timer = setTimeout(() => {
       restartTimers.delete(definition.name);
       start(definition);
-    }, 1_000);
+    }, retryMs);
     restartTimers.set(definition.name, timer);
   });
 }

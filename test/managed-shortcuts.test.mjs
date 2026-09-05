@@ -62,6 +62,7 @@ test("managed shortcuts are normalized without carrying unknown data into the re
       url: "https://example.invalid/workspace",
       icon: "play",
       openMode: "internal",
+      keepAlive: true,
     }],
   });
 
@@ -71,6 +72,7 @@ test("managed shortcuts are normalized without carrying unknown data into the re
     url: "https://example.invalid/workspace",
     icon: "play",
     openMode: "internal",
+    keepAlive: true,
   }]);
   assert.ok(Object.isFrozen(shortcuts));
   assert.ok(Object.isFrozen(shortcuts[0]));
@@ -95,6 +97,8 @@ test("managed shortcuts reject unsafe, ambiguous, and unsupported fields", () =>
   assert.throws(() => normalize({ ...base, url: "https://user:secret@example.invalid/" }), /without credentials/);
   assert.throws(() => normalize({ ...base, icon: "remote-svg" }), /icon is not supported/);
   assert.throws(() => normalize({ ...base, openMode: "popup" }), /internal or browser/);
+  assert.throws(() => normalize({ ...base, keepAlive: "yes" }), /keepAlive must be a boolean/);
+  assert.throws(() => normalize({ ...base, keepAlive: true }), /only for internal shortcuts/);
   assert.throws(() => normalize({ ...base, privateToken: "secret" }), /unsupported field/);
   assert.throws(
     () => normalizeManagedShortcuts({ schemaVersion: 1, shortcuts: [base, base] }),

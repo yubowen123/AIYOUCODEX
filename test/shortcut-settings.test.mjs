@@ -58,5 +58,5 @@ test("settings exposes the AIYOUcodex brand without changing its accessibility c
 test("native activity view suspends project section enhancement", () => {
   assert.match(source, /function nativeActivityViewOpen\(\)/);
   assert.match(source, /关闭活动视图\|close activity view/);
-  assert.match(source, /if \(nativeActivityViewOpen\(\)\) \{\s*if \(sectionEnhancementMounted\(\)\) clearSectionEnhancement\(\);\s*ensureRecoveredConversationHistory\(\);/s);
+  assert.match(source, /if \(nativeActivityViewOpen\(\)\) \{\s*if \(sectionEnhancementMounted\(\)\) clearSectionEnhancement\(\);\s*syncFeature\("history", ensureRecoveredConversationHistory\);/s);
 });

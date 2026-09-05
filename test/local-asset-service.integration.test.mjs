@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -130,7 +130,8 @@ test("local asset API scans multiple folders and keeps project moves logical", a
     ...framePaths.map((filePath) => writeFile(filePath, "frame-fixture")),
     writeFile(wordPath, createStoredZip({
       "[Content_Types].xml": "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"></Types>",
-      "word/document.xml": "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>Word original</w:t></w:r></w:p><w:sectPr/></w:body></w:document>",
+      "word/document.xml": "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr><w:r><w:t>Word original</w:t><w:drawing/></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Preserved table</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/></w:body></w:document>",
+      "word/media/image1.png": "image fixture",
     })),
   ]);
 
@@ -309,13 +310,18 @@ test("local asset API scans multiple folders and keeps project moves logical", a
     const prompt = initial.assets.find((asset) => asset.name === "hero-prompt.md");
     const read = await request(`/api/text?id=${encodeURIComponent(prompt.id)}`);
     assert.match(read.content, /Original prompt/);
-    await request("/api/text", { method: "PUT", body: JSON.stringify({ assetId: prompt.id, content: "# Hero\nEdited locally" }) });
+    await request("/api/text", { method: "PUT", body: JSON.stringify({ assetId: prompt.id, content: "# Hero\nEdited locally", expectedRevision: read.revision }) });
     assert.match((await request(`/api/text?id=${encodeURIComponent(prompt.id)}`)).content, /Edited locally/);
 
     const word = initial.assets.find((asset) => asset.name === "production-notes.docx");
+    const wordRead = await request(`/api/text?id=${encodeURIComponent(word.id)}`);
+    const wordOriginalBytes = await readFile(wordPath);
+    assert.match(wordRead.content, /Word original/);
+    assert.equal(wordRead.editable, false);
+    assert.match(wordRead.editableReason, /表格、图片和格式/);
+    await assert.rejects(() => request("/api/text", { method: "PUT", body: JSON.stringify({ assetId: word.id, content: "Word edited\nSecond line" }) }), /不会覆盖原件/);
+    assert.deepEqual(await readFile(wordPath), wordOriginalBytes, "Word table, image references and styles stay byte-for-byte unchanged");
     assert.match((await request(`/api/text?id=${encodeURIComponent(word.id)}`)).content, /Word original/);
-    await request("/api/text", { method: "PUT", body: JSON.stringify({ assetId: word.id, content: "Word edited\nSecond line" }) });
-    assert.match((await request(`/api/text?id=${encodeURIComponent(word.id)}`)).content, /Word edited\nSecond line/);
 
     await request("/api/assets/metadata", {
       method: "PATCH",

@@ -79,6 +79,11 @@ mkdir -p "${STAGING_DIR}"
   --exclude '/*.png' \
   "${SOURCE_DIR}/" "${STAGING_DIR}/"
 
+# Validate the staged package before replacing a usable installation. This is
+# package validation only; --strict performs the separate live renderer check.
+"${NODE_PATH}" "${STAGING_DIR}/scripts/doctor.mjs" --json --port "${DEBUG_PORT}" >/dev/null \
+  || fail "staged package validation failed; previous installation preserved"
+
 if [[ -e "${INSTALL_DIR}" ]]; then
   mv "${INSTALL_DIR}" "${BACKUP_DIR}"
 fi
@@ -106,7 +111,7 @@ if ! "${NODE_PATH}" "${ACTIVATE_ARGS[@]}"; then
 fi
 
 if [[ -d "${BACKUP_DIR}" ]]; then
-  rm -rf "${BACKUP_DIR}"
+  printf 'Previous runtime retained for recovery: %s\n' "${BACKUP_DIR}"
 fi
 
 if [[ "${CODEX_SIDEBAR_SKIP_OPEN:-0}" != "1" ]]; then
@@ -116,3 +121,4 @@ fi
 printf '\nAIYOUcodex installed.\n'
 printf 'Launcher: %s\n' "${HOME}/Applications/AIYOUcodex.app"
 printf 'Logs: %s\n' "${HOME}/Library/Logs/CodexSidebarEnhancer"
+printf 'Live verification (after Codex opens): node "%s/scripts/doctor.mjs" --strict --port %s\n' "${INSTALL_DIR}" "${DEBUG_PORT}"

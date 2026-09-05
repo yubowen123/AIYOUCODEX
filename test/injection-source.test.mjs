@@ -20,10 +20,28 @@ test("workspace menu pages stay in a shared side panel and accept conversation c
   assert.match(source, /添加到对话/);
   assert.match(source, /codex-asset-console-close[\s\S]{0,520}-webkit-app-region:\s*no-drag/);
   assert.match(source, /codex-asset-console-close[\s\S]{0,420}pointer-events:\s*auto/);
-  assert.match(source, /function setAssetConsoleHostLayer\(active\)/);
+  assert.match(source, /function setWorkspacePanelHostLayer\(page, active\)/);
   assert.match(source, /host\.style\.setProperty\("z-index", "40"\)/);
+  assert.match(source, /setWorkspacePanelHostLayer\(customShortcutPage, true\)/);
+  assert.match(source, /setWorkspacePanelHostLayer\(customShortcutPage, false\)/);
   assert.match(source, /action: "search", query: pendingAssetConsoleQuery/);
   assert.doesNotMatch(source, /Array\.from\(mount\.surface\.children\)[\s\S]{0,180}CUSTOM_SHORTCUT_HIDDEN_ATTRIBUTE/);
+});
+
+test("managed internal pages can remain parked without reloading and stay controllable", () => {
+  assert.match(source, /function ensureManagedShortcut\(shortcutId, options = \{\}\)/);
+  assert.match(source, /ensureManagedShortcut,/);
+  assert.match(source, /data-codex-custom-shortcut-state="parked"/);
+  assert.match(source, /left:\s*-12000px\s*!important/);
+  assert.match(source, /height:\s*calc\(100vh - 44px\)\s*!important/);
+  assert.match(source, /if \(active && !active\.keepAlive\) removeCustomShortcutFrame\(key\)/);
+  assert.match(source, /existing\?\.frame\?\.isConnected && existing\.url === url/);
+  assert.match(source, /frame\.name = `codex-managed-shortcut\|/);
+  assert.doesNotMatch(
+    source,
+    /#\$\{CUSTOM_SHORTCUT_PAGE_ID\}\[data-codex-custom-shortcut-state="parked"\][\s\S]{0,360}display:\s*none/,
+  );
+  assert.match(source, /customShortcutPage\.hidden = !keepAliveMounted/);
 });
 
 test("hover previews contain all requested fields and clamp message bodies to three lines", () => {
@@ -66,7 +84,7 @@ test("sidebar groups use accessible tabs and preserve native project actions", (
   assert.match(source, /role", "tabpanel"/);
   assert.match(source, /aria-selected/);
   assert.match(source, /data-codex-sidebar-project-actions/);
-  assert.match(source, /codexSidebarProjectActionSource/);
+  assert.match(source, /syncNativeActionProxies/);
   assert.match(source, /ArrowRight/);
 });
 
@@ -159,10 +177,10 @@ test("folder reconciliation never removes React-owned rows during the first mess
   assert.doesNotMatch(source, /list\.replaceChildren\(\.\.\.desiredChildren\)/);
 });
 
-test("folder cards collapse short retry bursts and keep native controls on a full bottom row", () => {
-  assert.match(source, /const FOLDER_DUPLICATE_WINDOW_MS = 15 \* 60 \* 1000/);
+test("folder cards deduplicate identities only and keep native controls on a full bottom row", () => {
+  assert.doesNotMatch(source, /FOLDER_DUPLICATE_WINDOW_MS/);
   assert.match(source, /function dedupeFolderCatalogEntries\(sourceEntries\)/);
-  assert.match(source, /entry\.dedupeKey/);
+  assert.match(source, /seenIds\.has\(threadId\)/);
   assert.match(source, /data-codex-sidebar-semantic-duplicate-hidden/);
   assert.match(source, /\[data-codex-sidebar-semantic-duplicate-hidden\]\s*\{/);
   assert.doesNotMatch(source, /\[data-codex-sidebar-semantic-duplicate-hidden="true"\]/);
@@ -186,10 +204,10 @@ test("pinned conversations are exclusive to the pinned tab", () => {
   assert.doesNotMatch(source, /function ensurePinnedProjectRows/);
 });
 
-test("folder create action is bound to the selected folder and restores native markup", () => {
+test("folder create action resolves the selected folder without moving native markup", () => {
   assert.match(source, /nativeFolderCreateButton/);
-  assert.match(source, /codexSidebarFolderCreate = item\.id/);
+  assert.match(source, /candidate\.id === activeFolderId/);
   assert.match(source, /在“\$\{item\.label\}”中新建对话/);
   assert.doesNotMatch(source, /在“\$\{item\.label\}”文件夹下创建项目/);
-  assert.match(source, /removeAttribute\("data-codex-sidebar-folder-create"\)/);
+  assert.doesNotMatch(source, /host\.appendChild\(item\.actions\)/);
 });

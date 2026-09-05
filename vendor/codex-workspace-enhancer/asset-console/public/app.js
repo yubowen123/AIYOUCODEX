@@ -1,10 +1,29 @@
 import { defaultManualSmartGroup, mergeManualTags } from "./asset-metadata-ui.js";
+import { assetMediaRevision, createAssetCardReconciler, createLatestRequestGate, createRevisionPoller } from "./asset-library-state.js";
+import { createMediaPlaybackManager } from "./asset-media-lifecycle.js";
+
+const libraryRequests = createLatestRequestGate();
+const bootstrapRequests = createLatestRequestGate();
+const textRequests = createLatestRequestGate();
+const mediaRequests = createLatestRequestGate();
+const mediaPlayback = createMediaPlaybackManager();
+const pendingMediaHover = new WeakMap();
+const ASSET_PAGE_SIZE = 120;
+const MAX_ASSET_WINDOW = 240;
 
 const state = {
   system: { platform: "", name: "", pathSeparator: "/" },
   projects: [],
   selectedProject: localStorage.getItem("asset-library:selected-project") || "",
   assets: [],
+  assetsProjectId: "",
+  libraryRevision: "",
+  assetsQueryKey: "",
+  serverPaging: false,
+  pageStart: 0,
+  totalAssets: 0,
+  filteredTotal: 0,
+  categoryCounts: null,
   counts: { all: 0, text: 0, image: 0, audio: 0, video: 0 },
   smartCounts: { asset: 0, review: 0, noise: 0 },
   settings: { columns: 4, tags: [], taxonomy: {} },
@@ -35,6 +54,7 @@ const els = Object.fromEntries([
   "settingsForm", "tagManager", "newTagInput", "addTagButton", "taxonomyManager", "toastRegion",
   "mediaPreviewDialog", "mediaPreviewTitle", "mediaPreviewFormat", "mediaPreviewLayout", "mediaPreviewStage",
   "mediaPromptPanel", "mediaPromptMeta", "mediaPromptText", "mediaNegativePromptGroup", "mediaNegativePromptText", "mediaPromptReferences",
+  "assetPagingControls", "previousAssetWindow", "nextAssetWindow", "assetWindowLabel",
 ].map((id) => [id, document.getElementById(id)]));
 
 function escapeHtml(value) {
@@ -154,11 +174,11 @@ function renderProjects() {
 }
 
 function updateKindCounts() {
-  const counts = { all: 0, text: 0, image: 0, audio: 0, video: 0 };
-  state.assets.filter((asset) => asset.smartGroup === state.smartGroup).forEach((asset) => {
-    counts.all += 1;
-    counts[asset.kind] = (counts[asset.kind] || 0) + 1;
-  });
+  const counts = state.serverPaging ? state.counts : { all: 0, text: 0, image: 0, audio: 0, video: 0 };
+  if (!state.serverPaging) state.assets.filter((asset) => asset.smartGroup === state.smartGroup).forEach((asset) => {
+      counts.all += 1;
+      counts[asset.kind] = (counts[asset.kind] || 0) + 1;
+    });
   document.querySelectorAll("[data-kind-count]").forEach((item) => {
     item.textContent = String(counts[item.dataset.kindCount] || 0);
   });
@@ -180,7 +200,14 @@ function renderCategoryChips() {
   const groupedAssets = state.assets.filter((asset) => asset.smartGroup === state.smartGroup);
   const categories = kind
     ? state.settings.taxonomy?.[kind] || []
-    : [...new Set(groupedAssets.map((asset) => asset.category).filter(Boolean))];
+    : state.serverPaging ? Object.keys(state.categoryCounts || {}) : [...new Set(groupedAssets.map((asset) => asset.category).filter(Boolean))];
+  const counts = new Map(state.serverPaging ? Object.entries(state.categoryCounts || {}) : []);
+  if (!state.serverPaging) for (const asset of groupedAssets) {
+      if (!kind || asset.kind === kind) counts.set(asset.category, (counts.get(asset.category) || 0) + 1);
+    }
+  const fingerprint = JSON.stringify([state.category, categories, [...counts]]);
+  if (renderCategoryChips.fingerprint === fingerprint) return;
+  renderCategoryChips.fingerprint = fingerprint;
   els.categoryChips.replaceChildren();
   const all = document.createElement("button");
   all.type = "button";
@@ -189,7 +216,7 @@ function renderCategoryChips() {
   all.addEventListener("click", () => { state.category = ""; renderCategoryChips(); resetAssetWindow(); });
   els.categoryChips.append(all);
   for (const category of categories) {
-    const count = groupedAssets.filter((asset) => (!kind || asset.kind === kind) && asset.category === category).length;
+    const count = counts.get(category) || 0;
     if (!count) continue;
     const button = document.createElement("button");
     button.type = "button";
@@ -223,7 +250,7 @@ function renderTextCard(asset) {
   card.addEventListener("dblclick", (event) => {
     if (event.target.closest("button, details, .review-actions")) return;
     event.preventDefault();
-    useAssetInCodex(asset);
+    useAssetInCodex(assetById(card.dataset.assetId));
   });
   return card;
 }
@@ -239,7 +266,7 @@ function renderImageCard(asset) {
   card.addEventListener("dblclick", (event) => {
     if (event.target.closest("button, details, .review-actions")) return;
     event.preventDefault();
-    useAssetInCodex(asset);
+    useAssetInCodex(assetById(card.dataset.assetId));
   });
   return card;
 }
@@ -249,20 +276,23 @@ function renderAudioCard(asset) {
   card.className = "asset-card audio-card";
   card.dataset.assetId = asset.id;
   card.dataset.smartGroup = asset.smartGroup;
-  card.innerHTML = `${commonCardMarkup(asset, asset.extension || "AUDIO")}<div class="audio-visual"><button class="audio-play" type="button" aria-label="播放">▶</button><div class="waveform" aria-hidden="true">${Array.from({ length: 34 }, (_, index) => `<i style="--h:${22 + ((index * 17) % 64)}%"></i>`).join("")}</div><span class="duration-label">--:--</span></div><audio src="${asset.mediaUrl}" preload="metadata"></audio><div class="card-hint">鼠标移入试听 · 双击添加到对话</div>`;
+  card.innerHTML = `${commonCardMarkup(asset, asset.extension || "AUDIO")}<div class="audio-visual"><button class="audio-play" type="button" aria-label="播放">▶</button><div class="waveform" aria-hidden="true">${Array.from({ length: 34 }, (_, index) => `<i style="--h:${22 + ((index * 17) % 64)}%"></i>`).join("")}</div><span class="duration-label">${formatDuration(asset.duration ?? asset.durationSeconds)}</span></div><audio preload="none"></audio><div class="card-hint">鼠标移入按需试听 · 双击添加到对话</div>`;
   const audio = card.querySelector("audio");
   const play = card.querySelector(".audio-play");
   audio.addEventListener("loadedmetadata", () => { card.querySelector(".duration-label").textContent = formatDuration(audio.duration); });
-  const start = () => { audio.play().then(() => card.classList.add("playing")).catch(() => {}); };
-  const stop = () => { audio.pause(); audio.currentTime = 0; card.classList.remove("playing"); };
-  card.addEventListener("mouseenter", start);
+  const start = () => {
+    if (!card.isConnected || document.hidden || els.mediaPreviewDialog.open) return false;
+    return mediaPlayback.start(audio, assetById(card.dataset.assetId)?.mediaUrl || asset.mediaUrl, { onStart: () => card.classList.add("playing"), onStop: () => card.classList.remove("playing") });
+  };
+  const stop = () => { clearTimeout(pendingMediaHover.get(card)); mediaPlayback.stop(audio); card.classList.remove("playing"); };
+  card.addEventListener("mouseenter", () => { clearTimeout(pendingMediaHover.get(card)); pendingMediaHover.set(card, setTimeout(start, 180)); });
   card.addEventListener("mouseleave", stop);
-  play.addEventListener("click", (event) => { event.stopPropagation(); audio.paused ? start() : stop(); });
+  play.addEventListener("click", (event) => { event.stopPropagation(); clearTimeout(pendingMediaHover.get(card)); audio.paused ? start() : stop(); });
   card.addEventListener("dblclick", (event) => {
     if (event.target.closest("button, details, .review-actions")) return;
     stop();
     event.preventDefault();
-    useAssetInCodex(asset);
+    useAssetInCodex(assetById(card.dataset.assetId));
   });
   return card;
 }
@@ -272,20 +302,30 @@ function renderVideoCard(asset) {
   card.className = "asset-card video-card";
   card.dataset.assetId = asset.id;
   card.dataset.smartGroup = asset.smartGroup;
-  card.innerHTML = `<figure class="media-frame"><video src="${asset.mediaUrl}" muted loop playsinline preload="metadata"></video><div class="video-overlay"><button class="video-fullscreen" type="button">⛶ 全屏</button><span class="duration-label">--:--</span></div></figure>${commonCardMarkup(asset, asset.extension || "VIDEO")}<div class="card-hint">鼠标移入预览 · 双击添加到对话</div>`;
+  const aspect = Number(asset.width) > 0 && Number(asset.height) > 0 ? `${Number(asset.width)} / ${Number(asset.height)}` : "16 / 9";
+  card.innerHTML = `<figure class="media-frame"><video muted loop playsinline preload="none" style="aspect-ratio:${aspect}"></video><div class="video-overlay"><button class="video-fullscreen" type="button">⛶ 全屏</button><span class="duration-label">${formatDuration(asset.duration ?? asset.durationSeconds)}</span></div></figure>${commonCardMarkup(asset, asset.extension || "VIDEO")}<div class="card-hint">鼠标移入按需预览 · 双击添加到对话</div>`;
   const video = card.querySelector("video");
   video.addEventListener("loadedmetadata", () => { card.querySelector(".duration-label").textContent = formatDuration(video.duration); });
-  card.addEventListener("mouseenter", () => video.play().catch(() => {}));
-  card.addEventListener("mouseleave", () => { video.pause(); video.currentTime = 0; });
+  const start = () => {
+    if (!card.isConnected || document.hidden || els.mediaPreviewDialog.open) return false;
+    return mediaPlayback.start(video, assetById(card.dataset.assetId)?.mediaUrl || asset.mediaUrl);
+  };
+  const stop = () => { clearTimeout(pendingMediaHover.get(card)); if (document.fullscreenElement !== video) mediaPlayback.stop(video); };
+  card.addEventListener("mouseenter", () => { clearTimeout(pendingMediaHover.get(card)); pendingMediaHover.set(card, setTimeout(start, 180)); });
+  card.addEventListener("mouseleave", stop);
+  video.addEventListener("fullscreenchange", () => { if (document.fullscreenElement !== video && !card.matches(":hover")) stop(); });
   card.querySelector(".video-fullscreen").addEventListener("click", (event) => {
     event.stopPropagation();
-    if (video.requestFullscreen) video.requestFullscreen();
+    clearTimeout(pendingMediaHover.get(card));
+    start();
+    if (video.requestFullscreen) video.requestFullscreen().catch(() => {});
   });
   card.addEventListener("dblclick", (event) => {
     if (event.target.closest("button, details, .review-actions")) return;
-    video.pause();
+    clearTimeout(pendingMediaHover.get(card));
+    mediaPlayback.stop(video);
     event.preventDefault();
-    useAssetInCodex(asset);
+    useAssetInCodex(assetById(card.dataset.assetId));
   });
   return card;
 }
@@ -297,12 +337,14 @@ function previewAsset(asset) {
 
 function renderMediaPreview(asset) {
   if (asset.kind === "image") return `<img src="${asset.mediaUrl}" alt="${escapeHtml(asset.title)}">`;
-  if (asset.kind === "video") return `<video src="${asset.mediaUrl}" controls autoplay playsinline></video>`;
-  return `<div class="audio-preview-visual"><span aria-hidden="true">◉</span><strong>${escapeHtml(asset.title)}</strong><small>${escapeHtml(asset.extension || "AUDIO")} · ${formatBytes(asset.size)}</small></div><audio src="${asset.mediaUrl}" controls autoplay></audio>`;
+  if (asset.kind === "video") return `<video controls playsinline preload="none"></video>`;
+  return `<div class="audio-preview-visual"><span aria-hidden="true">◉</span><strong>${escapeHtml(asset.title)}</strong><small>${escapeHtml(asset.extension || "AUDIO")} · ${formatBytes(asset.size)}</small></div><audio controls preload="none"></audio>`;
 }
 
 async function openMediaAsset(asset) {
+  const request = mediaRequests.begin(asset.id);
   state.previewAsset = asset;
+  mediaPlayback.stop();
   els.mediaPreviewTitle.textContent = asset.title;
   els.mediaPreviewFormat.textContent = asset.extension || asset.kind.toUpperCase();
   els.mediaPreviewStage.innerHTML = renderMediaPreview(asset);
@@ -313,10 +355,12 @@ async function openMediaAsset(asset) {
   els.mediaNegativePromptText.textContent = "";
   els.mediaPromptReferences.replaceChildren();
   els.mediaPreviewDialog.showModal();
+  const media = els.mediaPreviewStage.querySelector("audio, video");
+  if (media) mediaPlayback.start(media, asset.mediaUrl);
   if (!asset.promptAssociation?.available) return;
   try {
-    const association = await api(`/api/assets/prompt?id=${encodeURIComponent(asset.id)}`);
-    if (state.previewAsset?.id !== asset.id || !els.mediaPreviewDialog.open) return;
+    const association = await api(`/api/assets/prompt?id=${encodeURIComponent(asset.id)}`, { signal: request.signal });
+    if (!request.isCurrent() || state.previewAsset?.id !== asset.id || !els.mediaPreviewDialog.open) return;
     const meta = [association.generator, association.model].filter(Boolean);
     els.mediaPromptMeta.innerHTML = `${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}${association.threadId ? `<span title="${escapeHtml(association.threadId)}">Codex 任务</span>` : ""}`;
     els.mediaPromptText.textContent = association.prompt || "（未登记提示词）";
@@ -328,11 +372,13 @@ async function openMediaAsset(asset) {
     els.mediaPromptPanel.hidden = false;
     els.mediaPreviewLayout.classList.add("has-prompt");
   } catch (error) {
+    if (!request.isCurrent() || !els.mediaPreviewDialog.open || error.name === "AbortError") return;
     showToast(error.message, "error");
   }
 }
 
 function visibleAssets() {
+  if (state.serverPaging) return state.assets;
   const query = state.query.trim().toLocaleLowerCase("zh-CN");
   const assets = state.assets.filter((asset) => {
     if (asset.smartGroup !== state.smartGroup) return false;
@@ -350,26 +396,90 @@ function visibleAssets() {
 }
 
 function resetAssetWindow() {
-  state.visibleLimit = 120;
-  renderAssets();
+  state.visibleLimit = ASSET_PAGE_SIZE;
+  return loadLibrary({ quiet: true, reset: true });
 }
+
+function libraryQueryKey() {
+  return JSON.stringify([state.selectedProject, state.smartGroup, state.kind, state.category, state.query, state.sort]);
+}
+
+function createAssetCard(asset) {
+  const renderer = { text: renderTextCard, image: renderImageCard, audio: renderAudioCard, video: renderVideoCard }[asset.kind];
+  return renderer?.(asset);
+}
+
+function disposeAssetCard(card) {
+  clearTimeout(pendingMediaHover.get(card));
+  card.querySelectorAll("audio, video").forEach((media) => mediaPlayback.stop(media));
+}
+
+function updateAssetCard(card, asset, previous) {
+  if (asset.kind !== previous.kind || (asset.kind !== "text" && assetMediaRevision(asset) !== assetMediaRevision(previous))) {
+    return createAssetCard(asset);
+  }
+  card.dataset.smartGroup = asset.smartGroup;
+  const template = document.createElement("template");
+  template.innerHTML = commonCardMarkup(asset, asset.extension || asset.kind.toUpperCase());
+  for (const selector of [".asset-card-header", ".asset-meta", ".classification-line", ".asset-tags", ".review-actions"]) {
+    const old = card.querySelector(selector);
+    const fresh = template.content.querySelector(selector);
+    if (old?.outerHTML === fresh?.outerHTML) continue;
+    if (old && fresh) {
+      const wasOpen = old.querySelector("details[open]");
+      if (wasOpen) fresh.querySelector("details")?.setAttribute("open", "");
+      old.replaceWith(fresh);
+    } else if (old) old.remove();
+    else if (fresh) card.querySelector(".asset-tags").after(fresh);
+  }
+  if (asset.kind === "text") {
+    const preview = card.querySelector(".text-card-preview");
+    const text = asset.preview || "暂无可预览内容";
+    if (preview.textContent !== text) {
+      const scrollTop = preview.scrollTop;
+      preview.textContent = text;
+      preview.scrollTop = scrollTop;
+    }
+  } else if (asset.kind === "image") {
+    card.querySelector("img").alt = asset.title;
+  }
+  return card;
+}
+
+const reconcileAssetCards = createAssetCardReconciler({
+  container: els.assetGrid, createCard: createAssetCard, updateCard: updateAssetCard, disposeCard: disposeAssetCard,
+});
 
 function renderAssets() {
   const matchingAssets = visibleAssets();
   const assets = matchingAssets.slice(0, state.visibleLimit);
-  els.assetGrid.replaceChildren();
+  const filteredTotal = state.serverPaging ? state.filteredTotal : matchingAssets.length;
+  const hasMore = state.serverPaging ? state.pageStart + assets.length < filteredTotal : matchingAssets.length > assets.length;
+  const scrollTop = document.scrollingElement?.scrollTop || 0;
   els.assetGrid.className = `asset-grid ${["image", "video"].includes(state.kind) ? "masonry" : ""}`;
-  for (const asset of assets) {
-    const renderer = { text: renderTextCard, image: renderImageCard, audio: renderAudioCard, video: renderVideoCard }[asset.kind];
-    if (renderer) els.assetGrid.append(renderer(asset));
-  }
-  if (matchingAssets.length > assets.length) {
-    const more = document.createElement("button");
-    more.type = "button";
-    more.className = "load-more-card";
-    more.innerHTML = `<strong>继续加载</strong><span>已显示 ${assets.length} / ${matchingAssets.length}</span>`;
-    more.addEventListener("click", () => { state.visibleLimit += 120; renderAssets(); });
-    els.assetGrid.append(more);
+  reconcileAssetCards(assets, state.assetsProjectId);
+  let more = els.assetGrid.querySelector(".load-more-card");
+  if (hasMore && (!state.serverPaging || assets.length < MAX_ASSET_WINDOW)) {
+    if (!more) {
+      more = document.createElement("button");
+      more.type = "button";
+      more.className = "load-more-card";
+      more.innerHTML = "<strong>继续加载</strong><span></span>";
+      more.addEventListener("click", () => {
+        if (state.busy) return;
+        if (state.serverPaging) loadLibrary({ quiet: true, append: true });
+        else { state.visibleLimit += ASSET_PAGE_SIZE; renderAssets(); }
+      });
+      els.assetGrid.append(more);
+    }
+    const label = `已显示 ${state.pageStart + assets.length} / ${filteredTotal}`;
+    if (more.querySelector("span").textContent !== label) more.querySelector("span").textContent = label;
+  } else more?.remove();
+  if (els.assetPagingControls) {
+    els.assetPagingControls.hidden = !state.serverPaging || (state.pageStart === 0 && filteredTotal <= MAX_ASSET_WINDOW);
+    els.previousAssetWindow.disabled = state.busy || state.pageStart === 0;
+    els.nextAssetWindow.disabled = state.busy || state.pageStart + assets.length >= filteredTotal;
+    els.assetWindowLabel.textContent = `${filteredTotal ? state.pageStart + 1 : 0}–${state.pageStart + assets.length} / ${filteredTotal} · 每组最多 ${MAX_ASSET_WINDOW} 张`;
   }
   const hasProject = Boolean(selectedProject());
   els.emptyLibraryState.hidden = Boolean(matchingAssets.length);
@@ -379,32 +489,92 @@ function renderAssets() {
     : "创建项目并关联一个或多个文件夹，扫描结果会自动分类。";
   els.emptyCreateProjectButton.hidden = hasProject;
   els.workspaceSubtitle.textContent = hasProject
-    ? `${state.assets.length} 个本地文件 · 正式资产 ${state.smartCounts.asset || 0} · 待确认 ${state.smartCounts.review || 0} · 干扰项 ${state.smartCounts.noise || 0}`
+    ? `${state.serverPaging ? state.totalAssets : state.assets.length} 个本地文件 · 正式资产 ${state.smartCounts.asset || 0} · 待确认 ${state.smartCounts.review || 0} · 干扰项 ${state.smartCounts.noise || 0}`
     : "关联本地文件夹后，系统会自动识别并分类资产。";
+  if (document.scrollingElement) document.scrollingElement.scrollTop = scrollTop;
 }
 
-async function loadLibrary({ quiet = false, force = false } = {}) {
+async function loadLibrary({ quiet = false, force = false, reset = false, append = false, offset } = {}) {
+  const queryKey = libraryQueryKey();
+  const request = libraryRequests.begin(queryKey);
+  const isCurrent = () => request.isCurrent() && request.key === libraryQueryKey();
   const project = selectedProject();
+  const projectChanged = state.assetsProjectId !== (project?.id || "");
+  const queryChanged = state.assetsQueryKey !== queryKey;
+  if (projectChanged || queryChanged || reset) {
+    state.assetsProjectId = project?.id || "";
+    state.assets = [];
+    state.libraryRevision = "";
+    state.assetsQueryKey = queryKey;
+    state.pageStart = Number.isFinite(offset) ? Math.max(0, offset) : 0;
+    state.filteredTotal = 0;
+    if (projectChanged) {
+      state.totalAssets = 0;
+      state.categoryCounts = {};
+      state.counts = { all: 0, text: 0, image: 0, audio: 0, video: 0 };
+      state.smartCounts = { asset: 0, review: 0, noise: 0 };
+    }
+    state.visibleLimit = ASSET_PAGE_SIZE;
+    // Never leave project A's actionable cards under project B's selection.
+    renderSmartGroupTabs(); renderCategoryChips(); updateKindCounts(); renderAssets();
+    if (document.scrollingElement) document.scrollingElement.scrollTop = 0;
+  }
   if (!project) {
     state.assets = [];
     state.counts = { all: 0, text: 0, image: 0, audio: 0, video: 0 };
     state.smartCounts = { asset: 0, review: 0, noise: 0 };
     els.workspaceTitle.textContent = "选择一个项目";
-    renderSmartGroupTabs(); renderCategoryChips(); updateKindCounts(); resetAssetWindow();
+    state.busy = false;
+    els.scanState.textContent = "未选择项目";
+    els.scanState.classList.remove("busy");
+    renderSmartGroupTabs(); renderCategoryChips(); updateKindCounts(); renderAssets();
     return;
   }
   state.busy = true;
+  els.workspaceTitle.textContent = project.name;
   els.scanState.textContent = force ? "正在重新扫描…" : "正在读取索引…";
   els.scanState.classList.add("busy");
   try {
-    const query = new URLSearchParams({ project: project.id });
+    const query = new URLSearchParams({ project: project.id, limit: String(ASSET_PAGE_SIZE),
+      smartGroup: state.smartGroup || "asset", kind: state.kind || "all", category: state.category || "", query: state.query || "", sort: state.sort || "newest" });
     if (force) query.set("rescan", "1");
-    const data = await api(`/api/library?${query}`);
-    state.assets = data.assets || [];
+    const previousAssets = state.assets;
+    const pageStart = state.pageStart || 0;
+    let cursor = append ? pageStart + previousAssets.length : pageStart;
+    let remaining = append ? Math.min(ASSET_PAGE_SIZE, MAX_ASSET_WINDOW - previousAssets.length) : Math.min(MAX_ASSET_WINDOW, Math.max(ASSET_PAGE_SIZE, previousAssets.length));
+    let nextAssets = append ? previousAssets.slice() : [];
+    let data = null;
+    while (remaining > 0) {
+      query.set("offset", String(cursor));
+      query.set("limit", String(Math.min(ASSET_PAGE_SIZE, remaining)));
+      const page = await api(`/api/library?${query}`, { signal: request.signal });
+      query.delete("rescan");
+      if (!isCurrent()) return;
+      if (append && !data && state.libraryRevision && page.index?.revision !== state.libraryRevision) {
+        // Offset pages from different snapshots must never be combined.
+        append = false; nextAssets = []; cursor = pageStart;
+        remaining = Math.min(MAX_ASSET_WINDOW, previousAssets.length + ASSET_PAGE_SIZE);
+        continue;
+      }
+      if (data?.index?.revision && page.index?.revision !== data.index.revision) throw new Error("同步期间资产发生变化，请稍后重试；当前列表已保留");
+      data ||= page;
+      const items = page.assets || [];
+      nextAssets.push(...items);
+      remaining -= items.length;
+      cursor += items.length;
+      if (!page.page?.hasMore || !items.length) break;
+    }
+    if (!data) return;
+    state.assets = nextAssets;
+    state.serverPaging = Boolean(data.page);
+    state.totalAssets = data.total ?? nextAssets.length;
+    state.filteredTotal = data.filteredTotal ?? nextAssets.length;
+    state.categoryCounts = data.categoryCounts || {};
+    state.visibleLimit = state.serverPaging ? nextAssets.length : Math.max(state.visibleLimit, nextAssets.length);
+    state.libraryRevision = data.index?.revision || "";
     state.counts = data.counts || state.counts;
     state.smartCounts = data.smartCounts || state.smartCounts;
     state.settings = data.settings || state.settings;
-    state.visibleLimit = 120;
     setColumns(state.settings.columns);
     els.workspaceTitle.textContent = project.name;
     els.scanState.textContent = data.index?.mode === "initial-scan"
@@ -417,17 +587,26 @@ async function loadLibrary({ quiet = false, force = false } = {}) {
       ? `已重新扫描 ${state.assets.length} 个资产`
       : `已从持久索引加载 ${state.assets.length} 个资产`);
   } catch (error) {
+    if (!isCurrent() || error.name === "AbortError") return;
     els.scanState.textContent = force ? "重新扫描失败" : "索引读取失败";
     showToast(error.message, "error");
   } finally {
-    state.busy = false;
-    els.scanState.classList.remove("busy");
+    if (isCurrent()) {
+      state.busy = false;
+      els.scanState.classList.remove("busy");
+      if (els.assetPagingControls) {
+        els.previousAssetWindow.disabled = state.pageStart === 0;
+        els.nextAssetWindow.disabled = state.pageStart + state.assets.length >= state.filteredTotal;
+      }
+    }
   }
 }
 
 async function loadBootstrap() {
+  const request = bootstrapRequests.begin("bootstrap");
   try {
-    const [config, projectData] = await Promise.all([api("/api/config"), api("/api/projects")]);
+    const [config, projectData] = await Promise.all([api("/api/config", { signal: request.signal }), api("/api/projects", { signal: request.signal })]);
+    if (!request.isCurrent()) return;
     state.system = config.system || state.system;
     state.settings = config.assetManager || state.settings;
     state.projects = projectData.projects || [];
@@ -436,8 +615,11 @@ async function loadBootstrap() {
     setColumns(state.settings.columns);
     renderProjects();
     await loadLibrary({ quiet: true });
+    return true;
   } catch (error) {
+    if (!request.isCurrent() || error.name === "AbortError") return;
     showToast(`资产服务不可用：${error.message}`, "error");
+    return false;
   }
 }
 
@@ -499,29 +681,38 @@ function markdownToSafeHtml(text) {
 }
 
 async function openTextAsset(asset) {
-  state.textAsset = asset;
+  const request = textRequests.begin(asset.id);
+  const isCurrent = () => request.isCurrent() && state.textAsset?.id === asset.id && els.textViewerDialog.open;
+  state.textAsset = { ...asset, editable: false };
   els.textViewerTitle.textContent = asset.name;
   els.textViewerFormat.textContent = asset.extension || "TEXT";
   els.textViewerPreview.innerHTML = "<p>正在读取…</p>";
   els.textViewerEditor.hidden = true;
   els.textViewerPreview.hidden = false;
   els.saveTextButton.hidden = true;
-  els.toggleTextEditButton.hidden = !asset.editable;
+  els.toggleTextEditButton.hidden = true;
   els.toggleTextEditButton.textContent = "编辑";
-  els.textSaveState.textContent = "";
+  els.textSaveState.textContent = asset.editableReason || "";
+  els.saveTextButton.disabled = false;
   els.textViewerDialog.showModal();
   try {
-    const data = await api(`/api/text?id=${encodeURIComponent(asset.id)}`);
-    state.textAsset = { ...asset, content: data.content, editable: data.editable };
+    const data = await api(`/api/text?id=${encodeURIComponent(asset.id)}`, { signal: request.signal });
+    if (!isCurrent()) return;
+    const editable = Boolean(data.editable && data.revision);
+    state.textAsset = { ...asset, content: data.content, editable, editableReason: data.editableReason, revision: data.revision };
     els.textViewerPreview.innerHTML = markdownToSafeHtml(data.content);
     els.textViewerEditor.value = data.content;
-    els.toggleTextEditButton.hidden = !data.editable;
+    els.toggleTextEditButton.hidden = !editable;
+    els.textViewerFormat.textContent = `${asset.extension || "TEXT"}${editable ? "" : " · 只读"}`;
+    els.textSaveState.textContent = editable ? "保存前会检查文件版本，避免覆盖外部修改" : data.editableReason || "此格式仅支持只读预览，请在原应用中编辑";
   } catch (error) {
+    if (!isCurrent() || error.name === "AbortError") return;
     els.textViewerPreview.textContent = error.message;
   }
 }
 
 function toggleTextEditor() {
+  if (!state.textAsset?.editable || !state.textAsset.revision) return;
   const editing = els.textViewerEditor.hidden;
   els.textViewerEditor.hidden = !editing;
   els.textViewerPreview.hidden = editing;
@@ -532,18 +723,24 @@ function toggleTextEditor() {
 }
 
 async function saveTextAsset() {
-  if (!state.textAsset) return;
+  const asset = state.textAsset;
+  if (!asset?.editable || !asset.revision || els.saveTextButton.disabled) return;
+  const isCurrent = () => state.textAsset === asset && els.textViewerDialog.open;
+  const content = els.textViewerEditor.value;
   els.saveTextButton.disabled = true;
   els.textSaveState.textContent = "正在保存…";
   try {
-    await api("/api/text", { method: "PUT", body: JSON.stringify({ assetId: state.textAsset.id, content: els.textViewerEditor.value }) });
-    els.textSaveState.textContent = "已保存到原文件";
+    const saved = await api("/api/text", { method: "PUT", body: JSON.stringify({ assetId: asset.id, content, expectedRevision: asset.revision }) });
+    if (!isCurrent()) return;
+    asset.revision = saved.revision;
+    els.textSaveState.textContent = els.textViewerEditor.value === content ? "已保存到原文件" : "已保存提交版本；刚才的新修改尚未保存";
     showToast("文本已保存");
     await loadLibrary({ quiet: true });
   } catch (error) {
+    if (!isCurrent()) return;
     els.textSaveState.textContent = error.message;
   } finally {
-    els.saveTextButton.disabled = false;
+    if (isCurrent()) els.saveTextButton.disabled = false;
   }
 }
 
@@ -700,9 +897,20 @@ function bindEvents() {
     els.assetKindTabs.querySelectorAll("button").forEach((item) => item.classList.toggle("active", item === button));
     renderCategoryChips(); resetAssetWindow();
   });
-  els.librarySearchInput.addEventListener("input", () => { state.query = els.librarySearchInput.value; resetAssetWindow(); });
+  els.librarySearchInput.addEventListener("input", () => {
+    state.query = els.librarySearchInput.value;
+    libraryRequests.cancel();
+    clearTimeout(state.searchTimer);
+    state.searchTimer = setTimeout(resetAssetWindow, 180);
+  });
   els.librarySortSelect.addEventListener("change", () => { state.sort = els.librarySortSelect.value; resetAssetWindow(); });
   els.assetColumnRange.addEventListener("input", () => setColumns(els.assetColumnRange.value, true));
+  els.previousAssetWindow?.addEventListener("click", () => {
+    if (!state.busy) loadLibrary({ quiet: true, reset: true, offset: Math.max(0, state.pageStart - MAX_ASSET_WINDOW) });
+  });
+  els.nextAssetWindow?.addEventListener("click", () => {
+    if (!state.busy) loadLibrary({ quiet: true, reset: true, offset: state.pageStart + state.assets.length });
+  });
   els.assetGrid.addEventListener("pointerdown", openManualReviewAction, true);
   els.assetGrid.addEventListener("click", (event) => {
     const actionButton = event.target.closest("[data-action]");
@@ -724,10 +932,17 @@ function bindEvents() {
   });
   els.settingsForm.addEventListener("submit", saveSettings);
   els.mediaPreviewDialog.addEventListener("close", () => {
-    els.mediaPreviewStage.querySelectorAll("audio, video").forEach((media) => media.pause());
+    mediaRequests.cancel();
+    els.mediaPreviewStage.querySelectorAll("audio, video").forEach((media) => mediaPlayback.stop(media));
     els.mediaPreviewStage.replaceChildren();
     state.previewAsset = null;
   });
+  els.textViewerDialog.addEventListener("close", () => {
+    textRequests.cancel();
+    state.textAsset = null;
+  });
+  window.addEventListener("pagehide", () => mediaPlayback.stop());
+  document.addEventListener("visibilitychange", () => { if (document.hidden) mediaPlayback.stop(); });
   document.querySelectorAll("[data-close-dialog]").forEach((button) => button.addEventListener("click", () => document.getElementById(button.dataset.closeDialog)?.close()));
   document.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -753,13 +968,34 @@ function bindEvents() {
 }
 
 function connectEvents() {
+  if (window.__CODEX_ASSET_CONSOLE_EMBEDDED__ === true) {
+    const poller = createRevisionPoller({
+      fetchRevision: (projectId, signal) => api(`/api/library/revision?project=${encodeURIComponent(projectId)}`, { signal }),
+      getProjectId: () => state.selectedProject,
+      getRevision: () => state.libraryRevision,
+      isBusy: () => state.busy,
+      onLibraryChanged: () => loadLibrary({ quiet: true }),
+      onConfigChanged: () => loadBootstrap(),
+      isVisible: () => document.visibilityState === "visible",
+      onError: () => { if (!state.busy) els.scanState.textContent = "同步连接暂不可用，正在重试"; },
+    });
+    poller.start();
+    window.addEventListener("pagehide", () => poller.stop());
+    window.addEventListener("pageshow", (event) => { if (event.persisted) poller.start(); });
+    return;
+  }
   try {
     const events = new EventSource("/api/events");
     const refresh = () => {
       clearTimeout(state.refreshTimer);
-      state.refreshTimer = setTimeout(() => loadLibrary({ quiet: true }), 400);
+      // Coalesce watcher bursts without repeatedly cancelling a slow scan.
+      state.refreshTimer = setTimeout(() => {
+        if (state.busy) refresh();
+        else loadLibrary({ quiet: true });
+      }, 400);
     };
     events.addEventListener("asset-change", refresh);
+    events.addEventListener("open", refresh);
     events.addEventListener("project-change", () => loadBootstrap());
     events.addEventListener("config-change", () => loadBootstrap());
   } catch {}

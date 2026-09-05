@@ -1,5 +1,5 @@
-export async function readTargets(port = 9231) {
-  const response = await fetch(`http://127.0.0.1:${port}/json`);
+export async function readTargets(port = 9231, { timeoutMs = 1_500 } = {}) {
+  const response = await fetch(`http://127.0.0.1:${port}/json`, { signal: AbortSignal.timeout(timeoutMs) });
   if (!response.ok) throw new Error(`CDP target list failed: ${response.status}`);
   return response.json();
 }

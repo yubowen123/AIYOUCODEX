@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,14 +11,15 @@ import { presentCardPreview } from "../lib/card-view.mjs";
 import { presentRateLimit } from "../lib/usage-data.mjs";
 import {
   DesktopAppRecovery,
-  needsPreviewAttachment,
   reconcileRendererSessions,
+  selectPersistentOwnerTargetId,
 } from "../lib/injector-state.mjs";
 import { createDesktopAppRuntime } from "../lib/desktop-runtime.mjs";
 import { readActiveTaskThreads } from "../lib/taskboard-status.mjs";
 import { AssetConsoleBridge } from "../lib/asset-console-bridge.mjs";
 import { readInstalledSkillCatalog } from "../lib/skill-catalog.mjs";
 import { readManagedShortcuts } from "../lib/managed-shortcuts.mjs";
+import { RENDERER_HEALTH_EXPRESSION, acceptDocumentHealth, canReuseRenderer, recordUpdateFailure, rendererReadiness } from "../lib/renderer-health.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(root, "inject", "conversation-preview.user.js");
@@ -40,8 +42,10 @@ const repository = new PreviewRepository();
 
 let stopped = false;
 const sessions = new Map();
+let persistentShortcutOwnerTargetId = "";
 let skillCatalog = [];
 let nextSkillCatalogRefreshAt = 0;
+let discoveryFailures = 0;
 const desktopAppRecovery = new DesktopAppRecovery();
 const desktopAppRuntime = createDesktopAppRuntime();
 const assetConsoleOptions = {
@@ -70,6 +74,8 @@ async function attachTarget(target) {
   const client = await connectCodexTarget(target);
   const assetConsoleBridge = createAssetConsoleBridge();
   try {
+    // New-document registration must be enabled on this exact CDP connection.
+    await client.send("Page.enable");
     const oldIdentifier = await client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] || null`);
     if (oldIdentifier) {
       try { await client.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: oldIdentifier }); } catch {}
@@ -77,23 +83,35 @@ async function attachTarget(target) {
     const [userSource, managedShortcuts] = await Promise.all([
       readFile(sourcePath, "utf8"),
       readManagedShortcuts().catch((error) => {
-        process.stderr.write(`[managed-shortcuts] ${error.message}\n`);
-        return [];
+        // A malformed/unreadable private profile is not an intentionally empty
+        // configuration. Do not replace a working page with an empty shortcut set.
+        process.stderr.write(`[managed-shortcuts] profile unavailable (${error.name || "Error"}); keeping existing page\n`);
+        throw new Error("Managed shortcut profile could not be read");
       }),
     ]);
-    const rendererSource = `if (window.top === window) { window.__CODEX_SIDEBAR_MANAGED_SHORTCUTS__ = ${JSON.stringify(managedShortcuts)}; ${userSource}\n}`;
+    const sourceHash = createHash("sha256").update(userSource).update(JSON.stringify(managedShortcuts)).digest("hex");
+    const rendererSource = `if (window.top === window) { window.__CODEX_SIDEBAR_RENDERER_TARGET_ID__ = ${JSON.stringify(target.id)}; window.__CODEX_SIDEBAR_MANAGED_SHORTCUTS__ = ${JSON.stringify(managedShortcuts)}; ${userSource}\n window.__AIYOUCODEX_RUNTIME_SOURCE_HASH__ = ${JSON.stringify(sourceHash)}; }`;
+    const snapshot = await client.evaluate(RENDERER_HEALTH_EXPRESSION);
     const registered = await client.send("Page.addScriptToEvaluateOnNewDocument", { source: rendererSource });
-    await client.evaluate(rendererSource);
+    // Reconnect to the same document without destroying its mounted/parked pages.
+    if (!canReuseRenderer(snapshot, sourceHash)) await client.evaluate(rendererSource);
     await client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] = ${JSON.stringify(registered.identifier)}`);
     await assetConsoleBridge.install(client);
-    process.stdout.write(`Codex conversation preview attached to renderer ${target.id}\n`);
-    return {
+    process.stdout.write(`[${new Date().toISOString()}] Codex conversation preview attached to renderer ${target.id}\n`);
+    const session = {
       targetId: target.id,
       client,
       assetConsoleBridge,
       registeredScriptIdentifier: registered.identifier,
       deliveredHistoryKey: "",
+      persistentShortcutIds: managedShortcuts
+        .filter((shortcut) => shortcut.openMode === "internal" && shortcut.keepAlive === true)
+        .map((shortcut) => shortcut.id),
+      persistentShortcutReady: new Set(),
     };
+    acceptDocumentHealth(session, await client.evaluate(RENDERER_HEALTH_EXPRESSION));
+    session.bridgeDocumentEpoch = session.documentEpoch;
+    return session;
   } catch (error) {
     await assetConsoleBridge.dispose().catch(() => {});
     client.close();
@@ -101,26 +119,99 @@ async function attachTarget(target) {
   }
 }
 
+async function persistentShortcutOwnerSession() {
+  let focusedTargetIds = [];
+  if (!sessions.has(persistentShortcutOwnerTargetId) && sessions.size > 1) {
+    const focusStates = await Promise.all([...sessions].map(async ([targetId, session]) => {
+      try {
+        const focused = await session.client.evaluate("document.hasFocus() && document.visibilityState === 'visible'");
+        return focused ? targetId : "";
+      } catch {
+        return "";
+      }
+    }));
+    focusedTargetIds = focusStates.filter(Boolean);
+  }
+  persistentShortcutOwnerTargetId = selectPersistentOwnerTargetId({
+    sessions,
+    currentOwnerTargetId: persistentShortcutOwnerTargetId,
+    focusedTargetIds,
+  });
+  return sessions.get(persistentShortcutOwnerTargetId) || null;
+}
+
+async function ensurePersistentManagedShortcuts(session) {
+  for (const shortcutId of session?.persistentShortcutIds || []) {
+    if (session.persistentShortcutReady?.has(shortcutId)) continue;
+    const result = await session.client.evaluate(`window.__codexConversationPreviewInjection__?.ensureManagedShortcut?.(${JSON.stringify(shortcutId)}, { visible: false }) || null`);
+    if (result?.ok === true) {
+      session.persistentShortcutReady?.add(shortcutId);
+    } else if (result && result.reason !== "panel-mount-unavailable") {
+      process.stderr.write(`[managed-shortcuts] persistent shortcut ${shortcutId} was not mounted: ${result?.reason || "runtime unavailable"}\n`);
+    }
+  }
+}
+
 async function reconcileTargets() {
   let targets = [];
+  let discoveryAvailable = false;
   try {
     targets = selectMainCodexTargets(await readTargets(options.port));
-  } catch {}
+    discoveryAvailable = true;
+    discoveryFailures = 0;
+  } catch {
+    discoveryFailures += 1;
+    if ([1, 5, 10, 30, 60].includes(discoveryFailures)) {
+      process.stderr.write(`[${new Date().toISOString()}] renderer discovery unavailable (${discoveryFailures}); preserving live sessions\n`);
+    }
+  }
+  if (!discoveryAvailable && discoveryFailures >= 10) {
+    for (const [id, session] of sessions) {
+      if (session.client.socket?.readyState === 1) continue;
+      sessions.delete(id);
+      await disposeRendererSession(session).catch(() => {});
+    }
+  }
   const reconciliation = await reconcileRendererSessions({
     targets,
+    discoveryAvailable,
     sessions,
     attach: attachTarget,
     dispose: (session) => disposeRendererSession(session),
-    isHealthy: async (session, target) => !await needsPreviewAttachment({
-      client: session.client,
-      attachedTargetId: session.targetId,
-      nextTargetId: target.id,
-    }),
+    isHealthy: async (session) => {
+      try {
+        const snapshot = await session.client.evaluate(RENDERER_HEALTH_EXPRESSION);
+        const alive = acceptDocumentHealth(session, snapshot);
+        if (alive && session.bridgeDocumentEpoch !== session.documentEpoch) {
+          await session.assetConsoleBridge.install(session.client);
+          session.bridgeDocumentEpoch = session.documentEpoch;
+        }
+        if (alive) {
+          const signature = rendererReadiness(snapshot).failures.join(',');
+          if (signature && session.lastHealthFailureSignature !== signature) {
+            process.stderr.write(`[${new Date().toISOString()}] renderer ${session.targetId} degraded: ${signature}\n`);
+          }
+          session.lastHealthFailureSignature = signature;
+        }
+        return alive;
+      } catch {
+        // A live connection with a transient evaluation error is not a reason
+        // to reinstall UI. Closed transports will reattach idempotently.
+        return session.client.socket?.readyState === 1;
+      }
+    },
   });
-  if (!targets.length && options.watch) {
+  // A reachable endpoint with no recognized page is starting/unsupported, not
+  // permission to terminate the host. Only recover an ordinary undebugged app
+  // after repeated connection failures and never while a known session exists.
+  if (!discoveryAvailable && discoveryFailures >= 5 && !sessions.size && options.watch
+      && process.env.CODEX_SIDEBAR_ALLOW_HOST_RESTART === "1") {
     let app = null;
     try { app = await desktopAppRuntime.readProcess(); } catch {}
-    const action = desktopAppRecovery.next({ targetAvailable: false, app });
+    const taskStatus = await readActiveTaskThreads();
+    const action = desktopAppRecovery.next({ targetAvailable: false, app,
+      recoveryAllowed: process.env.CODEX_SIDEBAR_ALLOW_HOST_RESTART === "1"
+        && taskStatus.available && taskStatus.activeThreadIds.length === 0 });
     if (action?.type === "quit") {
       try {
         await desktopAppRuntime.quit(action.app);
@@ -156,14 +247,14 @@ async function pushConversationHistory(session, activeContext = null) {
     if (context?.threadId) {
       conversationHistory = await repository.readConversationHistory(context.threadId, context.title);
     }
-  } catch {}
+  } catch { return; } // Preserve the last delivered history on transient file errors.
   const lastMessage = conversationHistory?.messages?.at(-1);
   const historyKey = conversationHistory
     ? `${session.targetId}:${conversationHistory.threadId}:${conversationHistory.totalCount}:${lastMessage?.id || lastMessage?.timestamp || ""}`
     : `${session.targetId}:none`;
   if (historyKey === session.deliveredHistoryKey) return;
-  session.deliveredHistoryKey = historyKey;
   await session.client.evaluate(`window.__codexConversationPreviewInjection__?.setConversationHistory?.(${JSON.stringify(conversationHistory)})`);
+  session.deliveredHistoryKey = historyKey;
 }
 
 async function pushPreviews(session) {
@@ -218,17 +309,16 @@ async function pushPreviews(session) {
   ]);
   const previews = rawPreviews.map((preview) => presentCardPreview(preview));
   const usage = presentRateLimit(rawUsage, { timeZone: "Asia/Shanghai" });
-  await session.client.evaluate(`(() => {
+  const snapshot = { previews, usage, searchCatalog, recentCatalog, interruptedCatalog,
+    pinnedThreads: pinnedThreadIds, activeProjectThreads: taskboardStatus.activeThreadIds, skillCatalog };
+  const serialized = JSON.stringify(snapshot);
+  const snapshotHash = createHash("sha256").update(serialized).digest("hex");
+  if (session.deliveredSnapshotHash !== snapshotHash) await session.client.evaluate(`(() => {
     const api = window.__codexConversationPreviewInjection__;
-    api?.setPreviews?.(${JSON.stringify(previews)});
-    api?.setUsage?.(${JSON.stringify(usage)});
-    api?.setSearchCatalog?.(${JSON.stringify(searchCatalog)});
-    api?.setRecentCatalog?.(${JSON.stringify(recentCatalog)});
-    api?.setInterruptedCatalog?.(${JSON.stringify(interruptedCatalog)});
-    api?.setPinnedThreads?.(${JSON.stringify(pinnedThreadIds)});
-    api?.setActiveProjectThreads?.(${JSON.stringify(taskboardStatus.activeThreadIds)});
-    api?.setSkillCatalog?.(${JSON.stringify(skillCatalog)});
+    if (typeof api?.setSnapshot !== 'function') throw new Error('Renderer snapshot contract unavailable');
+    api.setSnapshot(${serialized});
   })()`);
+  session.deliveredSnapshotHash = snapshotHash;
   await pushConversationHistory(session, activeContext);
 }
 
@@ -237,7 +327,8 @@ async function stop() {
   stopped = true;
   const closing = [...sessions.values()];
   sessions.clear();
-  await Promise.allSettled(closing.map((session) => disposeRendererSession(session, { destroy: true })));
+  // A supervisor restart must not take the user's persistent pages down with it.
+  await Promise.allSettled(closing.map((session) => disposeRendererSession(session, { destroy: !options.watch })));
 }
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
@@ -255,15 +346,26 @@ try {
       for (const failure of reconciliation.errors) {
         process.stderr.write(`[renderer ${failure.targetId}] ${failure.phase} failed: ${failure.error?.message || failure.error}\n`);
       }
+      const persistentOwner = await persistentShortcutOwnerSession();
+      if (persistentOwner) {
+        try {
+          await ensurePersistentManagedShortcuts(persistentOwner);
+        } catch (error) {
+          process.stderr.write(`[renderer ${persistentOwner.targetId}] persistent shortcut preload failed: ${error.message}\n`);
+        }
+      }
       const fullRefresh = reconciliation.attachedTargetIds.length > 0 || Date.now() >= nextFullRefreshAt;
       for (const [targetId, session] of [...sessions]) {
+        if (Date.now() < (session.retryUpdateAt || 0)) continue;
         try {
-          if (fullRefresh) await pushPreviews(session);
+          if (fullRefresh || session.needsFullRefresh) await pushPreviews(session);
           else await pushConversationHistory(session);
+          session.needsFullRefresh = false;
+          session.updateFailures = 0;
+          session.retryUpdateAt = 0;
         } catch (error) {
-          sessions.delete(targetId);
-          await disposeRendererSession(session).catch(() => {});
-          process.stderr.write(`[renderer ${targetId}] update failed: ${error.message}\n`);
+          recordUpdateFailure(session);
+          process.stderr.write(`[${new Date().toISOString()}] [renderer ${targetId}] update failed (retry ${session.updateFailures}): ${error.message}\n`);
           if (!options.watch) throw error;
         }
       }

@@ -28,6 +28,7 @@
     "doctor": "node scripts/doctor.mjs",
     "inject": "node scripts/injector.mjs --port 9231 --watch",
     "runtime": "node scripts/runtime.mjs --port 9231 --watch",
+    "verify:keepalive": "node scripts/verify-managed-shortcut-keepalive.mjs",
     "verify:install": "node --test test/install-config.test.mjs test/public-install.test.mjs test/windows-public-install.test.mjs"
   },
   "devDependencies": {

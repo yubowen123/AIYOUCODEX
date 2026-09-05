@@ -61,6 +61,16 @@ test("public installer copies a portable runtime and activates it under the curr
     assert.doesNotMatch(plist, /\/Users\/yubowen/);
     await assert.rejects(access(path.join(installDir, ".git")));
     await assert.rejects(access(path.join(installDir, "codex-folder-switcher-verification.png")));
+    const previousRuntime = await readFile(path.join(installDir, "scripts", "runtime.mjs"), "utf8");
+    const upgraded = spawnSync("/bin/bash", ["install.sh"], {
+      cwd: projectRoot, encoding: "utf8", env: { ...process.env, HOME: testHome,
+        CODEX_SIDEBAR_SOURCE_DIR: projectRoot, CODEX_SIDEBAR_INSTALL_DIR: installDir,
+        CODEX_SIDEBAR_NODE: process.execPath, CODEX_SIDEBAR_SKIP_LAUNCHCTL: "1", CODEX_SIDEBAR_SKIP_OPEN: "1" },
+    });
+    assert.equal(upgraded.status, 0, upgraded.stderr);
+    const backups = (await readdir(path.dirname(installDir))).filter((name) => name.startsWith(".codex-sidebar-enhancer-previous-"));
+    assert.equal(backups.length, 1, "An update must retain the previous runtime until live acceptance");
+    assert.equal(await readFile(path.join(path.dirname(installDir), backups[0], "scripts", "runtime.mjs"), "utf8"), previousRuntime);
   } finally {
     await rm(testHome, { recursive: true, force: true });
   }

@@ -20,11 +20,12 @@ test("runtime starts the sidebar, pinned Taskboard, and Asset Console together",
   assert.deepEqual(plan.children[0].args, [path.posix.join(root, "scripts", "injector.mjs"), "--port", "9231", "--watch"]);
   assert.deepEqual(plan.children[1].args, [
     path.posix.join(root, "vendor", "codex-taskboard", "scripts", "codex-injector.mjs"),
-    "--port", "9231", "--watch",
+    "--port", "9231", "--watch", "--attach-existing",
   ]);
   assert.equal(plan.children[1].env.CODEX_TASKBOARD_HOST, "127.0.0.1");
   assert.equal(plan.children[1].env.CODEX_TASKBOARD_PORT, "47823");
   assert.equal(plan.children[1].env.CODEX_TASKBOARD_VERSION, TASKBOARD_VERSION);
+  assert.equal(plan.children[1].env.CODEX_TASKBOARD_MANAGE_SERVICE, "1");
   assert.equal(
     plan.children[1].env.CODEX_TASKBOARD_DATA_DIR,
     "/Users/tester/Library/Application Support/Codex Sidebar Enhancer Data/Taskboard",
