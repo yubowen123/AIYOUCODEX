@@ -55,7 +55,7 @@ function createStoredZip(files) {
   return Buffer.concat([...localParts, directory, eocd]);
 }
 
-test("local asset API scans multiple folders and keeps project moves logical", async () => {
+test("local asset API scans multiple folders and keeps project moves logical", { timeout: 90_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-local-assets-"));
   const first = path.join(root, "first");
   const second = path.join(root, "second");
@@ -205,16 +205,30 @@ test("local asset API scans multiple folders and keeps project moves logical", a
     assert.ok(synchronizedProject, "the matching manual project should be linked instead of duplicated");
     assert.equal((await request("/api/projects")).projects.filter((project) => project.codexSync?.projectId === "production").length, 1);
     assert.equal((await request("/api/projects")).projects.some((project) => project.codexSync?.projectId === "code"), false, "ordinary code projects must not be auto-imported");
-    assert.equal((await request("/api/codex-project-sync")).state, "ready");
+    const previousProjectSync = await request("/api/codex-project-sync");
+    assert.equal(previousProjectSync.state, "ready");
 
     codexState["local-projects"].production.rootPaths.push(productionExtra);
     await writeFile(globalStatePath, JSON.stringify(codexState));
-    for (let attempt = 0; attempt < 180; attempt += 1) {
+    // The production scheduler ticks every 8 seconds and skips a tick while
+    // the preceding association/index update is still busy. A 9-second window
+    // can expire before the next completed sync on a loaded Windows runner.
+    // Await the actual result across multiple ticks, without forcing a scan or
+    // accelerating the production timer. Missing updates still fail boundedly.
+    const projectSyncDeadline = Date.now() + 30_000;
+    let currentProjectSync;
+    do {
       synchronizedProject = (await request("/api/projects")).projects.find((project) => project.id === sourceProject.id);
-      if (synchronizedProject?.folders.includes(productionExtra)) break;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    assert.ok(synchronizedProject.folders.includes(productionExtra), "new Codex project folders should be merged on the next incremental sync");
+      currentProjectSync = await request("/api/codex-project-sync");
+      if (synchronizedProject?.folders.includes(productionExtra)
+        && currentProjectSync.state === "ready"
+        && currentProjectSync.lastRunAt !== previousProjectSync.lastRunAt) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } while (Date.now() < projectSyncDeadline);
+    const syncDiagnostic = JSON.stringify({ previousProjectSync, currentProjectSync, folders: synchronizedProject?.folders, logs });
+    assert.ok(synchronizedProject?.folders.includes(productionExtra), `new Codex project folders should be merged on the next completed incremental sync: ${syncDiagnostic}`);
+    assert.equal(currentProjectSync.state, "ready", syncDiagnostic);
+    assert.notEqual(currentProjectSync.lastRunAt, previousProjectSync.lastRunAt, "The changed folders are verified against a newly completed sync");
     assert.ok(synchronizedProject.folders.includes(second), "manual folders must survive Codex synchronization");
 
     const initial = await request(`/api/library?project=${sourceProject.id}`);
