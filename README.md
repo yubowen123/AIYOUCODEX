@@ -10,6 +10,14 @@ GitHub 开源地址：[https://github.com/yubowen123/AIYOUCODEX](https://github.
 
 v1.4.0 将菜单功能统一为不打断对话的右侧面板：可以直接在项目对话里搜索项目、Skills 或资产，并把 Skill 与本地资产安全预填到当前输入框，不会自动发送。
 
+### 本次更新 · 2026-09-07
+
+对话右上角新增独立的“任务上下文”：从本地近期消息整理目标、进度、下一步和关键约定，核对后保存；需要继续执行时，先预览完整内容，再确认发送。每条对话独立保存，不替代完整历史，也不覆盖已有输入。
+
+输出偏好与默认 Skills 保留在设置中，按全局、项目目录、当前任务分层管理。原生 Hooks 需要审阅启用，保存配置不等于已加载；本次不承诺固定 Token 节省比例。
+
+[查看本次更新知识卡片](.github/assets/AIYOUcodex-context-update-20260907.png) · [配置与启用说明](docs/OUTPUT-EFFICIENCY.md)
+
 ## Windows 一行安装
 
 在 PowerShell 中粘贴并回车：

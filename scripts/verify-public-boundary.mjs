@@ -74,9 +74,10 @@ function trackedPaths(root) {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-    // macOS /var aliases /private/var; a symlinked checkout is still this repo.
-    // Comparing lexical paths here silently skipped tracked-file checks.
-    if (realpathSync(repositoryRoot) !== realpathSync(root)) return null;
+    // Resolve symlinks on macOS and let the platform compare path identity.
+    // Windows Git may change drive/directory casing; a string comparison
+    // silently skipped tracked-file checks for those valid checkouts.
+    if (path.relative(realpathSync(repositoryRoot), realpathSync(root)) !== "") return null;
     return execFileSync("git", ["ls-files", "-z"], {
       cwd: root,
       encoding: "utf8",

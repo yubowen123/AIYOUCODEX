@@ -1,5 +1,72 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { CdpClient } from "../../scripts/cdp-client.mjs";
+
+// A Chrome process and its initial page do not become ready together. In
+// particular, Windows CI may expose a startup page before command-line URL
+// navigation starts. Own a target explicitly instead of taking the first page.
+export async function connectFixtureBrowser({ browser, profile, url, timeout = 15_000 }) {
+  const deadline = Date.now() + timeout;
+  let browserError;
+  let browserOutput = "";
+  browser.on("error", (error) => { browserError = error; });
+  browser.stderr?.on("data", (chunk) => { browserOutput = (browserOutput + chunk).slice(-4000); });
+  let browserClient;
+  let client;
+  let phase = "waiting for the isolated debugging endpoint";
+  let lastError;
+  const remaining = () => Math.max(1, deadline - Date.now());
+  async function poll(read) {
+    do {
+      if (browserError) throw browserError;
+      if (browser.exitCode !== null || browser.signalCode !== null) {
+        throw new Error(`Browser exited (code=${browser.exitCode}, signal=${browser.signalCode})`);
+      }
+      try {
+        const result = await read();
+        if (result) return result;
+      } catch (error) { lastError = error; }
+      await delay(50);
+    } while (Date.now() < deadline);
+    throw new Error(lastError?.message || "Readiness deadline exceeded");
+  }
+  try {
+    const { port, version } = await poll(async () => {
+      const port = Number((await readFile(path.join(profile, "DevToolsActivePort"), "utf8")).split("\n")[0]);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+      const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(Math.min(1000, remaining())) });
+      if (!response.ok) throw new Error(`Debugging endpoint returned HTTP ${response.status}`);
+      const version = await response.json();
+      return version.webSocketDebuggerUrl ? { port, version } : null;
+    });
+    phase = "creating the isolated fixture target";
+    browserClient = new CdpClient(version.webSocketDebuggerUrl, { connectTimeoutMs: remaining(), requestTimeoutMs: remaining() });
+    await browserClient.connect();
+    const { targetId } = await browserClient.send("Target.createTarget", { url: "about:blank" });
+    const target = await poll(async () => {
+      const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(Math.min(1000, remaining())) });
+      if (!response.ok) throw new Error(`Target list returned HTTP ${response.status}`);
+      return (await response.json()).find((entry) => entry.id === targetId && entry.type === "page" && entry.webSocketDebuggerUrl);
+    });
+    client = new CdpClient(target.webSocketDebuggerUrl);
+    await client.connect();
+    phase = `navigating the fixture target to ${url}`;
+    await client.send("Page.enable");
+    const navigation = await client.send("Page.navigate", { url });
+    assert.ok(!navigation.errorText, navigation.errorText);
+    await waitForBrowserState(client, `location.href===${JSON.stringify(new URL(url).href)}&&document.readyState==='complete'`, "Explicit fixture navigation completes", remaining());
+    return { client, target };
+  } catch (error) {
+    let pageState;
+    try { pageState = await client?.evaluate("({url:location.href,readyState:document.readyState})"); } catch {}
+    client?.close();
+    throw new Error(`${phase}: ${error.message}; page=${JSON.stringify(pageState)}; browser stderr=${browserOutput || "(none)"}`, { cause: error });
+  } finally {
+    browserClient?.close();
+  }
+}
 
 // Rendering and navigation are asynchronous, especially with concurrent browser
 // tests on CI. Observe the required state instead of assuming a fixed frame time.

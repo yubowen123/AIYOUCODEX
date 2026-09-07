@@ -6,8 +6,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import { CdpClient } from "../scripts/cdp-client.mjs";
-import { waitForBrowserState } from "./helpers/browser-state.mjs";
+import { connectFixtureBrowser, waitForBrowserState } from "./helpers/browser-state.mjs";
 
 const source = await readFile(new URL("../inject/conversation-preview.user.js", import.meta.url), "utf8");
 const candidates = [process.env.AIYOUCODEX_TEST_BROWSER,
@@ -35,7 +34,7 @@ test("task context has a native-header entry, isolated drafts, read-only summari
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   const browser = spawn(executable, ["--headless=new", "--no-sandbox", "--no-first-run", "--no-default-browser-check",
-    "--disable-extensions", "--window-size=1440,1100", "--remote-debugging-port=0", `--user-data-dir=${profile}`, origin], { stdio: "ignore" });
+    "--disable-extensions", "--window-size=1440,1100", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
   let client;
   t.after(async () => {
     client?.close(); browser.kill("SIGTERM");
@@ -44,15 +43,7 @@ test("task context has a native-header entry, isolated drafts, read-only summari
     await new Promise((resolve) => server.close(resolve));
     await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
-  let port;
-  for (let index = 0; index < 70; index += 1) {
-    try { port = Number((await readFile(path.join(profile, "DevToolsActivePort"), "utf8")).split("\n")[0]); if (Number.isInteger(port) && port > 0) break; } catch {}
-    await delay(100);
-  }
-  assert.ok(port);
-  const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-  client = new CdpClient(targets.find((entry) => entry.type === "page").webSocketDebuggerUrl);
-  await client.connect();
+  ({ client } = await connectFixtureBrowser({ browser, profile, url: origin }));
   await waitForBrowserState(client, `location.origin===${JSON.stringify(origin)}&&document.readyState==='complete'`, "Native header fixture is ready");
   const api = "window.__codexConversationPreviewInjection__";
   await client.evaluate(source);

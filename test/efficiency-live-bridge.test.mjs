@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { CdpClient } from "../scripts/cdp-client.mjs";
 import { EfficiencyBridge, createEfficiencyController, EFFICIENCY_BINDING } from "../lib/efficiency-bridge.mjs";
-import { waitForBrowserState } from "./helpers/browser-state.mjs";
+import { connectFixtureBrowser, waitForBrowserState } from "./helpers/browser-state.mjs";
 
 const source = await readFile(new URL("../inject/conversation-preview.user.js", import.meta.url), "utf8");
 const candidates = [process.env.AIYOUCODEX_TEST_BROWSER,
@@ -36,7 +36,7 @@ test("live default-world bridge saves through UI, isolates iframe and survives r
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   const browser = spawn(executable, ["--headless=new", "--no-sandbox", "--no-first-run", "--no-default-browser-check",
-    "--disable-extensions", "--window-size=1440,1100", "--remote-debugging-port=0", `--user-data-dir=${profile}`, origin], { stdio: "ignore" });
+    "--disable-extensions", "--window-size=1440,1100", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
   const clients = new Set();
   let bridge;
   t.after(async () => {
@@ -48,17 +48,10 @@ test("live default-world bridge saves through UI, isolates iframe and survives r
     await new Promise((resolve) => server.close(resolve));
     await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
-  let port;
-  for (let index = 0; index < 70; index += 1) {
-    try { port = Number((await readFile(path.join(profile, "DevToolsActivePort"), "utf8")).split("\n")[0]); if (Number.isInteger(port) && port > 0) break; } catch {}
-    await delay(100);
-  }
-  assert.ok(port, "The isolated browser exposes a temporary debugging port");
-  const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-  const target = targets.find((entry) => entry.type === "page");
-  let client = new CdpClient(target.webSocketDebuggerUrl);
-  await client.connect(); clients.add(client);
-  await client.send("Page.enable");
+  const connection = await connectFixtureBrowser({ browser, profile, url: origin });
+  const target = connection.target;
+  let client = connection.client;
+  clients.add(client);
   await waitForBrowserState(client, `location.origin===${JSON.stringify(origin)}&&document.readyState==='complete'&&document.getElementById('untrusted-frame')?.contentDocument?.readyState==='complete'`, "The top frame and embedded fixture are ready");
   const record = { threadId: "fixture-thread", title: "Isolated round-trip fixture", projectPath: path.join(temporaryRoot, "project") };
   const history = [{ id: "fixture-user-1", role: "user", text: "目标：验证隔离环境。下一步：补齐测试。", timestamp: "2026-09-07T00:00:00Z" }];
