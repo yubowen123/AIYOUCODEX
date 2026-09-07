@@ -17,7 +17,17 @@ export async function connectFixtureBrowser({ browser, profile, url, timeout = 1
   let client;
   let phase = "waiting for the isolated debugging endpoint";
   let lastError;
-  const remaining = () => Math.max(1, deadline - Date.now());
+  const remaining = () => {
+    const milliseconds = deadline - Date.now();
+    if (milliseconds <= 0) throw new Error(`Fixture startup exceeded ${timeout}ms`);
+    return milliseconds;
+  };
+  async function sendDuringStartup(connection, method, params) {
+    // Each startup request shares the same deadline, including Page.navigate.
+    // Do not accidentally restore CdpClient's shorter per-request default here.
+    connection.requestTimeoutMs = remaining();
+    return connection.send(method, params);
+  }
   async function poll(read) {
     do {
       if (browserError) throw browserError;
@@ -42,21 +52,34 @@ export async function connectFixtureBrowser({ browser, profile, url, timeout = 1
       return version.webSocketDebuggerUrl ? { port, version } : null;
     });
     phase = "creating the isolated fixture target";
-    browserClient = new CdpClient(version.webSocketDebuggerUrl, { connectTimeoutMs: remaining(), requestTimeoutMs: remaining() });
+    browserClient = new CdpClient(version.webSocketDebuggerUrl, { connectTimeoutMs: remaining() });
     await browserClient.connect();
-    const { targetId } = await browserClient.send("Target.createTarget", { url: "about:blank" });
+    const { targetId } = await sendDuringStartup(browserClient, "Target.createTarget", { url: "about:blank" });
+    let targets;
     const target = await poll(async () => {
       const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(Math.min(1000, remaining())) });
       if (!response.ok) throw new Error(`Target list returned HTTP ${response.status}`);
-      return (await response.json()).find((entry) => entry.id === targetId && entry.type === "page" && entry.webSocketDebuggerUrl);
+      targets = await response.json();
+      return targets.find((entry) => entry.id === targetId && entry.type === "page" && entry.webSocketDebuggerUrl);
     });
-    client = new CdpClient(target.webSocketDebuggerUrl);
+    // The command-line blank tab is only a bootstrap surface. Do not keep an
+    // extra renderer alive for every concurrent isolated browser fixture.
+    for (const entry of targets.filter((entry) => entry.id !== targetId && entry.type === "page" && entry.url === "about:blank")) {
+      await sendDuringStartup(browserClient, "Target.closeTarget", { targetId: entry.id });
+    }
+    client = new CdpClient(target.webSocketDebuggerUrl, { connectTimeoutMs: remaining() });
+    const defaultRequestTimeout = client.requestTimeoutMs;
     await client.connect();
     phase = `navigating the fixture target to ${url}`;
-    await client.send("Page.enable");
-    const navigation = await client.send("Page.navigate", { url });
+    await sendDuringStartup(client, "Page.enable");
+    const navigation = await sendDuringStartup(client, "Page.navigate", { url });
     assert.ok(!navigation.errorText, navigation.errorText);
-    await waitForBrowserState(client, `location.href===${JSON.stringify(new URL(url).href)}&&document.readyState==='complete'`, "Explicit fixture navigation completes", remaining());
+    await waitForBrowserState({ evaluate: (expression) => {
+      client.requestTimeoutMs = remaining();
+      return client.evaluate(expression);
+    } }, `location.href===${JSON.stringify(new URL(url).href)}&&document.readyState==='complete'`, "Explicit fixture navigation completes", remaining());
+    // Business interaction checks retain the normal bounded request timeout.
+    client.requestTimeoutMs = defaultRequestTimeout;
     return { client, target };
   } catch (error) {
     let pageState;

@@ -967,6 +967,10 @@
         color: #e5484d;
         font-size: 11px;
       }
+      #${SHORTCUT_SETTINGS_ID} [data-efficiency-open-error] {
+        color: #e5484d; font-size: 12px; margin: -10px 0 14px;
+      }
+      #${SHORTCUT_SETTINGS_ID} [data-efficiency-open-error]:empty { display: none; }
       #${SHORTCUT_SETTINGS_ID} [data-codex-shortcut-save] {
         height: 36px;
         border: 0;
@@ -3907,7 +3911,7 @@
   function constrainEfficiencyPanelToViewport() {
     if (!efficiencyPanel || efficiencyPanel.hidden || !efficiencyPanel.isConnected) return;
     if (!efficiencyMountSurface?.isConnected) {
-      efficiencyMountSurface = findCustomShortcutPageMount()?.surface || null;
+      efficiencyMountSurface = findEfficiencyPanelMount()?.surface || null;
       watchEfficiencyPanelLayout();
     }
     const host = efficiencyMountSurface;
@@ -3935,7 +3939,7 @@
     if (visible.right - visible.left < 120) { visible.left = view.left; visible.right = view.right; }
     if (visible.bottom - visible.top < 64) { visible.top = view.top; visible.bottom = view.bottom; }
     const rect = efficiencyPanel.getBoundingClientRect();
-    const needsOverlay = efficiencyPanel.dataset.efficiencyViewportOverlay === "true"
+    const needsOverlay = host === document.body || efficiencyPanel.dataset.efficiencyViewportOverlay === "true"
       || rect.width < Math.min(320, visible.right - visible.left)
       || rect.right > visible.right + .5 || rect.left < visible.left - .5
       || rect.top < visible.top - .5 || rect.bottom > visible.bottom + .5;
@@ -4001,6 +4005,12 @@
     return openEfficiencyPanel("context");
   }
 
+  function findEfficiencyPanelMount() {
+    // Global preferences must remain accessible on home/new native layouts that
+    // do not expose a conversation mount. Only this panel uses the body fallback.
+    return findCustomShortcutPageMount() || (document.body ? { surface: document.body } : null);
+  }
+
   function openEfficiencyPanel(view = "settings") {
     if (destroyed) return false;
     const nextView = view === "context" ? "context" : "settings";
@@ -4008,7 +4018,7 @@
       if (efficiencyView !== nextView) { efficiencyExecutionPreview = null; efficiencySummaryReplaceRequested = false; }
       efficiencyView = nextView; populateEfficiencyForm(); ensureTaskContextButton(); maybeSummarizeTaskContext(); return true;
     }
-    const mount = findCustomShortcutPageMount();
+    const mount = findEfficiencyPanelMount();
     if (!mount) return false;
     closeOtherWorkspacePanels("efficiency");
     if (!efficiencyPanel) efficiencyPanel = createEfficiencyPanel();
@@ -4018,7 +4028,7 @@
     if (efficiencyPanel.parentElement !== mount.surface) mount.surface.appendChild(efficiencyPanel);
     efficiencyReturnFocus = document.activeElement;
     efficiencyPanel.hidden = false;
-    setWorkspacePanelHostLayer(efficiencyPanel, true);
+    if (mount.surface !== document.body) setWorkspacePanelHostLayer(efficiencyPanel, true);
     populateEfficiencyForm();
     constrainEfficiencyPanelToViewport();
     watchEfficiencyPanelLayout();
@@ -4042,11 +4052,11 @@
   function restoreEfficiencyPanelMount() {
     if (!efficiencyPanel || efficiencyPanel.hidden) return;
     if (efficiencyPanel.isConnected) { scheduleEfficiencyPanelLayout(); return; }
-    const mount = findCustomShortcutPageMount();
+    const mount = findEfficiencyPanelMount();
     if (!mount) return;
     mount.surface.appendChild(efficiencyPanel);
     efficiencyMountSurface = mount.surface;
-    setWorkspacePanelHostLayer(efficiencyPanel, true);
+    if (mount.surface !== document.body) setWorkspacePanelHostLayer(efficiencyPanel, true);
     constrainEfficiencyPanelToViewport(); watchEfficiencyPanelLayout();
   }
 
@@ -4128,6 +4138,7 @@
         </header>
         <div class="codex-shortcut-settings-body">
           <button type="button" data-aiyou-efficiency-open><span>输出偏好与默认 Skills</span><span aria-hidden="true">→</span></button>
+          <p data-efficiency-open-error role="alert"></p>
           <h3>显示与隐藏</h3>
           <div class="codex-shortcut-settings-list" data-codex-shortcut-visibility-list></div>
           <form data-codex-shortcut-custom-form>
@@ -4149,7 +4160,18 @@
     dialog.querySelector("[data-codex-shortcut-settings-close]").onclick = () => dialog.close();
     dialog.querySelector("[data-aiyou-efficiency-open]").onclick = (event) => {
       event.preventDefault(); event.stopPropagation();
-      dialog.close(); openEfficiencyPanel();
+      const error = dialog.querySelector("[data-efficiency-open-error]");
+      error.textContent = "";
+      let opened = false;
+      try { opened = openEfficiencyPanel(); }
+      catch { closeEfficiencyPanel(false); }
+      if (!opened) {
+        error.textContent = "输出偏好暂时无法打开，请重试。当前设置已保留。";
+        return;
+      }
+      dialog.close();
+      efficiencyReturnFocus = document.activeElement;
+      efficiencyPanel.querySelector("[data-efficiency-close]")?.focus({ preventScroll: true });
     };
     dialog.addEventListener("click", (event) => {
       if (event.target === dialog) dialog.close();

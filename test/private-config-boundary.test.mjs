@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -117,5 +117,8 @@ test("publication refuses accidentally force-tracked output-efficiency runtime s
     execFileSync("git", ["init", "--quiet"], { cwd: fixture, stdio: "ignore" });
     execFileSync("git", ["add", "-f", "efficiency/state.json"], { cwd: fixture, stdio: "ignore" });
     assert.throws(() => verifyPublicBoundary(fixture), /Git tracked files contains local-only configuration:[\s\S]*efficiency\/state\.json/u);
+    const alias = path.join(fixture, "checkout-alias");
+    await symlink(fixture, alias, process.platform === "win32" ? "junction" : "dir");
+    assert.throws(() => verifyPublicBoundary(alias), /Git tracked files contains local-only configuration:[\s\S]*efficiency\/state\.json/u);
   } finally { await rm(fixture, { recursive: true, force: true }); }
 });

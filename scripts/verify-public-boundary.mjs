@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -69,18 +69,14 @@ export function assertPrivateIgnoreRules(root) {
 
 function trackedPaths(root) {
   try {
-    const repositoryRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+    // Let Git resolve its own checkout and restrict the listing to this package.
+    // Comparing Git's root spelling with Node's path can silently skip a valid
+    // Windows short-path checkout or a macOS symlink. The explicit pathspec also
+    // prevents an enclosing repository's unrelated files from entering the check.
+    return execFileSync("git", ["ls-files", "-z", "--", "."], {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    // Resolve symlinks on macOS and let the platform compare path identity.
-    // Windows Git may change drive/directory casing; a string comparison
-    // silently skipped tracked-file checks for those valid checkouts.
-    if (path.relative(realpathSync(repositoryRoot), realpathSync(root)) !== "") return null;
-    return execFileSync("git", ["ls-files", "-z"], {
-      cwd: root,
-      encoding: "utf8",
     }).split("\0").filter(Boolean);
   } catch {
     return null;
