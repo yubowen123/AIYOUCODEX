@@ -2,7 +2,7 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
-  const RUNTIME_VERSION = "2026-09-05.1";
+  const RUNTIME_VERSION = "2026-09-07.1";
   const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
@@ -18,6 +18,11 @@
   const SHORTCUT_SETTINGS_ID = "codex-sidebar-shortcut-settings-dialog";
   const SHORTCUT_SETTINGS_BUTTON_ID = "codex-sidebar-shortcut-settings-button";
   const SHORTCUT_SETTINGS_STORAGE_KEY = "codex-conversation-preview:shortcut-settings";
+  const EFFICIENCY_PANEL_ID = "aiyoucodex-efficiency-panel";
+  const TASK_CONTEXT_BUTTON_ID = "aiyoucodex-task-context-open";
+  const EFFICIENCY_BINDING = "__AIYOUCODEX_EFFICIENCY_REQUEST__";
+  const EFFICIENCY_MODES = { smart: "智能", concise: "精简", detailed: "详细" };
+  const EFFICIENCY_SCOPES = { global: "全局默认", project: "当前项目", thread: "当前对话" };
   const MANAGED_SHORTCUTS_GLOBAL = "__CODEX_SIDEBAR_MANAGED_SHORTCUTS__";
   const RENDERER_TARGET_ID_GLOBAL = "__CODEX_SIDEBAR_RENDERER_TARGET_ID__";
   const CUSTOM_SHORTCUT_PAGE_ID = "codex-custom-shortcut-page";
@@ -155,6 +160,25 @@
   let skillOrganizerOpenObserver = null;
   let skillOrganizerOpenTimer = null;
   let hostSkillCatalog = [];
+  let efficiencySnapshot = null;
+  let efficiencyPanel = null;
+  let efficiencyReturnFocus = null;
+  let efficiencyMountSurface = null;
+  let efficiencyResizeObserver = null;
+  let efficiencyLayoutFrame = null;
+  let efficiencyScope = "global";
+  let efficiencyView = "settings";
+  let efficiencyExecutionPreview = null;
+  let efficiencySummaryReplaceRequested = false;
+  let efficiencyTargetChanged = false;
+  let efficiencyMessage = "";
+  let efficiencyError = "";
+  let efficiencyTaskDraft = null;
+  let efficiencySkillsSignature = "";
+  const efficiencyDrafts = new Map();
+  const efficiencyRequests = new Map();
+  const efficiencyTargetDrafts = new Map();
+  const workspaceResizeCleanups = new Set();
   let skillContextMenu = null;
   let pendingAssetConsoleQuery = "";
   let lastWorkspaceCommand = { text: "", at: 0 };
@@ -952,6 +976,75 @@
         font-weight: 650;
         cursor: pointer;
       }
+      #${SHORTCUT_SETTINGS_ID} [data-aiyou-efficiency-open] {
+        display: flex; width: 100%; justify-content: space-between; align-items: center;
+        padding: 12px; margin-bottom: 18px; border-radius: 10px;
+        border: 1px solid color-mix(in srgb, currentColor 13%, transparent);
+        background: color-mix(in srgb, Canvas 90%, #3981ef 10%); cursor: pointer;
+      }
+      #${EFFICIENCY_PANEL_ID} {
+        position: relative; z-index: 45; display: grid; grid-template-rows: auto minmax(0, 1fr);
+        box-sizing: border-box; flex: 0 1 var(--codex-workspace-panel-width, 560px);
+        width: var(--codex-workspace-panel-width, 560px); min-width: 0;
+        max-width: min(840px, calc(100vw - 320px)); height: 100%; min-height: 0;
+        background: Canvas; color: CanvasText; border-left: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+        box-shadow: -8px 0 24px #0000000b; pointer-events: auto; -webkit-app-region: no-drag;
+        font-size: 13px; line-height: 1.55;
+      }
+      #${EFFICIENCY_PANEL_ID}[hidden] { display: none !important; }
+      #${EFFICIENCY_PANEL_ID} [hidden] { display: none !important; }
+      #${TASK_CONTEXT_BUTTON_ID} { flex: 0 0 auto; pointer-events: auto; -webkit-app-region: no-drag; cursor: pointer; height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: inherit; font-size: 12px; white-space: nowrap; }
+      #${TASK_CONTEXT_BUTTON_ID}:hover { background: #80808018; }
+      #${TASK_CONTEXT_BUTTON_ID}:focus-visible { outline: 2px solid #328bfa; outline-offset: -2px; }
+      #${TASK_CONTEXT_BUTTON_ID}:disabled { opacity: .4; cursor: default; }
+      #${TASK_CONTEXT_BUTTON_ID}[hidden] { display: none !important; }
+      #${EFFICIENCY_PANEL_ID}[data-efficiency-viewport-overlay="true"] {
+        position: fixed !important; z-index: 100; flex: none;
+        left: var(--aiyou-efficiency-left); top: var(--aiyou-efficiency-top);
+        width: var(--aiyou-efficiency-width) !important; height: var(--aiyou-efficiency-height) !important;
+        min-width: 0; max-width: 100vw; max-height: 100vh; margin: 0;
+      }
+      #${EFFICIENCY_PANEL_ID} * { box-sizing: border-box; -webkit-app-region: no-drag; }
+      #${EFFICIENCY_PANEL_ID} > header {
+        position: relative; z-index: 5; display: flex; align-items: center; justify-content: space-between;
+        gap: 12px; padding: 12px 16px; background: Canvas; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+      }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-close] {
+        position: relative; z-index: 6; flex: 0 0 36px; width: 36px; height: 36px; min-width: 36px;
+        font-size: 22px; pointer-events: auto; cursor: pointer;
+      }
+      #${EFFICIENCY_PANEL_ID} .aiyou-efficiency-body { overflow: auto; padding: 16px; overscroll-behavior: contain; }
+      #${EFFICIENCY_PANEL_ID} h2 { margin: 0; min-width: 0; font-size: 16px; font-weight: 650; }
+      #${EFFICIENCY_PANEL_ID} h3 { margin: 0 0 8px; font-size: 14px; font-weight: 650; }
+      #${EFFICIENCY_PANEL_ID} p { margin: 6px 0; }
+      #${EFFICIENCY_PANEL_ID} section, #${EFFICIENCY_PANEL_ID} fieldset {
+        min-width: 0; margin: 0 0 16px; padding: 14px; border: 1px solid color-mix(in srgb, currentColor 13%, transparent); border-radius: 12px;
+      }
+      #${EFFICIENCY_PANEL_ID} fieldset:disabled { opacity: .65; }
+      #${EFFICIENCY_PANEL_ID} label { display: grid; gap: 5px; margin: 9px 0; }
+      #${EFFICIENCY_PANEL_ID} button, #${EFFICIENCY_PANEL_ID} select, #${EFFICIENCY_PANEL_ID} textarea, #${EFFICIENCY_PANEL_ID} input {
+        font: inherit; color: inherit; border-radius: 8px; border: 1px solid color-mix(in srgb, currentColor 20%, transparent); background: Canvas;
+      }
+      #${EFFICIENCY_PANEL_ID} textarea, #${EFFICIENCY_PANEL_ID} select, #${EFFICIENCY_PANEL_ID} input { width: 100%; padding: 8px 10px; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-skill-inherit-wrap] { display: flex; align-items: center; gap: 8px; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-skill-inherit-wrap][hidden] { display: none !important; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-skill-inherit] { width: auto; }
+      #${EFFICIENCY_PANEL_ID} textarea { min-height: 66px; resize: vertical; }
+      #${EFFICIENCY_PANEL_ID} button { min-height: 32px; padding: 5px 10px; cursor: pointer; }
+      #${EFFICIENCY_PANEL_ID} button:disabled { opacity: .5; cursor: default; }
+      #${EFFICIENCY_PANEL_ID} :focus-visible { outline: 2px solid #328bfa; outline-offset: 2px; }
+      #${EFFICIENCY_PANEL_ID} .aiyou-efficiency-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-save] { color: white; background: #287df0; border-color: #287df0; }
+      #${EFFICIENCY_PANEL_ID} .aiyou-efficiency-note { color: color-mix(in srgb, currentColor 66%, transparent); font-size: 12px; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-error] { color: #db3c45; white-space: pre-wrap; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-message] { color: #237445; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-stale] { padding: 10px; border-radius: 9px; background: #ffb9001c; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-selected-skills] { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-skill-results] { max-height: 170px; overflow: auto; display: grid; gap: 5px; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-skill-results] button { text-align: left; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-skill-results] small { display: block; opacity: .65; overflow-wrap: anywhere; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-execution-prompt] { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 42vh; overflow: auto; padding: 10px; border: 1px solid #80808030; border-radius: 8px; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-summary-sources] { white-space: pre-wrap; overflow-wrap: anywhere; }
       #${CUSTOM_SHORTCUT_PAGE_ID} {
         position: relative;
         z-index: 30;
@@ -2307,11 +2400,14 @@
       const up = () => {
         document.removeEventListener("pointermove", move, true);
         document.removeEventListener("pointerup", up, true);
+        workspaceResizeCleanups.delete(up);
+        if (destroyed) return;
         const width = Math.round(page.getBoundingClientRect().width);
         try { localStorage.setItem(WORKSPACE_PANEL_WIDTH_KEY, String(width)); } catch {}
       };
       document.addEventListener("pointermove", move, true);
       document.addEventListener("pointerup", up, true);
+      workspaceResizeCleanups.add(up);
     }, true);
     return page;
   }
@@ -2324,6 +2420,7 @@
     if (panel !== "custom") closeCustomShortcutPanel(false);
     if (panel !== "asset") closeAssetConsolePanel({ notify: false, restoreFocus: false });
     if (panel !== "skills") closeSkillsGrouping(false);
+    if (panel !== "efficiency") closeEfficiencyPanel(false);
     if (panel !== "taskboard") window.__codexTaskboardInjection__?.close?.(false);
     announceWorkspacePanel(panel);
   }
@@ -2977,12 +3074,25 @@
     if (skillOrganizerFavorites) return skillOrganizerFavorites;
     try {
       const parsed = JSON.parse(localStorage.getItem(SKILL_FAVORITES_KEY) || "null");
-      if (Array.isArray(parsed)) return (skillOrganizerFavorites = new Set(parsed.filter((name) => typeof name === "string")));
+      if (Array.isArray(parsed)) {
+        skillOrganizerFavorites = new Set(parsed.filter((name) => typeof name === "string").flatMap((value) => {
+          if (value.startsWith("skill:")) return [value];
+          const exact = catalog.find((entry) => skillFavoriteKey(entry) === value);
+          if (exact) return [skillFavoriteKey(exact)];
+          const legacy = catalog.filter((entry) => entry.title === value || entry.name === value);
+          return legacy.length === 1 ? [skillFavoriteKey(legacy[0])] : [];
+        }));
+        return skillOrganizerFavorites;
+      }
     } catch {}
     const preferred = catalog.filter((entry) => /视频|导演|镜头|资产|工作台|提示词|知识|写作|skill/i.test(`${entry.title} ${entry.description}`));
-    skillOrganizerFavorites = new Set((preferred.length ? preferred : catalog).slice(0, 10).map((entry) => entry.title));
+    skillOrganizerFavorites = new Set((preferred.length ? preferred : catalog).slice(0, 10).map(skillFavoriteKey));
     try { localStorage.setItem(SKILL_FAVORITES_KEY, JSON.stringify([...skillOrganizerFavorites])); } catch {}
     return skillOrganizerFavorites;
+  }
+
+  function skillFavoriteKey(entry) {
+    return String(entry.id || entry.path || entry.name || entry.title);
   }
 
   function skillEntryFromCard(card) {
@@ -2998,7 +3108,7 @@
   function skillMatchesCategory(entry, category) {
     const text = `${entry.title} ${entry.description}`;
     if (category === "全部") return true;
-    if (category === "常用") return skillOrganizerFavorites?.has(entry.title) === true;
+    if (category === "常用") return skillOrganizerFavorites?.has(skillFavoriteKey(entry)) === true;
     if (category === "视频创作") return /视频|影像|seedance|即梦|minimax|剪辑|节奏|音乐|音效|mv|生成/i.test(text);
     if (category === "导演镜头") return /导演|镜头|分镜|动作|摄影|表演|角色|转场|vfx|特效/i.test(text);
     if (category === "画面风格") return /风格|美学|视觉|画面|图像|灯光|材质|构图|色彩|写实/i.test(text);
@@ -3101,13 +3211,13 @@
       const favorite = document.createElement("button");
       favorite.type = "button";
       favorite.className = "codex-skill-favorite";
-      favorite.setAttribute("aria-pressed", String(skillOrganizerFavorites.has(entry.title)));
-      favorite.setAttribute("aria-label", `${skillOrganizerFavorites.has(entry.title) ? "取消常用" : "加入常用"}：${entry.title}`);
+      favorite.setAttribute("aria-pressed", String(skillOrganizerFavorites.has(skillFavoriteKey(entry))));
+      favorite.setAttribute("aria-label", `${skillOrganizerFavorites.has(skillFavoriteKey(entry)) ? "取消常用" : "加入常用"}：${entry.title}`);
       favorite.textContent = "★";
       favorite.onclick = (event) => {
         event.stopPropagation();
-        if (skillOrganizerFavorites.has(entry.title)) skillOrganizerFavorites.delete(entry.title);
-        else skillOrganizerFavorites.add(entry.title);
+        if (skillOrganizerFavorites.has(skillFavoriteKey(entry))) skillOrganizerFavorites.delete(skillFavoriteKey(entry));
+        else skillOrganizerFavorites.add(skillFavoriteKey(entry));
         try { localStorage.setItem(SKILL_FAVORITES_KEY, JSON.stringify([...skillOrganizerFavorites])); } catch {}
         renderSkillOrganizer();
       };
@@ -3311,13 +3421,14 @@
       const name = typeof entry?.name === "string" ? entry.name.trim() : "";
       const title = typeof entry?.title === "string" ? entry.title.trim() : name;
       if (!name || !title) return [];
-      return [{ name, title, description: String(entry.description || "打开查看 Skill 详情"), path: String(entry.path || "") }];
+      return [{ id: String(entry.id || name), name, title, description: String(entry.description || "打开查看 Skill 详情"), path: String(entry.path || ""), source: String(entry.source || "") }];
     });
     const shell = document.getElementById(SKILL_ORGANIZER_ID);
     if (shell && !shell.hidden) {
       skillOrganizerCatalog = hostSkillCatalog.slice();
       renderSkillOrganizer();
     }
+    if (efficiencyPanel && !efficiencyPanel.hidden) renderEfficiencySkills();
   }
 
   function resumeSkillsGroupingOpenRequest() {
@@ -3331,6 +3442,620 @@
       return;
     }
     openSkillsGrouping();
+  }
+
+  function efficiencyTargetKey(value = efficiencySnapshot) {
+    return String(value?.targetKey || "");
+  }
+
+  function efficiencyScopeAvailable(scope = efficiencyScope) {
+    return scope === "global" || efficiencySnapshot?.scopeAvailable?.[scope] === true;
+  }
+
+  function efficiencySkillId(entry) {
+    return String(entry?.id || entry?.name || "");
+  }
+
+  function efficiencyDraft(scope = efficiencyScope) {
+    if (!efficiencyDrafts.has(scope)) {
+      const source = efficiencySnapshot?.scopes?.[scope] || {};
+      efficiencyDrafts.set(scope, {
+        mode: Object.hasOwn(EFFICIENCY_MODES, source.mode) ? source.mode : scope === "global" ? "smart" : "inherit",
+        defaultSkills: Array.isArray(source.defaultSkills) ? source.defaultSkills.map((entry) =>
+          typeof entry === "string" ? entry : efficiencySkillId(entry)).filter(Boolean) : [],
+        inheritSkills: scope !== "global" && !Array.isArray(source.defaultSkills),
+        dirty: false, revision: 0, version: efficiencySnapshot?.version ?? 0,
+      });
+    }
+    return efficiencyDrafts.get(scope);
+  }
+
+  function efficiencyContextDraft() {
+    if (!efficiencyTaskDraft) {
+      const context = efficiencySnapshot?.context || {};
+      efficiencyTaskDraft = { goal: String(context.goal || ""), progress: String(context.progress || ""),
+        nextStep: String(context.nextStep || ""),
+        agreements: Array.isArray(context.agreements) ? context.agreements.join("\n") : String(context.agreements || ""),
+        references: Array.isArray(context.references) ? context.references.slice() : [],
+        dirty: false, revision: 0, version: context.version ?? 0,
+        summary: null, summaryAttempted: false, summarySourceRevision: null };
+    }
+    return efficiencyTaskDraft;
+  }
+
+  function setEfficiencyText(selector, value) {
+    const node = efficiencyPanel?.querySelector(selector);
+    const text = String(value || "");
+    if (node && node.textContent !== text) node.textContent = text;
+  }
+
+  function updateEfficiencyStatus() {
+    if (!efficiencyPanel) return;
+    const connected = typeof window[EFFICIENCY_BINDING] === "function" && Boolean(efficiencySnapshot);
+    const pending = efficiencyRequests.size > 0;
+    const source = efficiencySnapshot?.effective || {};
+    const mode = EFFICIENCY_MODES[source.mode] || "未知";
+    const inheritedSource = ["thread", "project", "global"].find((scope) =>
+      efficiencyScopeAvailable(scope) && Object.hasOwn(EFFICIENCY_MODES, efficiencySnapshot?.scopes?.[scope]?.mode));
+    const sourceLabel = EFFICIENCY_SCOPES[source.source || source.modeSource || inheritedSource] || "默认规则";
+    setEfficiencyText("[data-efficiency-effective]", connected
+      ? `配置解析结果：${source.enabled === false ? "策略已停用" : mode} · 来源：${sourceLabel}` : "配置连接不可用；未修改当前对话。");
+    const hook = efficiencySnapshot?.hookStatus || {};
+    // A saved configuration is never evidence that the current conversation loaded it.
+    const loaded = hook.loaded === true && Number.isFinite(Date.parse(String(hook.loadedAt || "")));
+    setEfficiencyText("[data-efficiency-hook]", loaded
+      ? `当前会话已加载 · ${String(hook.loadedAt)}`
+      : hook.trusted === false ? "已保存的规则需先在 Codex 中审阅并信任；当前会话尚未确认加载。"
+        : "配置保存不等于会话加载；等待真实加载回执。本轮明确要求优先。");
+    const actual = efficiencySnapshot?.usage;
+    const totals = actual?.cumulative || actual?.lastRequest || actual?.totals || actual;
+    const fields = [["inputTokens", "输入"], ["cachedInputTokens", "缓存输入"], ["outputTokens", "输出"],
+      [Object.hasOwn(totals || {}, "reasoningOutputTokens") ? "reasoningOutputTokens" : "reasoningTokens", "推理"], ["totalTokens", "总计"]];
+    const numbers = actual?.available === true ? fields.flatMap(([key, label]) =>
+      Number.isFinite(totals?.[key]) && totals[key] >= 0 ? [`${label} ${totals[key].toLocaleString()}`] : []) : [];
+    setEfficiencyText("[data-efficiency-usage]", numbers.length
+      ? `${actual?.cumulative ? "本会话累计" : actual?.lastRequest ? "最近请求" : "真实用量"}：${numbers.join(" · ")}。缓存包含在输入中，推理包含在输出中。`
+      : "真实用量暂不可用；不估算节省比例，也不将账户剩余额度当作 Token 节省量。");
+    setEfficiencyText("[data-efficiency-message]", efficiencyMessage);
+    setEfficiencyText("[data-efficiency-error]", efficiencyError);
+    setEfficiencyText("[data-efficiency-target]", efficiencySnapshot?.targetLabel || "当前选中的 Codex 任务");
+    const contextDraft = efficiencyContextDraft();
+    setEfficiencyText("[data-efficiency-dirty]", (efficiencyView === "context" ? contextDraft.dirty : efficiencyDraft().dirty) ? "有未保存修改" : "");
+    const summary = contextDraft.summary;
+    const sourceChanged = contextDraft.summaryAttempted && efficiencySnapshot?.contextSourceRevision != null
+      && contextDraft.summarySourceRevision !== efficiencySnapshot.contextSourceRevision;
+    setEfficiencyText("[data-efficiency-summary-status]", summary
+      ? `${summary.hasContent === false ? "历史中未提取到可用任务信息，已保留原内容。" : contextDraft.dirty ? "已按本地历史提取待确认草稿；尚未保存。" : "任务卡已保存；可按最新历史更新摘要。"}${sourceChanged ? " 对话有新内容，可手动更新摘要。" : ""}`
+      : sourceChanged ? "对话有新内容，可手动更新摘要。" : "打开时自动从当前对话历史整理；请核对后保存。未知信息留空。");
+    setEfficiencyText("[data-efficiency-summary-sources]", summary
+      ? [summary.method ? `整理方式：${String(summary.method)}` : "", ...(Array.isArray(summary.sources) ? summary.sources.map((entry) =>
+        typeof entry === "string" ? entry : [({ goal: "目标", progress: "进度 / 阶段", nextStep: "下一步", agreements: "关键约定" })[entry?.field] || "",
+          entry?.label || entry?.title || ({ user: "用户消息", assistant: "助手消息" })[entry?.role] || "历史记录",
+          entry?.timestamp || "", entry?.excerpt ? `原句：${String(entry.excerpt).slice(0, 700)}` : ""].filter(Boolean).join(" · ")) : []),
+        ...(Array.isArray(summary.warnings) ? summary.warnings.map(String) : [])].filter(Boolean).join("\n").slice(0, 5000) : "");
+    efficiencyPanel.querySelector("[data-efficiency-summary-replace]").hidden = !efficiencySummaryReplaceRequested;
+    const execution = efficiencyPanel.querySelector("[data-efficiency-execution-preview]");
+    execution.hidden = efficiencyView !== "context" || !efficiencyExecutionPreview;
+    setEfficiencyText("[data-efficiency-execution-prompt]", efficiencyExecutionPreview?.prompt || "");
+    efficiencyPanel.querySelector("[data-efficiency-confirm-execution]").disabled = !connected || pending || !efficiencyExecutionPreview;
+    efficiencyPanel.querySelector("[data-efficiency-stale]").hidden = !efficiencyTargetChanged;
+    efficiencyPanel.querySelector("[data-efficiency-fields]").disabled = !connected || efficiencyTargetChanged || !efficiencyScopeAvailable();
+    efficiencyPanel.querySelector("[data-efficiency-context-fields]").disabled = !connected || efficiencyTargetChanged
+      || efficiencySnapshot?.scopeAvailable?.thread !== true;
+    efficiencyPanel.querySelectorAll("[data-efficiency-request]").forEach((button) => {
+      button.disabled = !connected || pending || efficiencyTargetChanged
+        || (button.dataset.efficiencyRequest === "refresh" ? false
+          : button.dataset.efficiencyRequest.includes("Context") ? efficiencySnapshot?.scopeAvailable?.thread !== true : !efficiencyScopeAvailable());
+    });
+    efficiencyPanel.querySelector("[data-efficiency-summarize]").disabled = !connected || pending || efficiencySnapshot?.scopeAvailable?.thread !== true;
+    efficiencyPanel.querySelector("[data-efficiency-confirm-summary]").disabled = !connected || pending;
+    const scope = efficiencyPanel.querySelector("[data-efficiency-scope]");
+    scope.disabled = pending || efficiencyTargetChanged;
+    efficiencyPanel.querySelectorAll("[data-efficiency-discard]").forEach((button) => { button.disabled = pending || efficiencyTargetChanged; });
+    for (const option of scope.options) option.disabled = !efficiencyScopeAvailable(option.value);
+  }
+
+  function renderEfficiencySkills() {
+    if (!efficiencyPanel) return;
+    const draft = efficiencyDraft();
+    const query = efficiencyPanel.querySelector("[data-efficiency-skill-query]").value.toLocaleLowerCase().trim();
+    const signature = JSON.stringify([draft.defaultSkills, draft.inheritSkills, query, hostSkillCatalog]);
+    if (signature === efficiencySkillsSignature) return;
+    efficiencySkillsSignature = signature;
+    const selected = efficiencyPanel.querySelector("[data-efficiency-selected-skills]");
+    selected.replaceChildren(...draft.defaultSkills.map((id) => {
+      const entry = hostSkillCatalog.find((candidate) => efficiencySkillId(candidate) === id);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = `${entry?.title || id} ×`;
+      button.title = entry ? `${entry.name} · ${entry.source || "本地"}\n${entry.path || ""}` : "此技能当前不在目录中，已保留原配置";
+      button.setAttribute("aria-label", `移除默认 Skill：${entry?.title || id}`);
+      button.disabled = draft.inheritSkills;
+      button.onclick = () => {
+        draft.defaultSkills = draft.defaultSkills.filter((candidate) => candidate !== id);
+        markEfficiencyDraftChanged(); renderEfficiencySkills();
+      };
+      return button;
+    }));
+    const matches = hostSkillCatalog.filter((entry) => !draft.defaultSkills.includes(efficiencySkillId(entry))
+      && `${entry.title} ${entry.name} ${entry.description}`.toLocaleLowerCase().includes(query));
+    const results = efficiencyPanel.querySelector("[data-efficiency-skill-results]");
+    results.replaceChildren(...matches.slice(0, 30).map((entry) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.disabled = draft.inheritSkills;
+      button.textContent = `＋ ${entry.title}`;
+      const identity = document.createElement("small");
+      identity.textContent = `${entry.name} · ${entry.source || "本地"} · ${entry.id.slice(-8)}`;
+      button.title = `${entry.description}\n${entry.path || ""}`;
+      button.appendChild(identity);
+      button.onclick = () => {
+        const id = efficiencySkillId(entry);
+        if (draft.defaultSkills.length >= 8) {
+          efficiencyError = "每个范围最多选用 8 个默认 Skills，避免无条件加载过多上下文。";
+          updateEfficiencyStatus(); return;
+        }
+        if (!draft.defaultSkills.includes(id)) draft.defaultSkills.push(id);
+        markEfficiencyDraftChanged(); renderEfficiencySkills();
+      };
+      return button;
+    }));
+    if (!matches.length) results.textContent = hostSkillCatalog.length ? "没有其他匹配的 Skill" : "技能目录尚未提供，请稍后刷新。";
+  }
+
+  function markEfficiencyDraftChanged(context = false) {
+    const draft = context ? efficiencyContextDraft() : efficiencyDraft();
+    draft.dirty = true;
+    draft.revision += 1;
+    if (context) { efficiencyExecutionPreview = null; efficiencySummaryReplaceRequested = false; }
+    efficiencyMessage = "";
+    updateEfficiencyStatus();
+  }
+
+  function populateEfficiencyForm() {
+    if (!efficiencyPanel) return;
+    const isContext = efficiencyView === "context";
+    efficiencyPanel.dataset.efficiencyView = efficiencyView;
+    efficiencyPanel.setAttribute("aria-label", isContext ? "任务上下文" : "输出偏好");
+    setEfficiencyText("[data-efficiency-title]", isContext ? "任务上下文" : "输出偏好");
+    efficiencyPanel.querySelectorAll("[data-efficiency-settings-view]").forEach((node) => { node.hidden = isContext; });
+    efficiencyPanel.querySelectorAll("[data-efficiency-context-view]").forEach((node) => { node.hidden = !isContext; });
+    const draft = efficiencyDraft();
+    const scope = efficiencyPanel.querySelector("[data-efficiency-scope]");
+    scope.value = efficiencyScope;
+    const mode = efficiencyPanel.querySelector('[data-efficiency-field="mode"]');
+    mode.querySelector('[value="inherit"]').hidden = efficiencyScope === "global";
+    efficiencyPanel.querySelector("[data-efficiency-skill-inherit-wrap]").hidden = efficiencyScope === "global";
+    efficiencyPanel.querySelector("[data-efficiency-skill-inherit]").checked = draft.inheritSkills;
+    for (const field of ["mode", "goal", "progress", "nextStep", "agreements"]) {
+      const input = efficiencyPanel.querySelector(`[data-efficiency-field="${field}"]`);
+      const fieldDraft = field === "mode" ? draft : efficiencyContextDraft();
+      if (input.value !== fieldDraft[field]) input.value = fieldDraft[field];
+    }
+    renderEfficiencySkills();
+    updateEfficiencyStatus();
+  }
+
+  function setEfficiencyData(value) {
+    const next = value && typeof value === "object" ? value : null;
+    const changedTarget = efficiencySnapshot && efficiencyTargetKey(next) !== efficiencyTargetKey();
+    if (changedTarget) {
+      // The opaque key identifies a backend-validated conversation, never a title or folder.
+      efficiencyTargetDrafts.set(efficiencyTargetKey(), { taskDraft: efficiencyTaskDraft,
+        drafts: new Map(efficiencyDrafts), message: efficiencyMessage, error: efficiencyError });
+      const parked = efficiencyTargetDrafts.get(efficiencyTargetKey(next));
+      efficiencyDrafts.clear();
+      for (const [scope, draft] of parked?.drafts || []) efficiencyDrafts.set(scope, draft);
+      efficiencyTaskDraft = parked?.taskDraft || null;
+      efficiencyMessage = parked?.message || ""; efficiencyError = parked?.error || "";
+      efficiencyExecutionPreview = null; efficiencySummaryReplaceRequested = false; efficiencyTargetChanged = false;
+    }
+    efficiencySnapshot = next;
+    // Polling updates status only while editing: preserve the actual focused input and its selection.
+    for (const [scope, draft] of efficiencyDrafts) if (!draft.dirty) efficiencyDrafts.delete(scope);
+    if (efficiencyTaskDraft && !efficiencyTaskDraft.dirty) {
+      const context = next?.context || {};
+      for (const field of ["goal", "progress", "nextStep"]) efficiencyTaskDraft[field] = String(context[field] || "");
+      efficiencyTaskDraft.agreements = Array.isArray(context.agreements) ? context.agreements.join("\n") : String(context.agreements || "");
+      efficiencyTaskDraft.references = Array.isArray(context.references) ? context.references.slice() : [];
+      efficiencyTaskDraft.version = context.version ?? 0;
+    }
+    populateEfficiencyForm();
+    ensureTaskContextButton();
+    updateEfficiencyStatus();
+    maybeSummarizeTaskContext();
+  }
+
+  function maybeSummarizeTaskContext() {
+    if (efficiencyView !== "context" || !efficiencyPanel || efficiencyPanel.hidden
+      || efficiencySnapshot?.scopeAvailable?.thread !== true || efficiencyRequests.size || efficiencyError) return;
+    const draft = efficiencyContextDraft();
+    const revision = efficiencySnapshot?.contextSourceRevision;
+    if (!draft.dirty && (!draft.summaryAttempted || (revision != null && draft.summarySourceRevision !== revision))) {
+      draft.summaryAttempted = true; draft.summarySourceRevision = revision ?? null;
+      sendEfficiencyRequest("summarizeContext");
+    }
+  }
+
+  function efficiencyContextPayload(draft) {
+    return { goal: draft.goal, progress: draft.progress, nextStep: draft.nextStep,
+      agreements: draft.agreements.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean), references: draft.references.slice() };
+  }
+
+  function sendEfficiencyRequest(action, options = {}) {
+    if (destroyed || efficiencyRequests.size || efficiencyTargetChanged) return false;
+    const binding = window[EFFICIENCY_BINDING];
+    if (typeof binding !== "function" || !efficiencySnapshot) {
+      efficiencyError = "本地配置连接不可用；没有向对话框插入或发送任何内容。";
+      updateEfficiencyStatus(); return false;
+    }
+    const isContext = action.includes("Context");
+    if (action !== "refresh" && (isContext ? efficiencySnapshot.scopeAvailable?.thread !== true : !efficiencyScopeAvailable())) return false;
+    const draft = isContext ? efficiencyContextDraft() : efficiencyDraft();
+    const payload = { requestId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`, action, scope: isContext ? "thread" : efficiencyScope };
+    payload.expectedTargetKey = efficiencyTargetKey();
+    if (isContext) payload.expectedContextVersion = draft.version;
+    else payload.expectedVersion = draft.version;
+    if (action === "saveScope") {
+      payload.mode = draft.mode === "inherit" ? null : draft.mode;
+      payload.defaultSkills = draft.inheritSkills ? null : draft.defaultSkills.slice();
+    }
+    if (["saveContext", "previewContextExecution", "prepareContextExecution"].includes(action)) payload.context = efficiencyContextPayload(draft);
+    if (action === "prepareContextExecution") {
+      if (!efficiencyExecutionPreview || efficiencyExecutionPreview.targetKey !== efficiencyTargetKey()
+        || efficiencyExecutionPreview.revision !== draft.revision || efficiencyView !== "context" || efficiencyPanel?.hidden) return false;
+      payload.expectedPrompt = efficiencyExecutionPreview.prompt;
+    }
+    if (action === "executeContext") {
+      if (!options.token) return false;
+      payload.token = options.token;
+    }
+    if (payload.context && (payload.context.agreements.length > 12 || payload.context.agreements.some((line) => line.length > 300))) {
+      efficiencyError = "关键约定最多 12 条，每条不超过 300 个字符；草稿已保留。";
+      updateEfficiencyStatus(); return false;
+    }
+    const executionRequest = action === "prepareContextExecution" || action === "executeContext";
+    const uncertainExecution = "保存 / 发送结果未确认；请先核对当前对话和输入框，不要重复发送。";
+    const timer = setTimeout(() => resolveEfficiencyRequest({ requestId: payload.requestId, ok: false,
+      error: executionRequest ? uncertainExecution : "请求超时，尚未确认保存；保留了草稿，请刷新核对后重试。" }), 15_000);
+    efficiencyRequests.set(payload.requestId, { scope: efficiencyScope, revision: draft.revision, action, timer,
+      targetKey: efficiencyTargetKey(), sourceRevision: efficiencySnapshot.contextSourceRevision ?? null });
+    efficiencyMessage = action === "refresh" ? "正在读取…" : action === "summarizeContext" ? "正在整理当前对话历史…"
+      : action === "previewContextExecution" ? "正在生成待确认的完整发送内容…"
+        : action === "executeContext" ? "已确认，正在验证当前对话并执行一次发送…" : "正在保存…";
+    efficiencyError = ""; updateEfficiencyStatus();
+    try { Promise.resolve(binding(JSON.stringify(payload))).catch(() => resolveEfficiencyRequest({ requestId: payload.requestId, ok: false, error: executionRequest ? uncertainExecution : "配置请求失败，草稿已保留。" })); }
+    catch { resolveEfficiencyRequest({ requestId: payload.requestId, ok: false, error: executionRequest ? uncertainExecution : "配置请求未发送成功，草稿已保留。" }); }
+    return true;
+  }
+
+  function resolveEfficiencyRequest(response) {
+    const pending = efficiencyRequests.get(String(response?.requestId || ""));
+    if (destroyed || !pending) return false;
+    clearTimeout(pending.timer); efficiencyRequests.delete(String(response.requestId));
+    if (pending.targetKey !== efficiencyTargetKey()) {
+      const parked = efficiencyTargetDrafts.get(pending.targetKey);
+      if (parked) {
+        parked.message = response.ok === true ? "原任务请求已完成，重新打开后请核对保存状态。" : "";
+        parked.error = response.ok === true ? "" : String(response.error?.message || response.error || "原任务请求失败，草稿已保留。").slice(0, 800);
+      }
+      updateEfficiencyStatus(); return true;
+    }
+    if (response.ok !== true) {
+      if (["prepareContextExecution", "executeContext"].includes(pending.action)) efficiencyExecutionPreview = null;
+      efficiencyMessage = "";
+      efficiencyError = String(response.error?.message || response.error || "保存失败，草稿已保留。").slice(0, 800);
+      updateEfficiencyStatus(); return true;
+    }
+    const isContext = pending.action.includes("Context");
+    const draft = isContext ? efficiencyTaskDraft : efficiencyDrafts.get(pending.scope);
+    const received = response.data?.snapshot || response.data?.efficiency || response.data;
+    if (efficiencyTargetKey(received) !== pending.targetKey) {
+      efficiencyExecutionPreview = null;
+      efficiencyError = "返回内容不属于当前对话，已拒绝应用；草稿保留，请刷新后核对。";
+      efficiencyMessage = ""; updateEfficiencyStatus(); return true;
+    }
+    const writes = ["saveScope", "resetScope", "saveContext", "resetContext", "prepareContextExecution"].includes(pending.action);
+    if (writes && draft && !efficiencyTargetChanged) {
+      const version = isContext ? received?.context?.version : received?.version;
+      if (Number.isSafeInteger(version)) draft.version = version;
+    }
+    // A late response must not discard edits entered while the request was in flight.
+    if (writes && draft && draft.revision === pending.revision && !efficiencyTargetChanged) {
+      draft.dirty = false;
+      if (isContext) { draft.summaryAttempted = true; draft.summarySourceRevision = received?.contextSourceRevision ?? null; }
+      if (!isContext) efficiencyDrafts.delete(pending.scope);
+      else if (pending.action === "resetContext") efficiencyTaskDraft = null;
+    }
+    // Assign before rendering so snapshot refresh cannot trigger a second summary request.
+    if (received && typeof received === "object") efficiencySnapshot = received;
+    if (pending.action === "summarizeContext") {
+      const summary = response.data?.contextDraft;
+      if (draft && draft.revision === pending.revision && summary && typeof summary === "object") {
+        draft.summary = summary; draft.summaryAttempted = true;
+        draft.summarySourceRevision = summary.sourceRevision ?? pending.sourceRevision;
+        if (summary.hasContent !== false && summary.context && typeof summary.context === "object") {
+          for (const key of ["goal", "progress", "nextStep"]) draft[key] = String(summary.context[key] || "");
+          draft.agreements = Array.isArray(summary.context.agreements) ? summary.context.agreements.map(String).join("\n") : "";
+          if (Array.isArray(summary.context.references)) draft.references = summary.context.references.slice();
+          draft.dirty = true; draft.revision += 1;
+        }
+        efficiencyMessage = "摘要已整理，请核对。尚未保存，也没有发送消息。";
+      } else efficiencyMessage = "整理期间草稿已变更；未覆盖你的修改。可再次手动更新摘要。";
+    } else if (pending.action === "previewContextExecution") {
+      const preview = response.data?.executionPreview;
+      if (draft?.revision === pending.revision && preview?.targetKey === efficiencyTargetKey()
+        && typeof preview.prompt === "string" && preview.prompt.trim() && efficiencyView === "context" && !efficiencyPanel?.hidden) {
+        efficiencyExecutionPreview = { prompt: preview.prompt, targetKey: preview.targetKey, revision: draft.revision };
+        efficiencyMessage = "请核对下方完整内容，再点击“确认保存并发送”。此时尚未保存或发送。";
+      } else efficiencyMessage = "草稿或面板已改变，预览已失效。请重新预览后确认。";
+    } else if (pending.action === "prepareContextExecution") {
+      const execution = response.data?.execution;
+      const authorized = efficiencyExecutionPreview && draft?.revision === pending.revision
+        && efficiencyExecutionPreview.revision === pending.revision && execution?.targetKey === efficiencyTargetKey()
+        && execution.prompt === efficiencyExecutionPreview.prompt && typeof execution.token === "string"
+        && efficiencyView === "context" && !efficiencyPanel?.hidden;
+      efficiencyExecutionPreview = null;
+      efficiencyMessage = authorized ? "任务卡已保存，正在执行已确认的操作。" : "任务卡已保存，但目标、草稿或完整文本发生变化；未发送，请重新确认。";
+      populateEfficiencyForm();
+      if (authorized) return sendEfficiencyRequest("executeContext", { token: execution.token });
+    } else if (pending.action === "executeContext") {
+      efficiencyExecutionPreview = null;
+      const result = response.data?.executionResult;
+      const labels = { sent: "任务卡已保存；已读回本次发送的消息。", unknown: "发送结果未确认；不会自动重试，请检查当前对话。",
+        "prepared-not-sent": result?.prepared === true ? "任务卡已保存；消息已预填，请检查后手动发送。"
+          : "任务卡已保存；未发送，输入框可能只填入了部分内容，请先检查。", blocked: "任务卡已保存；发送被安全检查阻止，未自动重试。" };
+      efficiencyMessage = `${labels[result?.status] || labels.unknown}${result?.message ? ` ${String(result.message)}` : ""}`;
+    } else efficiencyMessage = pending.action === "refresh" ? "状态已刷新，未保存草稿保持不变。"
+      : isContext ? "任务卡已保存；没有发送消息。" : "已保存；会话是否加载以真实回执为准。";
+    efficiencyError = "";
+    populateEfficiencyForm();
+    updateEfficiencyStatus(); return true;
+  }
+
+  function createEfficiencyPanel() {
+    const page = document.createElement("section");
+    page.id = EFFICIENCY_PANEL_ID;
+    page.hidden = true;
+    page.setAttribute("aria-label", "输出偏好");
+    page.innerHTML = `<header><h2 data-efficiency-title>输出偏好</h2><button type="button" data-efficiency-close aria-label="关闭面板">×</button></header>
+      <div class="aiyou-efficiency-body">
+        <section data-efficiency-settings-view aria-label="配置与加载状态"><strong data-efficiency-effective></strong><p data-efficiency-hook></p><button type="button" data-efficiency-request="refresh">刷新状态</button>
+          <p class="aiyou-efficiency-note">精简的是重复说明，不压缩交付物、风险、失败或验证信息。不自动发送消息。</p></section>
+        <p data-efficiency-stale hidden>当前任务已切换，旧草稿已保留且暂停保存。<button type="button" data-efficiency-load-current>放弃旧草稿，载入当前任务</button></p>
+        <label data-efficiency-settings-view>设置范围<select data-efficiency-scope><option value="global">全局默认</option><option value="project">当前项目</option><option value="thread">当前对话</option></select></label>
+        <fieldset data-efficiency-fields data-efficiency-settings-view><h3>输出模式与默认 Skills</h3>
+          <label>输出模式<select data-efficiency-field="mode"><option value="inherit">继承上级</option><option value="smart">智能 · 按任务需要展开</option><option value="concise">精简 · 结果优先</option><option value="detailed">详细 · 完整解释</option></select></label>
+          <p class="aiyou-efficiency-note">对话覆盖项目，项目覆盖全局；本轮明确要求优先。默认 Skills 与收藏独立，按需加载，不代表已执行。</p>
+          <label data-efficiency-skill-inherit-wrap><input type="checkbox" data-efficiency-skill-inherit>继承上级默认 Skills</label>
+          <label>选择默认 Skills<input type="search" data-efficiency-skill-query placeholder="搜索已安装技能"></label>
+          <div data-efficiency-selected-skills></div><div data-efficiency-skill-results></div>
+          <div class="aiyou-efficiency-actions"><button type="button" data-efficiency-request="saveScope" data-efficiency-save>保存此范围设置</button><button type="button" data-efficiency-request="resetScope">重置已保存设置</button><button type="button" data-efficiency-discard="scope">放弃此范围草稿</button></div>
+        </fieldset>
+        <fieldset data-efficiency-context-fields data-efficiency-context-view hidden><h3>当前对话任务卡</h3>
+          <p data-efficiency-target></p><p class="aiyou-efficiency-note">按当前对话独立保存，不属于全局设置；不会替代完整历史。</p>
+          <p data-efficiency-summary-status role="status"></p><details><summary>查看摘要依据与提醒</summary><p data-efficiency-summary-sources class="aiyou-efficiency-note"></p></details>
+          <button type="button" data-efficiency-summarize>更新历史摘要</button>
+          <div data-efficiency-summary-replace hidden><p>更新会替换当前未保存的任务卡草稿。确定继续？</p><button type="button" data-efficiency-confirm-summary>替换草稿并更新</button><button type="button" data-efficiency-cancel-summary>保留草稿</button></div>
+          <label>目标<textarea data-efficiency-field="goal" maxlength="600"></textarea></label>
+          <label>进度 / 阶段<textarea data-efficiency-field="progress" maxlength="1200"></textarea></label>
+          <label>下一步<textarea data-efficiency-field="nextStep" maxlength="600"></textarea></label>
+          <label>关键约定 · 每行一条<textarea data-efficiency-field="agreements" maxlength="2400"></textarea></label>
+          <div class="aiyou-efficiency-actions"><button type="button" data-efficiency-request="previewContextExecution" data-efficiency-save>确认保存并执行</button><button type="button" data-efficiency-request="saveContext">仅保存任务卡</button><button type="button" data-efficiency-request="resetContext">清空已保存任务卡</button><button type="button" data-efficiency-discard="context">放弃任务卡草稿</button></div>
+        </fieldset>
+        <section data-efficiency-execution-preview data-efficiency-context-view hidden aria-label="执行前完整内容确认">
+          <h3>确认将发送到当前对话的完整内容</h3><p class="aiyou-efficiency-note">点击下面确认后，先保存任务卡，再执行一次发送；已有输入、任务忙碌或切换对话时会阻止发送。</p>
+          <pre data-efficiency-execution-prompt tabindex="0"></pre>
+          <div class="aiyou-efficiency-actions"><button type="button" data-efficiency-confirm-execution data-efficiency-save>确认保存并发送</button><button type="button" data-efficiency-cancel-execution>取消，继续编辑</button></div>
+        </section>
+        <p data-efficiency-dirty class="aiyou-efficiency-note"></p><p data-efficiency-message role="status"></p><p data-efficiency-error role="alert"></p>
+        <section data-efficiency-settings-view><h3>用量信息</h3><p data-efficiency-usage></p></section>
+      </div>`;
+    page.querySelector("[data-efficiency-close]").onclick = () => closeEfficiencyPanel();
+    page.querySelector("[data-efficiency-scope]").onchange = (event) => {
+      efficiencyScope = event.target.value; populateEfficiencyForm();
+    };
+    page.querySelectorAll("[data-efficiency-field]").forEach((input) => {
+      input.oninput = () => {
+        const context = input.dataset.efficiencyField !== "mode";
+        (context ? efficiencyContextDraft() : efficiencyDraft())[input.dataset.efficiencyField] = input.value;
+        markEfficiencyDraftChanged(context);
+      };
+    });
+    page.querySelector("[data-efficiency-skill-query]").oninput = renderEfficiencySkills;
+    page.querySelector("[data-efficiency-skill-inherit]").onchange = (event) => {
+      efficiencyDraft().inheritSkills = event.target.checked; markEfficiencyDraftChanged(); renderEfficiencySkills();
+    };
+    page.querySelectorAll("[data-efficiency-request]").forEach((button) => {
+      button.onclick = () => sendEfficiencyRequest(button.dataset.efficiencyRequest);
+    });
+    page.querySelector("[data-efficiency-summarize]").onclick = () => {
+      if (efficiencyContextDraft().dirty) { efficiencySummaryReplaceRequested = true; updateEfficiencyStatus(); }
+      else sendEfficiencyRequest("summarizeContext");
+    };
+    page.querySelector("[data-efficiency-confirm-summary]").onclick = () => {
+      efficiencySummaryReplaceRequested = false; efficiencyExecutionPreview = null; sendEfficiencyRequest("summarizeContext");
+    };
+    page.querySelector("[data-efficiency-cancel-summary]").onclick = () => { efficiencySummaryReplaceRequested = false; updateEfficiencyStatus(); };
+    page.querySelector("[data-efficiency-confirm-execution]").onclick = () => sendEfficiencyRequest("prepareContextExecution");
+    page.querySelector("[data-efficiency-cancel-execution]").onclick = () => { efficiencyExecutionPreview = null; updateEfficiencyStatus(); };
+    page.querySelectorAll("[data-efficiency-discard]").forEach((button) => {
+      button.onclick = () => {
+        if (efficiencyRequests.size || efficiencyTargetChanged) return;
+        if (button.dataset.efficiencyDiscard === "context") { efficiencyTaskDraft = null; efficiencyExecutionPreview = null; }
+        else efficiencyDrafts.delete(efficiencyScope);
+        efficiencyMessage = "已放弃本地草稿，未修改已保存内容。"; efficiencyError = "";
+        populateEfficiencyForm();
+      };
+    });
+    page.querySelector("[data-efficiency-load-current]").onclick = () => {
+      efficiencyDrafts.clear(); efficiencyTaskDraft = null; efficiencyTargetChanged = false; efficiencyError = ""; efficiencyMessage = "";
+      if (!efficiencyScopeAvailable()) efficiencyScope = "global";
+      populateEfficiencyForm();
+    };
+    return initializeWorkspacePanel(page, "efficiency");
+  }
+
+  function scheduleEfficiencyPanelLayout() {
+    if (destroyed || !efficiencyPanel || efficiencyPanel.hidden || efficiencyLayoutFrame !== null) return;
+    efficiencyLayoutFrame = requestAnimationFrame(() => {
+      efficiencyLayoutFrame = null;
+      constrainEfficiencyPanelToViewport();
+    });
+  }
+
+  function constrainEfficiencyPanelToViewport() {
+    if (!efficiencyPanel || efficiencyPanel.hidden || !efficiencyPanel.isConnected) return;
+    if (!efficiencyMountSurface?.isConnected) {
+      efficiencyMountSurface = findCustomShortcutPageMount()?.surface || null;
+      watchEfficiencyPanelLayout();
+    }
+    const host = efficiencyMountSurface;
+    if (!host) return;
+    const viewport = window.visualViewport;
+    const view = { left: viewport?.offsetLeft || 0, top: viewport?.offsetTop || 0,
+      right: (viewport?.offsetLeft || 0) + (viewport?.width || window.innerWidth),
+      bottom: (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight) };
+    const hostRect = host.getBoundingClientRect();
+    const visible = { left: Math.max(view.left, hostRect.left), top: Math.max(view.top, hostRect.top),
+      right: Math.min(view.right, hostRect.right), bottom: Math.min(view.bottom, hostRect.bottom) };
+    // Nested native clips/transforms can differ from the nominal main content
+    // width. Use only their visible intersection; never rewrite native flex items.
+    for (let ancestor = host.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
+      const rect = ancestor.getBoundingClientRect();
+      const style = getComputedStyle(ancestor);
+      if (style.display === "contents") continue;
+      if (/(hidden|clip|auto|scroll)/u.test(style.overflowX)) {
+        visible.left = Math.max(visible.left, rect.left); visible.right = Math.min(visible.right, rect.right);
+      }
+      if (/(hidden|clip|auto|scroll)/u.test(style.overflowY)) {
+        visible.top = Math.max(visible.top, rect.top); visible.bottom = Math.min(visible.bottom, rect.bottom);
+      }
+    }
+    if (visible.right - visible.left < 120) { visible.left = view.left; visible.right = view.right; }
+    if (visible.bottom - visible.top < 64) { visible.top = view.top; visible.bottom = view.bottom; }
+    const rect = efficiencyPanel.getBoundingClientRect();
+    const needsOverlay = efficiencyPanel.dataset.efficiencyViewportOverlay === "true"
+      || rect.width < Math.min(320, visible.right - visible.left)
+      || rect.right > visible.right + .5 || rect.left < visible.left - .5
+      || rect.top < visible.top - .5 || rect.bottom > visible.bottom + .5;
+    if (!needsOverlay) return;
+    const desired = Number.parseFloat(efficiencyPanel.style.getPropertyValue("--codex-workspace-panel-width")) || 560;
+    const width = Math.max(1, Math.min(desired, 840, visible.right - visible.left));
+    const properties = { left: visible.right - width, top: visible.top, width, height: visible.bottom - visible.top };
+    for (const [key, value] of Object.entries(properties)) {
+      const name = `--aiyou-efficiency-${key}`;
+      const pixels = `${Math.round(value * 100) / 100}px`;
+      if (efficiencyPanel.style.getPropertyValue(name) !== pixels) efficiencyPanel.style.setProperty(name, pixels);
+    }
+    // Only this new panel may use a viewport portal when a native min-width
+    // would clip its close button. Other modules and conversation DOM stay intact.
+    if (efficiencyPanel.parentElement !== document.body) {
+      const focused = document.activeElement;
+      const restoreFocus = focused && efficiencyPanel.contains(focused);
+      const selection = restoreFocus && typeof focused.selectionStart === "number"
+        ? [focused.selectionStart, focused.selectionEnd] : null;
+      setWorkspacePanelHostLayer(efficiencyPanel, false);
+      document.body.appendChild(efficiencyPanel);
+      if (restoreFocus) {
+        focused.focus?.({ preventScroll: true });
+        if (selection) focused.setSelectionRange?.(...selection);
+      }
+    }
+    if (efficiencyPanel.dataset.efficiencyViewportOverlay !== "true") efficiencyPanel.dataset.efficiencyViewportOverlay = "true";
+  }
+
+  function watchEfficiencyPanelLayout() {
+    efficiencyResizeObserver?.disconnect();
+    if (typeof ResizeObserver === "function") {
+      efficiencyResizeObserver = new ResizeObserver(scheduleEfficiencyPanelLayout);
+      for (let node = efficiencyMountSurface, depth = 0; node && node !== document.body && depth < 10; node = node.parentElement, depth += 1) {
+        efficiencyResizeObserver.observe(node);
+      }
+      if (efficiencyPanel) efficiencyResizeObserver.observe(efficiencyPanel);
+    }
+  }
+
+  function ensureTaskContextButton() {
+    let button = document.getElementById(TASK_CONTEXT_BUTTON_ID);
+    const available = efficiencySnapshot?.scopeAvailable?.thread === true && Boolean(efficiencyTargetKey());
+    const surface = document.querySelector('[data-testid="app-shell-header-context-menu-surface"][aria-hidden="false"]')
+      || document.querySelector('[data-testid="app-shell-header-context-menu-surface"]:not([aria-hidden="true"])');
+    const obstacle = surface?.querySelector('[data-app-shell-header-obstacle="true"]');
+    // Restrict mounting to the native conversation toolbar: never a message's Share button.
+    if (!obstacle || !available) { if (button) button.hidden = true; return; }
+    if (!button) {
+      button = document.createElement("button"); button.id = TASK_CONTEXT_BUTTON_ID; button.type = "button";
+      button.textContent = "任务上下文"; button.title = "查看、整理和确认当前对话的任务上下文";
+      button.setAttribute("aria-controls", EFFICIENCY_PANEL_ID);
+      button.onclick = (event) => { event.stopPropagation(); openTaskContextPanel(); };
+    }
+    if (button.parentElement !== obstacle) obstacle.prepend(button);
+    button.hidden = false;
+    button.disabled = typeof window[EFFICIENCY_BINDING] !== "function";
+    button.setAttribute("aria-expanded", String(efficiencyView === "context" && Boolean(efficiencyPanel && !efficiencyPanel.hidden)));
+  }
+
+  function openTaskContextPanel() {
+    if (efficiencySnapshot?.scopeAvailable?.thread !== true || !efficiencyTargetKey()) return false;
+    return openEfficiencyPanel("context");
+  }
+
+  function openEfficiencyPanel(view = "settings") {
+    if (destroyed) return false;
+    const nextView = view === "context" ? "context" : "settings";
+    if (efficiencyPanel?.isConnected && !efficiencyPanel.hidden) {
+      if (efficiencyView !== nextView) { efficiencyExecutionPreview = null; efficiencySummaryReplaceRequested = false; }
+      efficiencyView = nextView; populateEfficiencyForm(); ensureTaskContextButton(); maybeSummarizeTaskContext(); return true;
+    }
+    const mount = findCustomShortcutPageMount();
+    if (!mount) return false;
+    closeOtherWorkspacePanels("efficiency");
+    if (!efficiencyPanel) efficiencyPanel = createEfficiencyPanel();
+    efficiencyView = nextView;
+    efficiencyMountSurface = mount.surface;
+    efficiencyPanel.removeAttribute("data-efficiency-viewport-overlay");
+    if (efficiencyPanel.parentElement !== mount.surface) mount.surface.appendChild(efficiencyPanel);
+    efficiencyReturnFocus = document.activeElement;
+    efficiencyPanel.hidden = false;
+    setWorkspacePanelHostLayer(efficiencyPanel, true);
+    populateEfficiencyForm();
+    constrainEfficiencyPanelToViewport();
+    watchEfficiencyPanelLayout();
+    ensureTaskContextButton(); maybeSummarizeTaskContext();
+    return true;
+  }
+
+  function closeEfficiencyPanel(restoreFocus = true) {
+    if (!efficiencyPanel) return;
+    setWorkspacePanelHostLayer(efficiencyPanel, false);
+    efficiencyPanel.hidden = true;
+    efficiencyExecutionPreview = null; efficiencySummaryReplaceRequested = false;
+    ensureTaskContextButton();
+    efficiencyResizeObserver?.disconnect();
+    if (efficiencyLayoutFrame !== null) cancelAnimationFrame(efficiencyLayoutFrame);
+    efficiencyLayoutFrame = null;
+    if (restoreFocus && efficiencyReturnFocus?.isConnected) efficiencyReturnFocus.focus?.();
+    efficiencyReturnFocus = null;
+  }
+
+  function restoreEfficiencyPanelMount() {
+    if (!efficiencyPanel || efficiencyPanel.hidden) return;
+    if (efficiencyPanel.isConnected) { scheduleEfficiencyPanelLayout(); return; }
+    const mount = findCustomShortcutPageMount();
+    if (!mount) return;
+    mount.surface.appendChild(efficiencyPanel);
+    efficiencyMountSurface = mount.surface;
+    setWorkspacePanelHostLayer(efficiencyPanel, true);
+    constrainEfficiencyPanelToViewport(); watchEfficiencyPanelLayout();
+  }
+
+  function getEfficiencyState() {
+    return JSON.parse(JSON.stringify({ snapshot: efficiencySnapshot, scope: efficiencyScope, view: efficiencyView,
+      open: Boolean(efficiencyPanel && !efficiencyPanel.hidden), targetChanged: efficiencyTargetChanged,
+      drafts: Object.fromEntries(efficiencyDrafts), contextDraft: efficiencyTaskDraft, pending: efficiencyRequests.size,
+      executionPreview: efficiencyExecutionPreview,
+      message: efficiencyMessage, error: efficiencyError }));
   }
 
   function iconChoiceButton(icon, selected = false) {
@@ -3402,6 +4127,7 @@
           <button type="button" data-codex-shortcut-settings-close aria-label="关闭设置">×</button>
         </header>
         <div class="codex-shortcut-settings-body">
+          <button type="button" data-aiyou-efficiency-open><span>输出偏好与默认 Skills</span><span aria-hidden="true">→</span></button>
           <h3>显示与隐藏</h3>
           <div class="codex-shortcut-settings-list" data-codex-shortcut-visibility-list></div>
           <form data-codex-shortcut-custom-form>
@@ -3421,6 +4147,10 @@
     const icons = dialog.querySelector("[data-codex-shortcut-icons]");
     icons.replaceChildren(...Object.keys(SHORTCUT_ICON_PRESETS).map((icon, index) => iconChoiceButton(icon, index === 0)));
     dialog.querySelector("[data-codex-shortcut-settings-close]").onclick = () => dialog.close();
+    dialog.querySelector("[data-aiyou-efficiency-open]").onclick = (event) => {
+      event.preventDefault(); event.stopPropagation();
+      dialog.close(); openEfficiencyPanel();
+    };
     dialog.addEventListener("click", (event) => {
       if (event.target === dialog) dialog.close();
     });
@@ -5360,10 +6090,10 @@
 
   function renderFeatures() {
     if (destroyed) return;
-    syncFeature("panels", () => { restoreAssetConsoleOpenIntent(); restoreDetachedAssetConsolePanel(); });
+    syncFeature("panels", () => { restoreAssetConsoleOpenIntent(); restoreDetachedAssetConsolePanel(); restoreEfficiencyPanelMount(); });
     syncFeature("shortcuts", ensureShortcutGrid);
     syncFeature("skills", () => { ensureSkillOrganizer(); resumeSkillsGroupingOpenRequest(); });
-    syncFeature("header", () => { ensureViewToggle(); ensureShortcutSettingsButton(); });
+    syncFeature("header", () => { ensureViewToggle(); ensureShortcutSettingsButton(); ensureTaskContextButton(); });
     if (nativeActivityViewOpen()) {
       if (sectionEnhancementMounted()) clearSectionEnhancement();
       syncFeature("history", ensureRecoveredConversationHistory);
@@ -5494,7 +6224,7 @@
     const setters = { previews: setPreviews, usage: setUsage, searchCatalog: setSearchCatalog,
       recentCatalog: setRecentCatalog, interruptedCatalog: setInterruptedCatalog,
       pinnedThreads: setPinnedThreads, activeProjectThreads: setActiveProjectThreads,
-      skillCatalog: setSkillCatalog, conversationHistory: setConversationHistory };
+      skillCatalog: setSkillCatalog, conversationHistory: setConversationHistory, efficiency: setEfficiencyData };
     for (const [key, setter] of Object.entries(setters)) {
       if (!Object.hasOwn(snapshot, key)) continue;
       const signature = JSON.stringify(snapshot[key]);
@@ -5527,6 +6257,9 @@
   }
 
   function handleWorkspaceEnhancementKeydown(event) {
+    if (event.key === "Escape" && efficiencyPanel && !efficiencyPanel.hidden) {
+      event.preventDefault(); closeEfficiencyPanel(); return;
+    }
     if (event.key === "Escape" && customShortcutPageIsVisible()) {
       event.preventDefault();
       closeCustomShortcutPanel();
@@ -5595,6 +6328,7 @@
   function handleWorkspacePanelMessage(event) {
     if (event.source !== window || event.origin !== window.location.origin || event.data?.type !== WORKSPACE_PANEL_EVENT) return;
     if (event.data.panel === "taskboard") {
+      closeEfficiencyPanel(false);
       closeCustomShortcutPanel(false);
       closeAssetConsolePanel({ notify: false, restoreFocus: false });
       closeSkillsGrouping(false);
@@ -5617,7 +6351,7 @@
   }
 
   function handleHostMutations(records) {
-    const owned = `#${SHORTCUT_GRID_ID}, #${SECTION_TABS_ID}, #${FOLDER_SWITCHER_ID}, #${SHORTCUT_SETTINGS_ID}, #${SKILL_ORGANIZER_ID}, #${CUSTOM_SHORTCUT_PAGE_ID}, #${ASSET_CONSOLE_PAGE_ID}, #${USAGE_ID}, #${TOGGLE_ID}, #${FALLBACK_TOOLTIP_ID}, .${CARD_CONTENT_CLASS}, .${SUMMARY_CLASS}, .${STATUS_BUTTON_CLASS}`;
+    const owned = `#${SHORTCUT_GRID_ID}, #${SECTION_TABS_ID}, #${FOLDER_SWITCHER_ID}, #${SHORTCUT_SETTINGS_ID}, #${SKILL_ORGANIZER_ID}, #${CUSTOM_SHORTCUT_PAGE_ID}, #${ASSET_CONSOLE_PAGE_ID}, #${EFFICIENCY_PANEL_ID}, #${TASK_CONTEXT_BUTTON_ID}, #${USAGE_ID}, #${TOGGLE_ID}, #${FALLBACK_TOOLTIP_ID}, .${CARD_CONTENT_CLASS}, .${SUMMARY_CLASS}, .${STATUS_BUTTON_CLASS}`;
     if (records.some((record) => {
       const target = record.target?.nodeType === 1 ? record.target : record.target?.parentElement;
       if (target?.closest?.(owned)) return false;
@@ -5652,11 +6386,16 @@
     document.addEventListener("click", handleWorkspaceCommandClick, true);
     window.addEventListener("message", handleAssetConsoleMessage);
     window.addEventListener("message", handleWorkspacePanelMessage);
+    window.addEventListener("resize", scheduleEfficiencyPanelLayout);
+    window.visualViewport?.addEventListener("resize", scheduleEfficiencyPanelLayout);
+    window.visualViewport?.addEventListener("scroll", scheduleEfficiencyPanelLayout);
+    document.addEventListener("scroll", scheduleEfficiencyPanelLayout, true);
     sync();
   }
 
   function destroy() {
     destroyed = true;
+    for (const cleanup of workspaceResizeCleanups) cleanup();
     skillOrganizerOpenGeneration += 1;
     skillOrganizerOpenObserver?.disconnect();
     skillOrganizerOpenObserver = null;
@@ -5674,6 +6413,10 @@
     document.removeEventListener("click", handleWorkspaceCommandClick, true);
     window.removeEventListener("message", handleAssetConsoleMessage);
     window.removeEventListener("message", handleWorkspacePanelMessage);
+    window.removeEventListener("resize", scheduleEfficiencyPanelLayout);
+    window.visualViewport?.removeEventListener("resize", scheduleEfficiencyPanelLayout);
+    window.visualViewport?.removeEventListener("scroll", scheduleEfficiencyPanelLayout);
+    document.removeEventListener("scroll", scheduleEfficiencyPanelLayout, true);
     closeStatusMenu();
     document.getElementById(STYLE_ID)?.remove();
     document.getElementById(TOGGLE_ID)?.remove();
@@ -5688,6 +6431,12 @@
       host.removeAttribute("data-codex-sidebar-header-controls-app-region");
     });
     clearShortcutEnhancement();
+    closeEfficiencyPanel(false);
+    efficiencyPanel?.remove(); efficiencyPanel = null;
+    efficiencyMountSurface = null; efficiencyResizeObserver?.disconnect(); efficiencyResizeObserver = null;
+    for (const request of efficiencyRequests.values()) clearTimeout(request.timer);
+    efficiencyRequests.clear(); efficiencyDrafts.clear(); efficiencyTargetDrafts.clear(); efficiencyTaskDraft = null;
+    efficiencyExecutionPreview = null; document.getElementById(TASK_CONTEXT_BUTTON_ID)?.remove();
     document.getElementById(SHORTCUT_SETTINGS_ID)?.remove();
     clearSectionEnhancement();
     closeCustomShortcutPanel(false);
@@ -5743,6 +6492,12 @@
     ensureManagedShortcut,
     openSkillsGrouping,
     openAssetConsolePanel,
+    openEfficiencyPanel,
+    openTaskContextPanel,
+    closeEfficiencyPanel,
+    getEfficiencyState,
+    setEfficiencyData,
+    resolveEfficiencyRequest,
     routeWorkspaceCommand,
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });

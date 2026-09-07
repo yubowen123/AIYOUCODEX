@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,6 +13,14 @@ export const REQUIRED_PRIVATE_IGNORE_RULES = Object.freeze([
   "*.private.json",
   "*.local.json",
   ".aiyoucodex-private/",
+  "**/efficiency/state.json",
+  "**/efficiency/state.json.*",
+  "hook-events.json",
+  "hook-events.json.*",
+  "hooks.json.aiyou-backup-*",
+  "hooks.json.tmp-*",
+  "hooks.json.lock/",
+  "hooks.json.lock.*",
 ]);
 
 export function isPrivateConfigPath(filePath) {
@@ -24,6 +32,10 @@ export function isPrivateConfigPath(filePath) {
     /^managed-shortcuts(?:\.[a-z0-9_-]+)*\.json$/iu.test(basename)
     || /\.(?:private|local)\.json$/iu.test(basename)
     || segments.includes(".aiyoucodex-private")
+    || segments.some((segment) => /^hook-events\.json(?:\.|$)/iu.test(segment))
+    || segments.some((segment) => /^hooks\.json\.(?:aiyou-backup-|tmp-|lock(?:\.|$))/iu.test(segment))
+    || segments.some((segment, index) => segment.toLowerCase() === "efficiency"
+      && /^state\.json(?:\.|$)/iu.test(segments[index + 1] || ""))
   );
 }
 
@@ -62,7 +74,9 @@ function trackedPaths(root) {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-    if (path.resolve(repositoryRoot) !== path.resolve(root)) return null;
+    // macOS /var aliases /private/var; a symlinked checkout is still this repo.
+    // Comparing lexical paths here silently skipped tracked-file checks.
+    if (realpathSync(repositoryRoot) !== realpathSync(root)) return null;
     return execFileSync("git", ["ls-files", "-z"], {
       cwd: root,
       encoding: "utf8",

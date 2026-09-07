@@ -13,3 +13,13 @@ managed-shortcuts.json
 *.private.json
 *.local.json
 .aiyoucodex-private/
+
+# Output-efficiency state, receipts and native-hook backups are machine-local.
+**/efficiency/state.json
+**/efficiency/state.json.*
+hook-events.json
+hook-events.json.*
+hooks.json.aiyou-backup-*
+hooks.json.tmp-*
+hooks.json.lock/
+hooks.json.lock.*
