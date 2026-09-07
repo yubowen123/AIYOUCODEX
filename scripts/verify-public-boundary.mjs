@@ -13,6 +13,14 @@ export const REQUIRED_PRIVATE_IGNORE_RULES = Object.freeze([
   "*.private.json",
   "*.local.json",
   ".aiyoucodex-private/",
+  "**/efficiency/state.json",
+  "**/efficiency/state.json.*",
+  "hook-events.json",
+  "hook-events.json.*",
+  "hooks.json.aiyou-backup-*",
+  "hooks.json.tmp-*",
+  "hooks.json.lock/",
+  "hooks.json.lock.*",
 ]);
 
 export function isPrivateConfigPath(filePath) {
@@ -24,6 +32,10 @@ export function isPrivateConfigPath(filePath) {
     /^managed-shortcuts(?:\.[a-z0-9_-]+)*\.json$/iu.test(basename)
     || /\.(?:private|local)\.json$/iu.test(basename)
     || segments.includes(".aiyoucodex-private")
+    || segments.some((segment) => /^hook-events\.json(?:\.|$)/iu.test(segment))
+    || segments.some((segment) => /^hooks\.json\.(?:aiyou-backup-|tmp-|lock(?:\.|$))/iu.test(segment))
+    || segments.some((segment, index) => segment.toLowerCase() === "efficiency"
+      && /^state\.json(?:\.|$)/iu.test(segments[index + 1] || ""))
   );
 }
 
@@ -57,15 +69,14 @@ export function assertPrivateIgnoreRules(root) {
 
 function trackedPaths(root) {
   try {
-    const repositoryRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+    // Let Git resolve its own checkout and restrict the listing to this package.
+    // Comparing Git's root spelling with Node's path can silently skip a valid
+    // Windows short-path checkout or a macOS symlink. The explicit pathspec also
+    // prevents an enclosing repository's unrelated files from entering the check.
+    return execFileSync("git", ["ls-files", "-z", "--", "."], {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    if (path.resolve(repositoryRoot) !== path.resolve(root)) return null;
-    return execFileSync("git", ["ls-files", "-z"], {
-      cwd: root,
-      encoding: "utf8",
     }).split("\0").filter(Boolean);
   } catch {
     return null;

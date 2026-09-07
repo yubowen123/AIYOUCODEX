@@ -11,6 +11,7 @@ import test from "node:test";
 import { CdpClient, connectCodexTarget } from "../scripts/cdp-client.mjs";
 import { RENDERER_HEALTH_EXPRESSION, acceptDocumentHealth, canReuseRenderer } from "../lib/renderer-health.mjs";
 import { waitForBrowserState } from "./helpers/browser-state.mjs";
+import { EfficiencyBridge } from "../lib/efficiency-bridge.mjs";
 
 const injectorSource = await readFile(new URL("../scripts/injector.mjs", import.meta.url), "utf8");
 const userSourcePath = new URL("../inject/conversation-preview.user.js", import.meta.url);
@@ -80,15 +81,17 @@ test("production attach and delivery survive CDP reconnect; real document reload
     connectCodexTarget: async (entry) => { const client = await connectCodexTarget(entry); clients.add(client); return client; },
     // Only external asset-service I/O is excluded from this renderer lifecycle test.
     createAssetConsoleBridge: () => ({ install: async () => {}, dispose: async () => {} }),
+    createEfficiencyController: () => ({ snapshot: async () => ({ version: 0 }), request: async () => ({ version: 0 }) }), EfficiencyBridge,
     SCRIPT_ID_GLOBAL: "__CODEX_CONVERSATION_PREVIEW_SCRIPT_IDENTIFIER__", readFile, sourcePath: userSourcePath,
     readManagedShortcuts: async () => shortcuts, createHash,
     process: { stdout: { write() {} }, stderr: { write() {} } },
     RENDERER_HEALTH_EXPRESSION, acceptDocumentHealth, canReuseRenderer,
     repository: { readRecentCatalog: async () => catalog, readPinnedThreadIds: async () => [],
-      readInterruptedCatalog: async () => [], readMany: async () => [], readUsage: async () => ({}), readConversationHistory: async () => history },
+      readInterruptedCatalog: async () => [], readMany: async () => [], readUsage: async () => ({}), readConversationHistory: async () => history,
+      resolveEfficiencyThread: async () => null },
     readInstalledSkillCatalog: async () => [], readActiveTaskThreads: async () => ({ activeThreadIds: [] }),
     presentCardPreview: (value) => value, presentRateLimit: () => ({ available: true, text: "本周剩余 42%", remainingPercent: 42 }),
-    skillCatalog: [], nextSkillCatalogRefreshAt: 0,
+    skillCatalogCache: new Map(),
   });
   for (const name of ["attachTarget", "disposeRendererSession", "ensurePersistentManagedShortcuts",
     "readActiveConversationContext", "pushConversationHistory", "pushPreviews"]) {

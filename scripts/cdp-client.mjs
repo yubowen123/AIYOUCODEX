@@ -37,6 +37,7 @@ export class CdpClient {
     this.nextId = 0;
     this.pending = new Map();
     this.listeners = new Map();
+    this.executionContexts = new Map();
   }
 
   rejectPending(error) {
@@ -63,6 +64,15 @@ export class CdpClient {
       }
       if (!message.id) {
         if (!message.method) return;
+        // Runtime.enable is idempotent and does not replay contexts when another
+        // feature on this CDP session enabled it first. Keep the shared inventory
+        // without toggling the Runtime domain or exposing bindings to subframes.
+        if (message.method === "Runtime.executionContextCreated") {
+          const context = message.params?.context;
+          if (context) this.executionContexts.set(context.id, context);
+        } else if (message.method === "Runtime.executionContextDestroyed") {
+          this.executionContexts.delete(message.params?.executionContextId);
+        } else if (message.method === "Runtime.executionContextsCleared") this.executionContexts.clear();
         for (const listener of this.listeners.get(message.method) || []) {
           try { listener(message.params || {}, { sessionId: message.sessionId || null }); } catch {}
         }
@@ -79,6 +89,7 @@ export class CdpClient {
     let connectSettled = false;
     let rejectConnect = null;
     socket.addEventListener("close", () => {
+      this.executionContexts.clear();
       const error = new Error("CDP connection closed");
       if (!connectSettled) {
         connectSettled = true;

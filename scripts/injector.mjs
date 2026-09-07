@@ -19,6 +19,8 @@ import { readActiveTaskThreads } from "../lib/taskboard-status.mjs";
 import { AssetConsoleBridge } from "../lib/asset-console-bridge.mjs";
 import { readInstalledSkillCatalog } from "../lib/skill-catalog.mjs";
 import { readManagedShortcuts } from "../lib/managed-shortcuts.mjs";
+import { createEfficiencyController, EfficiencyBridge } from "../lib/efficiency-bridge.mjs";
+import { executeConfirmedContext } from "../lib/context-execution.mjs";
 import { RENDERER_HEALTH_EXPRESSION, acceptDocumentHealth, canReuseRenderer, recordUpdateFailure, rendererReadiness } from "../lib/renderer-health.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -43,8 +45,7 @@ const repository = new PreviewRepository();
 let stopped = false;
 const sessions = new Map();
 let persistentShortcutOwnerTargetId = "";
-let skillCatalog = [];
-let nextSkillCatalogRefreshAt = 0;
+const skillCatalogCache = new Map();
 let discoveryFailures = 0;
 const desktopAppRecovery = new DesktopAppRecovery();
 const desktopAppRuntime = createDesktopAppRuntime();
@@ -66,6 +67,7 @@ async function disposeRendererSession(session, { destroy = false } = {}) {
     try { await session.client.evaluate("window.__codexConversationPreviewInjection__?.destroy?.()") } catch {}
   }
   await session.assetConsoleBridge.dispose();
+  session.efficiencyBridge?.dispose();
   session.client.close();
   session.deliveredHistoryKey = "";
 }
@@ -73,6 +75,10 @@ async function disposeRendererSession(session, { destroy = false } = {}) {
 async function attachTarget(target) {
   const client = await connectCodexTarget(target);
   const assetConsoleBridge = createAssetConsoleBridge();
+  const efficiencyController = createEfficiencyController({ repository,
+    readActiveContext: () => readActiveConversationContext({ client }),
+    executeContext: (payload) => executeConfirmedContext({ client, ...payload }) });
+  const efficiencyBridge = new EfficiencyBridge(efficiencyController);
   try {
     // New-document registration must be enabled on this exact CDP connection.
     await client.send("Page.enable");
@@ -97,11 +103,14 @@ async function attachTarget(target) {
     if (!canReuseRenderer(snapshot, sourceHash)) await client.evaluate(rendererSource);
     await client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] = ${JSON.stringify(registered.identifier)}`);
     await assetConsoleBridge.install(client);
+    await efficiencyBridge.install(client);
     process.stdout.write(`[${new Date().toISOString()}] Codex conversation preview attached to renderer ${target.id}\n`);
     const session = {
       targetId: target.id,
       client,
       assetConsoleBridge,
+      efficiencyController,
+      efficiencyBridge,
       registeredScriptIdentifier: registered.identifier,
       deliveredHistoryKey: "",
       persistentShortcutIds: managedShortcuts
@@ -114,6 +123,7 @@ async function attachTarget(target) {
     return session;
   } catch (error) {
     await assetConsoleBridge.dispose().catch(() => {});
+    efficiencyBridge.dispose();
     client.close();
     throw error;
   }
@@ -259,10 +269,6 @@ async function pushConversationHistory(session, activeContext = null) {
 
 async function pushPreviews(session) {
   if (!session?.client) return;
-  if (!skillCatalog.length || Date.now() >= nextSkillCatalogRefreshAt) {
-    skillCatalog = await readInstalledSkillCatalog();
-    nextSkillCatalogRefreshAt = Date.now() + 5 * 60_000;
-  }
   const [requests, activeContext, recentCatalog, pinnedThreadIds, taskboardStatus] = await Promise.all([
     session.client.evaluate(`(() => {
       const seen = new Set();
@@ -286,6 +292,15 @@ async function pushPreviews(session) {
     repository.readPinnedThreadIds(),
     readActiveTaskThreads(),
   ]);
+  const authoritative = activeContext?.threadId ? await repository.resolveEfficiencyThread(activeContext.threadId) : null;
+  const catalogKey = authoritative?.projectPath || "";
+  let catalogEntry = skillCatalogCache.get(catalogKey);
+  if (!catalogEntry || Date.now() >= catalogEntry.expiresAt) {
+    catalogEntry = { skills: await readInstalledSkillCatalog({ cwd: catalogKey || undefined }), expiresAt: Date.now() + 5 * 60_000 };
+    skillCatalogCache.set(catalogKey, catalogEntry);
+    if (skillCatalogCache.size > 12) skillCatalogCache.delete(skillCatalogCache.keys().next().value);
+  }
+  const skillCatalog = catalogEntry.skills;
   const interruptedCatalog = await repository.readInterruptedCatalog({
     activeThreadIds: taskboardStatus.activeThreadIds,
   });
@@ -309,7 +324,11 @@ async function pushPreviews(session) {
   ]);
   const previews = rawPreviews.map((preview) => presentCardPreview(preview));
   const usage = presentRateLimit(rawUsage, { timeZone: "Asia/Shanghai" });
-  const snapshot = { previews, usage, searchCatalog, recentCatalog, interruptedCatalog,
+  // A malformed optional policy must never stop native cards/history delivery.
+  let efficiency;
+  try { efficiency = await session.efficiencyController.snapshot(); }
+  catch { /* Keep the previous efficiency panel state; saves still fail closed. */ }
+  const snapshot = { previews, usage, searchCatalog, recentCatalog, interruptedCatalog, ...(efficiency ? { efficiency } : {}),
     pinnedThreads: pinnedThreadIds, activeProjectThreads: taskboardStatus.activeThreadIds, skillCatalog };
   const serialized = JSON.stringify(snapshot);
   const snapshotHash = createHash("sha256").update(serialized).digest("hex");
