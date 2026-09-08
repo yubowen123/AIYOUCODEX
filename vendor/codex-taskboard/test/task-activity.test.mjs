@@ -49,11 +49,18 @@ async function fixture(t) {
   db.exec("CREATE TABLE threads(id TEXT PRIMARY KEY, rollout_path TEXT, updated_at INTEGER)");
   db.prepare("INSERT INTO threads VALUES (?, ?, ?)").run(id, file, Date.now());
   db.close();
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  return { directory, home, file };
+  const resources = { directory, home, file, app: null };
+  t.after(async () => {
+    // Windows holds SQLite files open. Close the owner before removing its
+    // directory; an earlier failing removal hook must not skip server cleanup.
+    resources.app?.server.closeAllConnections();
+    await resources.app?.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+  return resources;
 }
 
-test("bounded metadata reader handles cold tool-heavy tails, appends, partial writes, truncation and missing IDs", async (t) => {
+test("bounded metadata reader handles cold tool-heavy tails, appends, partial writes, truncation and missing IDs", { timeout: 10000 }, async (t) => {
   const { home, file } = await fixture(t);
   await writeFile(file, `${record(old)}\n${Array(30).fill(record(newer, "token_count")).join("\n")}\n`);
   const read = createThreadActivityReader({ codexHome: home, maxTailBytes: 512, maxEntries: 2 });
@@ -71,12 +78,13 @@ test("bounded metadata reader handles cold tool-heavy tails, appends, partial wr
   assert.equal((await read([id])).byThread[id], null);
 });
 
-test("local endpoint returns only exact-ID timestamps, rejects paths and exposes latest comment metadata", async (t) => {
-  const { directory, home, file } = await fixture(t);
+test("local endpoint returns only exact-ID timestamps, rejects paths and exposes latest comment metadata", { timeout: 10000 }, async (t) => {
+  const resources = await fixture(t);
+  const { directory, home, file } = resources;
   await writeFile(file, `${record(recent)}\n`);
   const app = createTaskboardServer({ dataDirectory: path.join(directory, "board"), codexStatePath: path.join(home, ".codex-global-state.json") });
+  resources.app = app;
   const address = await app.listen({ port: 0 });
-  t.after(() => app.close());
   const url = `http://127.0.0.1:${address.port}`;
   async function post(route, body) {
     return fetch(url + route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
