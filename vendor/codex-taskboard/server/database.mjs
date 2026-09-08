@@ -60,6 +60,7 @@ function taskFromRow(row) {
     version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    lastCommentAt: row.last_comment_at ?? null,
   };
 }
 
@@ -1044,7 +1045,7 @@ export class TaskboardDatabase {
     }
 
     const sql = `
-      SELECT * FROM tasks
+      SELECT tasks.*, (SELECT MAX(created_at) FROM comments WHERE task_id = tasks.id) AS last_comment_at FROM tasks
       ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY
         CASE status
@@ -1064,7 +1065,7 @@ export class TaskboardDatabase {
   }
 
   getTask(id) {
-    const row = this.database.prepare("SELECT * FROM tasks WHERE id = ? OR identifier = ?").get(id, id);
+    const row = this.database.prepare("SELECT tasks.*, (SELECT MAX(created_at) FROM comments WHERE task_id = tasks.id) AS last_comment_at FROM tasks WHERE id = ? OR identifier = ?").get(id, id);
     return row ? this.#taskWithRelations(row) : null;
   }
 

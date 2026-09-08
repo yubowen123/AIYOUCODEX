@@ -57,7 +57,7 @@ test("entry clones the native Plugins row and mounts a resizable side panel", ()
   assert.match(source, /document\.querySelector\("\.app-shell-main-content-frame"\)/);
   assert.match(source, /const surface = viewport\?\.parentElement/);
   assert.match(source, /surface\.appendChild\(page\)/);
-  assert.match(source, /#\$\{PAGE_ID\} \{[\s\S]*?flex: 0 0 var\(--codex-taskboard-panel-width/);
+  assert.match(source, /#\$\{PAGE_ID\} \{[\s\S]*?flex: 0 1 var\(--codex-taskboard-panel-width/);
   assert.match(source, /PANEL_WIDTH_KEY/);
   const mountSource = source.slice(source.indexOf("function mountActivePage"), source.indexOf("function closeTaskboard"));
   assert.doesNotMatch(mountSource, /HIDDEN_ATTRIBUTE|hideNativeHeader|muteNativeSelection/);

@@ -1049,6 +1049,18 @@
       #${EFFICIENCY_PANEL_ID} [data-efficiency-skill-results] small { display: block; opacity: .65; overflow-wrap: anywhere; }
       #${EFFICIENCY_PANEL_ID} [data-efficiency-execution-prompt] { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 42vh; overflow: auto; padding: 10px; border: 1px solid #80808030; border-radius: 8px; }
       #${EFFICIENCY_PANEL_ID} [data-efficiency-summary-sources] { white-space: pre-wrap; overflow-wrap: anywhere; }
+      #${EFFICIENCY_PANEL_ID} .aiyou-usage-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+      #${EFFICIENCY_PANEL_ID} .aiyou-usage-heading h3 { margin: 0; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-usage-target] { overflow-wrap: anywhere; font-weight: 600; }
+      #${EFFICIENCY_PANEL_ID} .aiyou-usage-totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+      #${EFFICIENCY_PANEL_ID} .aiyou-usage-totals > div { min-width: 0; padding: 10px; border-radius: 8px; background: color-mix(in srgb, currentColor 5%, Canvas); }
+      #${EFFICIENCY_PANEL_ID} .aiyou-usage-totals strong { display: block; font-size: 20px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-usage-section] summary { cursor: pointer; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-usage-section] table { width: 100%; table-layout: fixed; margin-top: 8px; border-collapse: collapse; font-size: 12px; }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-usage-section] th, #${EFFICIENCY_PANEL_ID} [data-efficiency-usage-section] td {
+        padding: 6px 3px; text-align: right; vertical-align: top; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+      }
+      #${EFFICIENCY_PANEL_ID} [data-efficiency-usage-section] th:first-child { text-align: left; width: 40%; }
       #${CUSTOM_SHORTCUT_PAGE_ID} {
         position: relative;
         z-index: 30;
@@ -2585,6 +2597,7 @@
     customShortcutPage?.removeAttribute("data-codex-custom-shortcut-item");
     if (restoreFocus) customShortcutLastFocusedElement?.focus?.();
     customShortcutLastFocusedElement = null;
+    scheduleSync();
   }
 
   function ensureManagedShortcut(shortcutId, options = {}) {
@@ -3298,6 +3311,7 @@
     const active = skillOrganizerOpening || Boolean(shell && !shell.hidden);
     button.dataset.active = String(active);
     button.setAttribute("aria-current", String(active));
+    button.setAttribute("aria-expanded", String(active));
     const label = button.querySelector(`.${SHORTCUT_LABEL_CLASS}`);
     if (skillOrganizerOpening) {
       button.setAttribute("aria-busy", "true");
@@ -3305,7 +3319,7 @@
       if (label) label.textContent = "正在打开…";
     } else {
       button.removeAttribute("aria-busy");
-      button.setAttribute("aria-label", "打开Skills 分组");
+      button.setAttribute("aria-label", `${active ? "收起" : "打开"}Skills 分组`);
       if (label) label.textContent = "Skills 分组";
     }
   }
@@ -3388,7 +3402,7 @@
 
   function closeSkillsGrouping(restoreFocus = true) {
     const shell = document.getElementById(SKILL_ORGANIZER_ID);
-    if (shell && hostSkillCatalog.length) shell.hidden = true;
+    if (shell) shell.hidden = true;
     skillContextMenu?.remove();
     skillContextMenu = null;
     skillOrganizerOpening = false;
@@ -3493,6 +3507,26 @@
     if (node && node.textContent !== text) node.textContent = text;
   }
 
+  function updateEfficiencyUsage() {
+    // Usage belongs to the exact active conversation, independent of preference scope or task-card drafts.
+    const actual = efficiencySnapshot?.scopeAvailable?.thread === true ? efficiencySnapshot?.usage : null;
+    const available = actual?.available === true;
+    const format = (value) => Number.isSafeInteger(value) && value >= 0 ? value.toLocaleString("zh-CN") : "--";
+    setEfficiencyText("[data-efficiency-usage-target]", efficiencySnapshot?.targetLabel || "未选择可验证的本地任务");
+    for (const scope of ["cumulative", "lastRequest"]) {
+      const counters = available ? actual[scope] : null;
+      setEfficiencyText(`[data-efficiency-usage-total="${scope}"]`, format(counters?.totalTokens));
+      for (const field of ["inputTokens", "cachedInputTokens", "outputTokens", "reasoningOutputTokens", "totalTokens"]) {
+        setEfficiencyText(`[data-efficiency-usage-scope="${scope}"][data-efficiency-usage-field="${field}"]`, format(counters?.[field]));
+      }
+    }
+    const timestamp = available && typeof actual.timestamp === "string" ? new Date(actual.timestamp) : null;
+    setEfficiencyText("[data-efficiency-usage]", !available ? "真实用量暂不可用；尚未读取到当前对话的 Token 记录。"
+      : timestamp && Number.isFinite(timestamp.getTime())
+        ? `最近记录：${timestamp.toLocaleString("zh-CN", { hour12: false })}（本机时间）`
+        : "最近记录时间未知；仅展示已记录的 Token。");
+  }
+
   function updateEfficiencyStatus() {
     if (!efficiencyPanel) return;
     const connected = typeof window[EFFICIENCY_BINDING] === "function" && Boolean(efficiencySnapshot);
@@ -3511,15 +3545,7 @@
       ? `当前会话已加载 · ${String(hook.loadedAt)}`
       : hook.trusted === false ? "已保存的规则需先在 Codex 中审阅并信任；当前会话尚未确认加载。"
         : "配置保存不等于会话加载；等待真实加载回执。本轮明确要求优先。");
-    const actual = efficiencySnapshot?.usage;
-    const totals = actual?.cumulative || actual?.lastRequest || actual?.totals || actual;
-    const fields = [["inputTokens", "输入"], ["cachedInputTokens", "缓存输入"], ["outputTokens", "输出"],
-      [Object.hasOwn(totals || {}, "reasoningOutputTokens") ? "reasoningOutputTokens" : "reasoningTokens", "推理"], ["totalTokens", "总计"]];
-    const numbers = actual?.available === true ? fields.flatMap(([key, label]) =>
-      Number.isFinite(totals?.[key]) && totals[key] >= 0 ? [`${label} ${totals[key].toLocaleString()}`] : []) : [];
-    setEfficiencyText("[data-efficiency-usage]", numbers.length
-      ? `${actual?.cumulative ? "本会话累计" : actual?.lastRequest ? "最近请求" : "真实用量"}：${numbers.join(" · ")}。缓存包含在输入中，推理包含在输出中。`
-      : "真实用量暂不可用；不估算节省比例，也不将账户剩余额度当作 Token 节省量。");
+    updateEfficiencyUsage();
     setEfficiencyText("[data-efficiency-message]", efficiencyMessage);
     setEfficiencyText("[data-efficiency-error]", efficiencyError);
     setEfficiencyText("[data-efficiency-target]", efficiencySnapshot?.targetLabel || "当前选中的 Codex 任务");
@@ -3824,7 +3850,24 @@
     page.setAttribute("aria-label", "输出偏好");
     page.innerHTML = `<header><h2 data-efficiency-title>输出偏好</h2><button type="button" data-efficiency-close aria-label="关闭面板">×</button></header>
       <div class="aiyou-efficiency-body">
-        <section data-efficiency-settings-view aria-label="配置与加载状态"><strong data-efficiency-effective></strong><p data-efficiency-hook></p><button type="button" data-efficiency-request="refresh">刷新状态</button>
+        <section data-efficiency-usage-section aria-label="当前任务用量">
+          <div class="aiyou-usage-heading"><h3>当前任务用量</h3><button type="button" data-efficiency-request="refresh">刷新状态</button></div>
+          <p data-efficiency-usage-target></p>
+          <div class="aiyou-usage-totals">
+            <div>本对话累计<strong data-efficiency-usage-total="cumulative">--</strong><small>Token</small></div>
+            <div>最近一次请求<strong data-efficiency-usage-total="lastRequest">--</strong><small>Token</small></div>
+          </div>
+          <p class="aiyou-efficiency-note">仅当前对话，不含同一文件夹其他任务；不是账号总量，也不代表当前上下文占用。</p>
+          <details><summary>输入、输出与缓存明细</summary>
+            <table aria-label="当前对话 Token 用量明细"><thead><tr><th scope="col">Token 类型</th><th scope="col">本对话累计</th><th scope="col">最近一次请求</th></tr></thead><tbody>
+              ${[["inputTokens", "输入"], ["cachedInputTokens", "缓存输入（已计入输入）"], ["outputTokens", "输出"], ["reasoningOutputTokens", "推理输出（已计入输出）"], ["totalTokens", "总计"]].map(([field, label]) =>
+                `<tr><th scope="row">${label}</th><td data-efficiency-usage-scope="cumulative" data-efficiency-usage-field="${field}">--</td><td data-efficiency-usage-scope="lastRequest" data-efficiency-usage-field="${field}">--</td></tr>`).join("")}
+            </tbody></table>
+            <p class="aiyou-efficiency-note">累计包含多次模型请求的重复上下文；最近一次请求不等于完整一轮对话。缓存与推理是子项，不重复相加；缺失字段显示 --，不估算费用或节省比例。</p>
+          </details>
+          <p data-efficiency-usage class="aiyou-efficiency-note"></p>
+        </section>
+        <section data-efficiency-settings-view aria-label="配置与加载状态"><strong data-efficiency-effective></strong><p data-efficiency-hook></p>
           <p class="aiyou-efficiency-note">精简的是重复说明，不压缩交付物、风险、失败或验证信息。不自动发送消息。</p></section>
         <p data-efficiency-stale hidden>当前任务已切换，旧草稿已保留且暂停保存。<button type="button" data-efficiency-load-current>放弃旧草稿，载入当前任务</button></p>
         <label data-efficiency-settings-view>设置范围<select data-efficiency-scope><option value="global">全局默认</option><option value="project">当前项目</option><option value="thread">当前对话</option></select></label>
@@ -3853,7 +3896,6 @@
           <div class="aiyou-efficiency-actions"><button type="button" data-efficiency-confirm-execution data-efficiency-save>确认保存并发送</button><button type="button" data-efficiency-cancel-execution>取消，继续编辑</button></div>
         </section>
         <p data-efficiency-dirty class="aiyou-efficiency-note"></p><p data-efficiency-message role="status"></p><p data-efficiency-error role="alert"></p>
-        <section data-efficiency-settings-view><h3>用量信息</h3><p data-efficiency-usage></p></section>
       </div>`;
     page.querySelector("[data-efficiency-close]").onclick = () => closeEfficiencyPanel();
     page.querySelector("[data-efficiency-scope]").onchange = (event) => {
@@ -3992,7 +4034,11 @@
       button = document.createElement("button"); button.id = TASK_CONTEXT_BUTTON_ID; button.type = "button";
       button.textContent = "任务上下文"; button.title = "查看、整理和确认当前对话的任务上下文";
       button.setAttribute("aria-controls", EFFICIENCY_PANEL_ID);
-      button.onclick = (event) => { event.stopPropagation(); openTaskContextPanel(); };
+      button.onclick = (event) => {
+        event.stopPropagation();
+        if (efficiencyView === "context" && efficiencyPanel && !efficiencyPanel.hidden) closeEfficiencyPanel();
+        else openTaskContextPanel();
+      };
     }
     if (button.parentElement !== obstacle) obstacle.prepend(button);
     button.hidden = false;
@@ -4338,9 +4384,17 @@
     button.append(shortcutIcon(item.button, SHORTCUT_ICON_CLASS, item.name, item.icon), label);
     button.onclick = () => {
       if (item.kind === "settings") openShortcutSettings();
-      else if (item.kind === "enhancement") item.activate?.();
+      else if (item.kind === "enhancement") {
+        if (shortcutPanelIsOpen(item)) {
+          if (item.id === "skills-grouping") closeSkillsGrouping();
+          else if (item.id === "asset-console") closeAssetConsolePanel();
+        } else item.activate?.();
+      }
       else if ((item.custom || item.managed) && item.openMode === "browser") openCustomShortcutInBrowser(item);
-      else if (item.custom || item.managed) openCustomShortcutPanel(item);
+      else if (item.custom || item.managed) {
+        if (shortcutPanelIsOpen(item)) closeCustomShortcutPanel();
+        else openCustomShortcutPanel(item);
+      }
       else findNativeShortcutButton(item.name)?.click();
     };
     wrap.appendChild(button);
@@ -4364,6 +4418,18 @@
     return wrap;
   }
 
+  // User activation toggles; command/search APIs remain idempotent ensure-open.
+  function shortcutPanelIsOpen(item) {
+    if (item.custom || item.managed) return customShortcutPageIsVisible()
+      && customShortcutPage.dataset.codexCustomShortcutItem === shortcutItemKey(item);
+    if (item.id === "asset-console") return Boolean(assetConsolePage && !assetConsolePage.hidden);
+    if (item.id === "skills-grouping") {
+      const shell = document.getElementById(SKILL_ORGANIZER_ID);
+      return skillOrganizerOpening || Boolean(shell && !shell.hidden);
+    }
+    return false;
+  }
+
   function updateShortcutCard(grid, item) {
     const button = Array.from(grid.querySelectorAll("[data-codex-sidebar-shortcut-card]"))
       .find((candidate) => item.managed
@@ -4374,19 +4440,13 @@
     if (!button) return;
     if (!item.button) {
       button.disabled = false;
-      const active = item.managed
-        ? customShortcutPage?.hidden === false
-          && customShortcutPage.dataset.codexCustomShortcutItem === shortcutItemKey(item)
-        : item.id === "asset-console"
-        ? Boolean(assetConsolePage && !assetConsolePage.hidden)
-        : item.id === "skills-grouping"
-          ? skillOrganizerOpening || Boolean(document.getElementById(SKILL_ORGANIZER_ID))
-          : false;
+      const active = shortcutPanelIsOpen(item);
       button.dataset.active = String(active);
       button.setAttribute("aria-current", String(active));
+      button.setAttribute("aria-expanded", String(active));
       if (item.id === "skills-grouping" && skillOrganizerOpening) button.setAttribute("aria-busy", "true");
       else button.removeAttribute("aria-busy");
-      button.setAttribute("aria-label", item.kind === "settings" ? "管理快捷入口" : `打开${item.name}`);
+      button.setAttribute("aria-label", item.kind === "settings" ? "管理快捷入口" : `${active ? "收起" : "打开"}${item.name}`);
       button.closest("[data-codex-sidebar-shortcut-card-wrap]")
         ?.querySelector(".codex-sidebar-shortcut-status")?.remove();
       if (item.id === "skills-grouping") updateSkillsGroupingShortcutState();
@@ -4398,6 +4458,10 @@
       || item.button.getAttribute("data-active") === "true"
       || state === "open" || state === "active" || state === "selected";
     button.dataset.active = String(active);
+    if (item.name === "项目管理") {
+      button.setAttribute("aria-expanded", String(active));
+      button.setAttribute("aria-controls", "codex-taskboard-page");
+    }
     button.setAttribute("aria-label", item.button.getAttribute("aria-label") || item.name);
     const wrap = button.closest("[data-codex-sidebar-shortcut-card-wrap]");
     const hasStatus = item.button.children.length > 1;
@@ -6350,6 +6414,9 @@
   function handleWorkspacePanelMessage(event) {
     if (event.source !== window || event.origin !== window.location.origin || event.data?.type !== WORKSPACE_PANEL_EVENT) return;
     if (event.data.panel === "taskboard") {
+      // postMessage is asynchronous: a previous open may arrive after the user
+      // has already closed Taskboard or switched to another shortcut.
+      if (!document.documentElement.hasAttribute("data-codex-taskboard-open")) return;
       closeEfficiencyPanel(false);
       closeCustomShortcutPanel(false);
       closeAssetConsolePanel({ notify: false, restoreFocus: false });

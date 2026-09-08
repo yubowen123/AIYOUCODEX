@@ -3,6 +3,7 @@ import type { Task, TaskPriority, TaskStatus } from "../types";
 import { ActorAvatar } from "./ActorAvatar";
 import { LinearIcon, LinearPriorityIcon, LinearStatusIcon } from "./LinearIcon";
 import { taskGuidance } from "../../../shared/task-guidance.mjs";
+import { compareTaskActivity, taskActivityLabel, type ThreadActivity } from "../../../shared/task-activity.mjs";
 
 export type ProjectSwimlaneId = "ready" | "active" | "review" | "advance" | "done" | "canceled";
 
@@ -50,6 +51,7 @@ interface ProjectSwimlaneBoardProps {
   tasks: Task[];
   projectNames: Map<string, string>;
   projectUrgencies: Map<string, TaskPriority>;
+  threadActivity: ThreadActivity;
   loading: boolean;
   movingTaskId: string | null;
   onOpenTask: (task: Task) => void;
@@ -61,6 +63,7 @@ export function ProjectSwimlaneBoard({
   tasks,
   projectNames,
   projectUrgencies,
+  threadActivity,
   loading,
   movingTaskId,
   onOpenTask,
@@ -75,8 +78,8 @@ export function ProjectSwimlaneBoard({
   const [laneResize, setLaneResize] = useState<LaneResizeState | null>(null);
   const tasksByLane = useMemo(() => new Map(SWIMLANES.map((lane) => [
     lane.id,
-    tasks.filter((task) => lane.statuses.includes(task.status)),
-  ])), [tasks]);
+    tasks.filter((task) => lane.statuses.includes(task.status)).sort((left, right) => compareTaskActivity(left, right, threadActivity)),
+  ])), [tasks, threadActivity]);
 
   function finishDrag() {
     setDraggedTaskId(null);
@@ -204,6 +207,7 @@ export function ProjectSwimlaneBoard({
                         <ActorAvatar actor={task.assignee} className="project-swimlane-assignee" />
                       </div>
                       <span className="project-swimlane-identifier">{task.identifier}</span>
+                      <span className="project-swimlane-message-time">{taskActivityLabel(task, threadActivity)}</span>
                       <h3>{task.title}</h3>
                       <div className="project-swimlane-guidance">
                         <div className="project-swimlane-description">

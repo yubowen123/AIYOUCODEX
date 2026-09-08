@@ -26,7 +26,7 @@ jobs:
       - name: Run all tests with bounded process concurrency
         run: |
           node -e "const os=require('node:os'); console.log(JSON.stringify({platform:process.platform,node:process.version,parallelism:os.availableParallelism(),totalMemoryMiB:Math.round(os.totalmem()/1024**2),freeMemoryMiB:Math.round(os.freemem()/1024**2),testConcurrency:2}))"
-          node --test --test-concurrency=2 test/*.test.mjs
+          node --test --test-concurrency=2 test/*.test.mjs vendor/codex-taskboard/test/task-activity.test.mjs
         env:
           AIYOUCODEX_REQUIRE_BROWSER: '1'
       - run: node scripts/verify-public-boundary.mjs

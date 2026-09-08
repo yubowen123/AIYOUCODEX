@@ -63,6 +63,7 @@ test("actual token events replace cumulative snapshots without summing counters 
     lastRequest: { inputTokens: 150, cachedInputTokens: 80, outputTokens: 30, reasoningOutputTokens: 10, totalTokens: 180 },
   });
   assert.equal(presentTokenUsage(usage).scope, "session");
+  assert.equal(presentTokenUsage(usage).timestamp, usage.timestamp, "Expose the source record time, never the time of refresh");
   assert.match(presentTokenUsage(usage).text, /总计 300/u);
   assert.equal("savingsPercent" in presentTokenUsage(usage), false);
 });
@@ -88,6 +89,8 @@ test("real zero counters remain zero while missing, malformed and impossible cou
   } }, "not-a-date")]);
   assert.deepEqual(usage.cumulative, { inputTokens: 0, cachedInputTokens: null, outputTokens: null, reasoningOutputTokens: null, totalTokens: 0 });
   assert.equal(usage.timestamp, null);
+  assert.equal(presentTokenUsage(usage).timestamp, null);
+  assert.equal(presentTokenUsage({ ...usage, timestamp: "not-a-date" }).timestamp, null);
   assert.equal(presentTokenUsage(usage).available, true);
   assert.match(presentTokenUsage(usage).text, /输入 0.*总计 0/u);
   assert.equal(parseTokenUsageLines([tokenEvent({ total_token_usage: { input_tokens: 1.5, output_tokens: Number.MAX_SAFE_INTEGER + 1 } })]), null);
@@ -105,6 +108,7 @@ test("last request is not mislabelled as a whole turn and missing totals are nev
   assert.match(presentation.note, /推理包含在输出中/u);
   assert.equal(presentTokenUsage(null).available, false);
   assert.equal(presentTokenUsage(null).text, "Token 用量暂不可用");
+  assert.equal(presentTokenUsage(null).timestamp, null);
 });
 
 test("the most constrained active window is displayed when Codex returns two limits", async () => {

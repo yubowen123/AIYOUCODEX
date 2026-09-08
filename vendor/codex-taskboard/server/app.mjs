@@ -30,6 +30,7 @@ import {
   isLocalCompanionRoute,
 } from "./cloud-proxy.mjs";
 import { ApiError, TaskboardDatabase } from "./database.mjs";
+import { createThreadActivityReader, THREAD_ID_PATTERN } from "./thread-activity.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
@@ -1413,6 +1414,7 @@ export function resolveHost(value = process.env.CODEX_TASKBOARD_HOST ?? "0.0.0.0
 
 export function createTaskboardServer(options = {}) {
   const resolved = resolveServerOptions(options);
+  const readThreadActivity = createThreadActivityReader({ codexHome: path.dirname(resolved.codexStatePath) });
   const database = new TaskboardDatabase(resolved.databasePath);
   const events = new EventHub();
   const cloudConfig = options.cloudConfigStore ?? createCloudConfigStore({
@@ -1582,6 +1584,20 @@ export function createTaskboardServer(options = {}) {
             }
             : {}),
         });
+      }
+
+      if (pathname === "/api/local/thread-activity") {
+        if (!isLoopbackAddress(request.socket.remoteAddress)) throw new ApiError(403, "LOCAL_ONLY", "Local thread metadata requires loopback access");
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        assertNoQuery(url.searchParams, "/api/local/thread-activity");
+        const body = await readJson(request);
+        assertPlainObject(body);
+        assertAllowedKeys(body, new Set(["threadIds"]));
+        if (!Array.isArray(body.threadIds) || body.threadIds.length > 500
+          || body.threadIds.some((id) => typeof id !== "string" || !THREAD_ID_PATTERN.test(id))) {
+          throw new ApiError(400, "INVALID_FIELD", "threadIds must contain at most 500 exact local thread IDs");
+        }
+        return sendJson(response, 200, await readThreadActivity(body.threadIds));
       }
 
       if (pathname === "/api/local/ai/catalog") {

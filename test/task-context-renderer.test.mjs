@@ -7,6 +7,7 @@ import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { connectFixtureBrowser, waitForBrowserState } from "./helpers/browser-state.mjs";
+import { presentTokenUsage } from "../lib/usage-data.mjs";
 
 const source = await readFile(new URL("../inject/conversation-preview.user.js", import.meta.url), "utf8");
 const candidates = [process.env.AIYOUCODEX_TEST_BROWSER,
@@ -70,6 +71,7 @@ test("task context has a native-header entry, isolated drafts, read-only summari
     await client.evaluate(`(()=>{const e=document.querySelector('[data-efficiency-field=${field}]');e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   }
   const visible = (selector) => `!!document.querySelector(${JSON.stringify(selector)})?.getClientRects().length`;
+  async function usageTotals() { return client.evaluate("[...document.querySelectorAll('[data-efficiency-usage-total]')].map(e=>e.textContent)"); }
 
   await update();
   assert.equal(await client.evaluate("document.getElementById('aiyoucodex-task-context-open').parentElement.id"), "native-actions");
@@ -78,15 +80,22 @@ test("task context has a native-header entry, isolated drafts, read-only summari
   await client.evaluate(`${api}.openEfficiencyPanel()`);
   assert.equal(await client.evaluate(visible("[data-efficiency-context-fields]")), false, "Global preference panel contains no visible context fields");
   assert.equal(await client.evaluate(visible("[data-efficiency-target]")), false);
+  assert.equal(await client.evaluate(visible("[data-efficiency-usage-section]")), true, "Preferences also expose explicitly labelled current-task usage");
+  assert.deepEqual(await usageTotals(), ["--", "--"]);
   assert.equal(await client.evaluate("window.__requests.length"), 0, "Opening output preferences does not summarize any conversation");
 
   await click("#aiyoucodex-task-context-open");
   assert.equal(await client.evaluate(`${api}.getEfficiencyState().view`), "context");
   assert.equal(await client.evaluate(visible("[data-efficiency-scope]")), false, "Context panel never displays global/project preference scope");
   assert.equal(await client.evaluate(visible("[data-efficiency-fields]")), false);
+  assert.equal(await client.evaluate(visible("[data-efficiency-usage-section]")), true, "Task context must not hide usage with preference-only controls");
+  assert.equal(await client.evaluate("document.querySelector('.aiyou-efficiency-body').firstElementChild.hasAttribute('data-efficiency-usage-section')"), true);
   const firstSummary = await lastRequest("summarizeContext");
   assert.equal(firstSummary.expectedTargetKey, snapshot.targetKey);
   await click("#aiyoucodex-task-context-open");
+  assert.equal(await client.evaluate(`${api}.getEfficiencyState().open`), false, "Repeated context icon activation collapses the panel");
+  await click("#aiyoucodex-task-context-open");
+  assert.equal(await client.evaluate(`${api}.getEfficiencyState().open`), true, "A third activation restores the same context panel");
   assert.equal(await client.evaluate("window.__requests.length"), 1, "Repeated open while summarizing does not duplicate work");
   const markup = '<img src=x onerror="window.__unsafe=true">';
   await resolve(firstSummary, { snapshot, contextDraft: { context: { goal: markup, progress: "已分析", nextStep: "补齐回归测试", agreements: ["不要发送外部消息"] },
@@ -101,7 +110,13 @@ test("task context has a native-header entry, isolated drafts, read-only summari
   await input("goal", "A 的手动草稿");
   await client.evaluate("(()=>{const e=document.querySelector('[data-efficiency-field=goal]');e.focus();e.setSelectionRange(2,4);window.__goalNode=e})()");
   snapshot.contextSourceRevision = "history-a-2";
+  snapshot.usage = presentTokenUsage({ timestamp: "2026-09-07T03:04:05Z", cumulative: { inputTokens: 20000, cachedInputTokens: 15000, outputTokens: 1200, reasoningOutputTokens: 800, totalTokens: 21200 },
+    lastRequest: { inputTokens: 2000, cachedInputTokens: 1800, outputTokens: 120, reasoningOutputTokens: 80, totalTokens: 2120 } });
   await update();
+  assert.deepEqual(await usageTotals(), ["21,200", "2,120"]);
+  assert.equal(await client.evaluate("document.querySelector('[data-efficiency-usage-target]').textContent"), "对话 A");
+  assert.match(await client.evaluate("document.querySelector('[data-efficiency-usage]').textContent"), /最近记录：.*2026.*本机时间/);
+  assert.match(await client.evaluate("document.querySelector('[data-efficiency-usage-section]').textContent"), /不是账号总量/);
   assert.deepEqual(await client.evaluate("(()=>{const e=document.querySelector('[data-efficiency-field=goal]');return[e.value,document.activeElement===e,e===window.__goalNode,e.selectionStart,e.selectionEnd]})()"), ["A 的手动草稿", true, true, 2, 4]);
   assert.equal(await client.evaluate("window.__requests.length"), 1, "New history never overwrites a dirty manual draft");
   await click("[data-efficiency-summarize]");
@@ -109,13 +124,16 @@ test("task context has a native-header entry, isolated drafts, read-only summari
   await click("[data-efficiency-cancel-summary]");
   assert.equal(await client.evaluate("document.querySelector('[data-efficiency-field=goal]').value"), "A 的手动草稿");
 
-  const second = { ...snapshot, targetKey: "opaque-context-B", targetLabel: "对话 B", contextSourceRevision: "history-b-1", context: { ...snapshot.context, goal: "只属于 B" } };
+  const second = { ...snapshot, targetKey: "opaque-context-B", targetLabel: "对话 B", contextSourceRevision: "history-b-1", context: { ...snapshot.context, goal: "只属于 B" }, usage: presentTokenUsage(null) };
   await update(second);
+  assert.deepEqual(await usageTotals(), ["--", "--"], "An unknown B record clears all A counters immediately");
+  assert.equal(await client.evaluate("document.querySelector('[data-efficiency-usage-target]').textContent"), "对话 B");
   assert.equal(await client.evaluate("document.querySelector('[data-efficiency-field=goal]').value"), "只属于 B", "Switching target immediately removes A's content from the current view");
   const summaryB = await lastRequest("summarizeContext");
   await update(snapshot);
   assert.equal(await client.evaluate("document.querySelector('[data-efficiency-field=goal]').value"), "A 的手动草稿", "Returning restores the correct per-conversation draft");
   await resolve(summaryB, { snapshot: second, contextDraft: { context: { goal: "B 的迟到响应" }, sourceRevision: "history-b-1", hasContent: true } });
+  assert.deepEqual(await usageTotals(), ["21,200", "2,120"], "Late B replies cannot overwrite current A usage");
   assert.equal(await client.evaluate("document.querySelector('[data-efficiency-field=goal]').value"), "A 的手动草稿", "A late B response cannot replace the currently active A draft");
 
   await click("[data-efficiency-request=previewContextExecution]");
@@ -163,13 +181,34 @@ test("task context has a native-header entry, isolated drafts, read-only summari
   assert.match(await client.evaluate(`${api}.getEfficiencyState().message`), /可能只填入了部分/);
   assert.doesNotMatch(await client.evaluate(`${api}.getEfficiencyState().message`), /消息已预填/);
 
+  // A read-only refresh updates usage without changing the manually edited task card.
+  await input("goal", "刷新后也要保留的草稿");
+  await click("[data-efficiency-request=refresh]");
+  const refresh = await lastRequest("refresh");
+  assert.equal(refresh.expectedTargetKey, snapshot.targetKey);
+  snapshot.usage = presentTokenUsage({ timestamp: "2026-09-07T03:05:06Z", cumulative: { totalTokens: 22000 }, lastRequest: { totalTokens: 0 } });
+  await resolve(refresh, snapshot);
+  assert.deepEqual(await usageTotals(), ["22,000", "0"]);
+  assert.equal(await client.evaluate("document.querySelector('[data-efficiency-field=goal]').value"), "刷新后也要保留的草稿");
+  assert.match(await client.evaluate(`${api}.getEfficiencyState().message`), /状态已刷新，未保存草稿保持不变/);
+  assert.equal(await client.evaluate("document.getElementById('composer').textContent"), "绝不能清除或发送的已有输入");
+
+  // Keep long counts and expanded details inside a narrow side panel.
+  snapshot.usage = presentTokenUsage({ cumulative: { inputTokens: Number.MAX_SAFE_INTEGER, totalTokens: Number.MAX_SAFE_INTEGER }, lastRequest: { totalTokens: 0 } });
+  await update();
+  await click("[data-efficiency-usage-section] summary");
+  await client.send("Emulation.setDeviceMetricsOverride", { width: 760, height: 700, deviceScaleFactor: 1, mobile: false });
+  await waitForBrowserState(client, `(()=>{const b=document.querySelector('.aiyou-efficiency-body');return b.clientWidth>0&&b.scrollWidth<=b.clientWidth+1})()`, "Usage totals and detail columns do not cause horizontal panel overflow");
+  await client.send("Emulation.clearDeviceMetricsOverride");
+
   // React replaces its toolbar; one stable entry returns without touching native controls.
   await client.evaluate("document.getElementById('native-actions').replaceWith(document.getElementById('native-actions').cloneNode(true));document.getElementById('aiyoucodex-task-context-open').remove()");
   await update();
-  assert.equal(await client.evaluate("document.querySelectorAll('#aiyoucodex-task-context-open').length"), 1);
+  await waitForBrowserState(client, "document.querySelectorAll('#aiyoucodex-task-context-open').length===1", "The toolbar entry returns after the scheduled DOM-repair pass, even when the snapshot is unchanged");
   await click("[data-efficiency-close]");
   assert.equal(await client.evaluate(`${api}.getEfficiencyState().open`), false);
   await update({ ...snapshot, targetKey: "no-local-target", scopeAvailable: { project: false, thread: false }, context: {} });
+  assert.deepEqual(await usageTotals(), ["--", "--"], "Unresolved native targets cannot display previously available counters");
   assert.equal(await client.evaluate(visible("#aiyoucodex-task-context-open")), false, "Nonlocal or unavailable targets do not expose an actionable task-context entry");
   await client.evaluate(`${api}.destroy()`);
   assert.equal(await client.evaluate("document.getElementById('aiyoucodex-task-context-open')===null"), true);

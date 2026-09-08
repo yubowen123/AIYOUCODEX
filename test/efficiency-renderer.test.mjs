@@ -164,8 +164,9 @@ test("isolated browser: efficiency single click, scope safety, independent draft
     lastRequest: { inputTokens: 99, outputTokens: 5 } });
   await client.evaluate(`${api}.setSnapshot({efficiency:${JSON.stringify(snapshot)}})`);
   assert.match(await client.evaluate("document.querySelector('[data-efficiency-hook]').textContent"), /当前会话已加载/);
-  assert.match(await client.evaluate("document.querySelector('[data-efficiency-usage]').textContent"), /本会话累计：输入 432 · 输出 12 · 推理 8 · 总计 444/);
-  assert.doesNotMatch(await client.evaluate("document.querySelector('[data-efficiency-usage]').textContent"), /缓存输入 0|推理 0|%/);
+  assert.deepEqual(await client.evaluate("[...document.querySelectorAll('[data-efficiency-usage-scope=cumulative]')].map(e=>e.textContent)"), ["432", "--", "12", "8", "444"]);
+  assert.deepEqual(await client.evaluate("[...document.querySelectorAll('[data-efficiency-usage-total]')].map(e=>e.textContent)"), ["444", "--"], "Never infer a missing request total from input and output");
+  assert.doesNotMatch(await client.evaluate("document.querySelector('[data-efficiency-usage-section]').textContent"), /%/);
   snapshot.usage = presentTokenUsage({ cumulative: null, lastRequest: { inputTokens: 99, outputTokens: 5, cachedInputTokens: 0 } });
   snapshot.hookStatus = { loaded: false, loadedAt: "2026-09-06T12:00:00Z", currentPolicyFingerprint: "updated-policy" };
   const markup = '<img src="fixture-invalid" onerror="window.__draftExecuted=true">';
@@ -173,7 +174,9 @@ test("isolated browser: efficiency single click, scope safety, independent draft
   snapshot.context = { ...snapshot.context, goal: markup, progress: '</textarea><script>window.__draftExecuted=true</script>',
     nextStep: '引用 "quotes" 与 \\path', agreements: [markup] };
   await client.evaluate(`${api}.setSnapshot({efficiency:${JSON.stringify(snapshot)},skillCatalog:[{id:'skill:x',name:'safe',title:${JSON.stringify(markup)},description:${JSON.stringify(markup)}}]})`);
-  assert.match(await client.evaluate("document.querySelector('[data-efficiency-usage]').textContent"), /最近请求：输入 99 · 缓存输入 0 · 输出 5/);
+  assert.deepEqual(await client.evaluate("[...document.querySelectorAll('[data-efficiency-usage-scope=lastRequest]')].map(e=>e.textContent)"), ["99", "0", "5", "--", "--"]);
+  assert.deepEqual(await client.evaluate("[...document.querySelectorAll('[data-efficiency-usage-scope=cumulative]')].map(e=>e.textContent)"), ["--", "--", "--", "--", "--"], "A request-only record is not relabelled as cumulative");
+  assert.equal(await client.evaluate("document.querySelector('[data-efficiency-usage-target]').textContent"), markup);
   assert.doesNotMatch(await client.evaluate("document.querySelector('[data-efficiency-hook]').textContent"), /当前会话已加载/,
     "An old timestamp must not override the backend's current-policy mismatch result");
   assert.equal(await client.evaluate("document.querySelector('[data-efficiency-target]').textContent"), markup);
