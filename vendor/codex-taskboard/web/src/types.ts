@@ -212,6 +212,7 @@ export interface TaskRelations {
 }
 
 export interface Task {
+  lastCommentAt?: string | null;
   id: string;
   identifier: string;
   projectId: string;

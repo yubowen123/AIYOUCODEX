@@ -57,6 +57,33 @@ test("controller applies global → project → thread inheritance and reset wit
   assert.deepEqual(view.scopes.thread, {});
 });
 
+test("usage snapshots follow the exact active thread, not its folder, account or previous target", async (t) => {
+  const { controller, activity, repository } = await fixture(t);
+  const reads = [];
+  const usages = {
+    "thread-a": { timestamp: "2026-09-07T01:02:03Z", cumulative: { totalTokens: 1200 }, lastRequest: { totalTokens: 120 } },
+    "thread-b": { timestamp: "2026-09-07T02:03:04Z", cumulative: { totalTokens: 80 }, lastRequest: { totalTokens: 0 } },
+  };
+  repository.readTokenUsage = async (id) => { reads.push(id); return usages[id] || null; };
+  const first = await controller.snapshot();
+  assert.equal(first.targetLabel, "First task");
+  assert.equal(first.usage.cumulative.totalTokens, 1200);
+  assert.equal(first.usage.lastRequest.totalTokens, 120);
+  assert.equal(first.usage.timestamp, usages["thread-a"].timestamp);
+  activity.id = "thread-b"; // Same project directory as A, but independent token counters.
+  const second = await controller.snapshot();
+  assert.equal(second.targetLabel, "Second task");
+  assert.notEqual(second.targetKey, first.targetKey);
+  assert.equal(second.usage.cumulative.totalTokens, 80);
+  assert.equal(second.usage.lastRequest.totalTokens, 0);
+  assert.equal(second.usage.timestamp, usages["thread-b"].timestamp);
+  activity.id = "projectless";
+  assert.equal((await controller.snapshot()).usage.available, false);
+  activity.id = "unknown";
+  assert.equal((await controller.snapshot()).usage.cumulative, null);
+  assert.deepEqual(reads, ["thread-a", "thread-b", "projectless"], "No account-wide or unresolved-target fallback read");
+});
+
 test("stale target keys and a switch during asynchronous resolution reject rather than retarget writes", async (t) => {
   const { controller, store, activity } = await fixture(t);
   const first = await controller.snapshot();

@@ -341,6 +341,13 @@ export async function listAllTasks(signal?: AbortSignal): Promise<Task[]> {
   return data.tasks;
 }
 
+export async function readThreadActivity(threadIds: string[], signal?: AbortSignal): Promise<Record<string, string | null>> {
+  const data = await request<{ available: boolean; byThread: Record<string, string | null> }>("/api/local/thread-activity", {
+    method: "POST", body: JSON.stringify({ threadIds }), signal,
+  });
+  return data.available ? data.byThread : {};
+}
+
 export async function createTask(projectId: string, draft: TaskDraft, threadId?: string): Promise<Task> {
   const data = await request<{ task: Task }>("/api/tasks", {
     method: "POST",

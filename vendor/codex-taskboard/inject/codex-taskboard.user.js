@@ -12,6 +12,9 @@
   const NO_DRAG_LEFT_ID = "codex-taskboard-no-drag-left";
   const NO_DRAG_RIGHT_ID = "codex-taskboard-no-drag-right";
   const STATUS_ID = "codex-taskboard-status";
+  const HEADER_ID = "codex-taskboard-header";
+  const CLOSE_ID = "codex-taskboard-close";
+  const HEADER_HEIGHT = 52;
   const STYLE_ID = "codex-taskboard-inject-style";
   const OWNED_ATTRIBUTE = "data-codex-taskboard-owned";
   const HIDDEN_ATTRIBUTE = "data-codex-taskboard-native-hidden";
@@ -69,6 +72,9 @@
   let hostRequests = new Map();
   let hostRequestSequence = 0;
   let observer = null;
+  let panelLayoutObserver = null;
+  let panelLayoutFrame = null;
+  let panelLayoutNodes = [];
   let reattachTimer = null;
   let lastFocusedElement = null;
   let hostContextSnapshot = null;
@@ -144,11 +150,13 @@
       #${PAGE_ID} {
         position: relative;
         z-index: 30;
-        flex: 0 0 var(--codex-taskboard-panel-width, min(620px, 46vw));
+        flex: 0 1 var(--codex-taskboard-panel-width, min(620px, 46vw));
         width: var(--codex-taskboard-panel-width, min(620px, 46vw));
-        min-width: 420px;
+        min-width: 0;
         max-width: min(1100px, calc(100vw - 360px));
-        height: 100%;
+        box-sizing: border-box;
+        margin-top: var(--codex-taskboard-header-inset, 0px);
+        height: calc(100% - var(--codex-taskboard-header-inset, 0px));
         min-height: 0;
         overflow: hidden;
         border-left: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
@@ -170,10 +178,39 @@
       #${PAGE_ID}[hidden] {
         display: none !important;
       }
+      #${HEADER_ID} {
+        position: relative;
+        z-index: 5;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        box-sizing: border-box;
+        height: ${HEADER_HEIGHT}px;
+        padding: 5px 12px;
+        border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+        background: Canvas;
+        font: 600 14px/1.4 system-ui, sans-serif;
+        -webkit-app-region: no-drag;
+      }
+      #${CLOSE_ID} {
+        flex: 0 0 40px;
+        width: 40px;
+        height: 40px;
+        border: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+        border-radius: 8px;
+        background: Canvas;
+        color: CanvasText;
+        font: 24px/1 system-ui, sans-serif;
+        cursor: pointer;
+        pointer-events: auto;
+        -webkit-app-region: no-drag;
+      }
+      #${CLOSE_ID}:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
       #${FRAME_ID} {
         display: block;
         width: 100%;
-        height: 100%;
+        height: calc(100% - ${HEADER_HEIGHT}px);
         border: 0;
         background: Canvas;
       }
@@ -202,7 +239,7 @@
       }
       #${STATUS_ID} {
         position: absolute;
-        inset: 0;
+        inset: ${HEADER_HEIGHT}px 0 0;
         display: grid;
         place-items: center;
         padding: 24px;
@@ -301,13 +338,18 @@
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      openTaskboard();
+      if (active) closeTaskboard();
+      else openTaskboard();
     });
     return button;
   }
 
   function syncEntryState() {
     if (!entry) return;
+    if (entry.getAttribute("aria-expanded") !== String(active)) entry.setAttribute("aria-expanded", String(active));
+    entry.setAttribute("aria-controls", PAGE_ID);
+    const label = `${active ? "收起" : "打开"}${ENTRY_LABEL}`;
+    if (entry.getAttribute("aria-label") !== label) entry.setAttribute("aria-label", label);
     if (active && entry.getAttribute("aria-current") !== "page") {
       entry.setAttribute("aria-current", "page");
     } else if (!active && entry.hasAttribute("aria-current")) {
@@ -828,6 +870,7 @@
       });
       frameReadyWaiters.clear();
       if (active) showFrame();
+      postPanelVisibility();
       postHostContext();
       return;
     }
@@ -862,15 +905,15 @@
     const left = Math.max(0, x);
     const right = left + width;
     dragRegion.style.left = `${left}px`;
-    dragRegion.style.top = `${Math.max(0, y)}px`;
+    dragRegion.style.top = `${HEADER_HEIGHT + Math.max(0, y)}px`;
     dragRegion.style.width = `${width}px`;
     dragRegion.style.height = `${height}px`;
     noDragLeft.style.left = "0";
-    noDragLeft.style.top = `${Math.max(0, y)}px`;
+    noDragLeft.style.top = `${HEADER_HEIGHT + Math.max(0, y)}px`;
     noDragLeft.style.width = `${left}px`;
     noDragLeft.style.height = `${height}px`;
     noDragRight.style.left = `${right}px`;
-    noDragRight.style.top = `${Math.max(0, y)}px`;
+    noDragRight.style.top = `${HEADER_HEIGHT + Math.max(0, y)}px`;
     noDragRight.style.right = "0";
     noDragRight.style.height = `${height}px`;
     dragRegion.hidden = false;
@@ -907,6 +950,24 @@
       document.addEventListener("pointermove", move, true);
       document.addEventListener("pointerup", up, true);
     }, true);
+
+    const header = document.createElement("header");
+    header.id = HEADER_ID;
+    const title = document.createElement("span");
+    title.textContent = ENTRY_LABEL;
+    const close = document.createElement("button");
+    close.id = CLOSE_ID;
+    close.type = "button";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "关闭项目管理");
+    close.title = "收起项目管理";
+    close.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeTaskboard();
+    });
+    header.append(title, close);
+    section.appendChild(header);
 
     status = document.createElement("div");
     status.id = STATUS_ID;
@@ -1189,14 +1250,78 @@
 
     if (page.parentElement !== surface) surface.appendChild(page);
     page.hidden = false;
+    syncPanelHeaderInset();
+    watchPanelLayout();
     document.documentElement.setAttribute("data-codex-taskboard-open", "true");
+  }
+
+  function nativeHeaderSurfaces() {
+    return Array.from(document.querySelectorAll(
+      '[data-testid="app-shell-header-context-menu-surface"], [data-app-shell-header-obstacle="true"]',
+    )).filter((node) => !node.closest(`[${OWNED_ATTRIBUTE}]`));
+  }
+
+  function syncPanelHeaderInset() {
+    if (!active || !page?.isConnected || page.hidden) return;
+    const rect = page.getBoundingClientRect();
+    const scale = page.offsetHeight > 0 ? rect.height / page.offsetHeight : 1;
+    if (!Number.isFinite(scale) || scale <= 0) return;
+    const previous = Number.parseFloat(page.style.getPropertyValue("--codex-taskboard-header-inset")) || 0;
+    // Subtract our previous margin to measure the original mount position.
+    // Never raise an overlay over the native buttons or modify their hit areas.
+    const baseTop = rect.top - previous * scale;
+    let nativeBottom = baseTop;
+    for (const node of nativeHeaderSurfaces()) {
+      if (node.closest('[hidden], [aria-hidden="true"]')) continue;
+      const style = getComputedStyle(node);
+      if (style.display === "none" || style.visibility !== "visible") continue;
+      const header = node.getBoundingClientRect();
+      if (header.width <= 0 || header.height <= 0 || header.right <= rect.left || header.left >= rect.right) continue;
+      // Only the native top chrome can reserve space, not a floating menu or
+      // similarly named content farther down the conversation.
+      if (header.top > baseTop + HEADER_HEIGHT * 2 * scale || header.bottom <= baseTop) continue;
+      nativeBottom = Math.max(nativeBottom, header.bottom + 8);
+    }
+    const next = Math.max(0, (nativeBottom - baseTop) / scale);
+    const pixels = `${Math.round(next * 100) / 100}px`;
+    if (page.style.getPropertyValue("--codex-taskboard-header-inset") !== pixels) {
+      page.style.setProperty("--codex-taskboard-header-inset", pixels);
+    }
+  }
+
+  function schedulePanelLayout() {
+    if (destroyed || !active || panelLayoutFrame !== null) return;
+    panelLayoutFrame = requestAnimationFrame(() => {
+      panelLayoutFrame = null;
+      syncPanelHeaderInset();
+    });
+  }
+
+  function watchPanelLayout() {
+    if (typeof ResizeObserver !== "function" || !page?.parentElement) return;
+    const nodes = [page, page.parentElement, ...nativeHeaderSurfaces()];
+    if (nodes.length === panelLayoutNodes.length && nodes.every((node, index) => node === panelLayoutNodes[index])) return;
+    panelLayoutObserver?.disconnect();
+    panelLayoutNodes = nodes;
+    panelLayoutObserver = new ResizeObserver(schedulePanelLayout);
+    nodes.forEach((node) => panelLayoutObserver.observe(node));
+  }
+
+  function stopPanelLayout() {
+    panelLayoutObserver?.disconnect();
+    panelLayoutObserver = null;
+    panelLayoutNodes = [];
+    if (panelLayoutFrame !== null) cancelAnimationFrame(panelLayoutFrame);
+    panelLayoutFrame = null;
   }
 
   function closeTaskboard(restoreFocus = true) {
     if (!active && page?.hidden !== false) return;
     openGeneration += 1;
     active = false;
+    stopPanelLayout();
     if (page) page.hidden = true;
+    postPanelVisibility();
     restoreNativeContent();
     restoreNativeSelection();
     document.documentElement.removeAttribute("data-codex-taskboard-open");
@@ -1214,11 +1339,18 @@
     }
     const generation = ++openGeneration;
     active = true;
+    postPanelVisibility();
     window.postMessage({ type: PANEL_EVENT, panel: "taskboard" }, window.location.origin);
     ensureEntry();
     mountActivePage();
     syncEntryState();
     void prepareTaskboard(generation);
+  }
+
+  function postPanelVisibility() {
+    if (frameReady && frame?.contentWindow && frameOrigin) {
+      frame.contentWindow.postMessage({ type: "taskboard:visibility", visible: active }, frameOrigin);
+    }
   }
 
   function isNativePageNavigation(target) {
@@ -1274,6 +1406,8 @@
         "data-app-action-sidebar-thread-active",
         "aria-label",
         "aria-current",
+        "aria-hidden",
+        "hidden",
       ],
     });
   }
@@ -1285,6 +1419,7 @@
     reattachTimer = null;
     observer?.disconnect();
     observer = null;
+    stopPanelLayout();
     cancelFrameReadyWaiters(new Error("任务面板已关闭"));
     hostRequests.forEach(({ reject, timeout }) => {
       window.clearTimeout(timeout);
@@ -1298,6 +1433,10 @@
     window.removeEventListener("popstate", onNativeRouteChange);
     window.removeEventListener("hashchange", onNativeRouteChange);
     window.removeEventListener("resize", scheduleRefresh);
+    window.removeEventListener("resize", schedulePanelLayout);
+    window.visualViewport?.removeEventListener("resize", schedulePanelLayout);
+    window.visualViewport?.removeEventListener("scroll", schedulePanelLayout);
+    document.removeEventListener("scroll", schedulePanelLayout, true);
     closeTaskboard(false);
     document.querySelectorAll(`[${OWNED_ATTRIBUTE}="true"]`).forEach((node) => node.remove());
     if (frameBlobUrl) URL.revokeObjectURL(frameBlobUrl);
@@ -1397,6 +1536,10 @@
   window.addEventListener("popstate", onNativeRouteChange);
   window.addEventListener("hashchange", onNativeRouteChange);
   window.addEventListener("resize", scheduleRefresh);
+  window.addEventListener("resize", schedulePanelLayout);
+  window.visualViewport?.addEventListener("resize", schedulePanelLayout);
+  window.visualViewport?.addEventListener("scroll", schedulePanelLayout);
+  document.addEventListener("scroll", schedulePanelLayout, true);
   document.addEventListener("click", onDocumentClick, true);
   if (document.documentElement) mount();
   else document.addEventListener("DOMContentLoaded", mount, { once: true });

@@ -19,6 +19,8 @@ import {
   type AutomationReasoningEffort,
 } from "../../shared/taskboard-automation-options.mjs";
 import { buildTaskExecutionPrompt } from "../../shared/task-guidance.mjs";
+import { compareTaskActivity } from "../../shared/task-activity.mjs";
+import { useThreadActivity } from "./useThreadActivity";
 import {
   ApiError,
   addTaskRelation,
@@ -675,6 +677,10 @@ function LocalRealtimeSync({
         scheduleRefresh({ projects: true, tasks: !selectedProjectId || affectsSelectedProject });
         return;
       }
+      if (event.type.startsWith("comment.") && !selectedProjectId) {
+        scheduleRefresh({ tasks: true });
+        return;
+      }
       if (!affectsSelectedProject) return;
       if (event.type === "workflow.updated") {
         if (selectedProjectId) void refreshWorkflowOptions(selectedProjectId);
@@ -976,6 +982,7 @@ export function App() {
       ?? projectWorkspacePaths.get(task.projectId);
     return workspaceMatchesFilter(workspacePath, projectFolderFilter);
   }), [deviceWorkspacePaths, projectActivityTasks, projectFolderFilter, projectWorkspacePaths]);
+  const threadActivity = useThreadActivity(selectedProjectId ? tasks : visibleProjectActivityTasks);
   const projectUrgencies = useMemo(() => new Map(projects.map((project) => [
     project.id,
     projectUrgency(
@@ -1679,8 +1686,8 @@ export function App() {
   const filteredTasks = useMemo(() => {
     return tasks.filter(
       (task) => matchesTaskSearch(task, search) && matchesTaskFilters(task, filters),
-    );
-  }, [filters, search, tasks]);
+    ).sort((left, right) => compareTaskActivity(left, right, threadActivity));
+  }, [filters, search, tasks, threadActivity]);
 
   const activeFilterCount = taskFilterCount(filters);
 
@@ -2586,7 +2593,7 @@ export function App() {
               <div>
                 <span>任务面板</span>
                 <h1>项目总览</h1>
-                <p>在六个泳道中直接查看并推进全部项目议题。</p>
+                <p>各栏按最近消息倒序，最新在前；暂无消息时按创建时间排列。</p>
               </div>
               <label className="project-folder-filter">
                 <LinearIcon name="folder" />
@@ -2608,6 +2615,7 @@ export function App() {
                 tasks={visibleProjectActivityTasks}
                 projectNames={projectNames}
                 projectUrgencies={projectUrgencies}
+                threadActivity={threadActivity}
                 loading={projectActivityLoading}
                 movingTaskId={movingTaskId}
                 onOpenTask={openProjectSwimlaneTask}

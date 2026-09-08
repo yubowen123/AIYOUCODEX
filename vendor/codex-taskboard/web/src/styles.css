@@ -638,7 +638,7 @@ kbd {
 .project-card-urgency svg { width: 12px; height: 12px; }
 .project-urgency-badge small { color: inherit; font-size: 8px; font-weight: 450; opacity: .76; }
 .urgency-urgent { color: var(--danger); }
-.urgency-high { color: #e88422; }
+.urgency-high { color: var(--warning); }
 .urgency-medium { color: var(--warning); }
 .urgency-low { color: var(--success); }
 
@@ -947,6 +947,8 @@ kbd {
   cursor: progress;
   opacity: 0.62;
 }
+
+.project-swimlane-message-time { color: var(--text-tertiary); font-size: 10px; overflow-wrap: anywhere; }
 
 .project-swimlane-card-open {
   position: absolute;
@@ -3192,10 +3194,18 @@ kbd {
   fill: currentColor;
 }
 
-.priority-icon-urgent { color: #ff7236; }
-.priority-icon-high { color: #ff7236; }
+.priority-icon-urgent { color: var(--danger); }
+.priority-icon-high { color: var(--warning); }
 .priority-icon-medium { color: var(--warning); }
-.priority-icon-low { color: var(--text-tertiary); }
+.priority-icon-low { color: var(--success); }
+
+/* Priority remains identifiable on the whole card, including hover/focus. */
+:is(.project-swimlane-card, .task-card).priority-urgent { --task-priority-border: var(--danger); }
+:is(.project-swimlane-card, .task-card).priority-high { --task-priority-border: var(--warning); }
+:is(.project-swimlane-card, .task-card).priority-low { --task-priority-border: var(--success); }
+:is(.project-swimlane-card, .task-card):is(.priority-urgent, .priority-high, .priority-low) {
+  border: 2px solid var(--task-priority-border);
+}
 
 .blocked-by-count,
 .sub-issue-progress-chip {

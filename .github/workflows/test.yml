@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   test:
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -21,12 +22,15 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Run local task-activity regression
+        timeout-minutes: 2
+        run: node --test vendor/codex-taskboard/test/task-activity.test.mjs
       # Browser fixtures launch multiple Chrome processes each. Bound test-file
-      # concurrency on hosted runners without skipping any interaction coverage.
+      # concurrency; Windows serializes launches to avoid startup starvation.
       - name: Run all tests with bounded process concurrency
         run: |
-          node -e "const os=require('node:os'); console.log(JSON.stringify({platform:process.platform,node:process.version,parallelism:os.availableParallelism(),totalMemoryMiB:Math.round(os.totalmem()/1024**2),freeMemoryMiB:Math.round(os.freemem()/1024**2),testConcurrency:2}))"
-          node --test --test-concurrency=2 test/*.test.mjs
+          node -e "const os=require('node:os'); console.log(JSON.stringify({platform:process.platform,node:process.version,parallelism:os.availableParallelism(),totalMemoryMiB:Math.round(os.totalmem()/1024**2),freeMemoryMiB:Math.round(os.freemem()/1024**2),testConcurrency:process.platform==='win32'?1:2}))"
+          node --test --test-concurrency=${{ runner.os == 'Windows' && '1' || '2' }} test/*.test.mjs
         env:
           AIYOUCODEX_REQUIRE_BROWSER: '1'
       - run: node scripts/verify-public-boundary.mjs

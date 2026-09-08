@@ -4,6 +4,8 @@ import { promises as fs } from "node:fs";
 import { createServer, get } from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { EMBEDDED_MEDIA_CHUNK_BYTES, fileResponseRange, streamAssetFile } from "../vendor/codex-workspace-enhancer/asset-browser/media-file-response.js";
 
 test("media range selection clamps ends, handles suffixes and rejects malformed/unsatisfiable ranges", () => {
@@ -19,15 +21,40 @@ test("media range selection clamps ends, handles suffixes and rejects malformed/
   assert.deepEqual(fileResponseRange(100, "bytes=0-1", { method: "HEAD", bounded: true }), { status: 200, length: 100 });
 });
 
-test("2 GiB sparse media remains bounded through HTTP, supports seeks/HEAD, and survives disconnects", { timeout: 15000 }, async (t) => {
+test("2 GiB sparse media remains bounded through HTTP, supports seeks/HEAD, and survives disconnects", { timeout: 60000 }, async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "asset-large-media-"));
   const target = path.join(root, "large-video.mp4");
   const size = 2 * 1024 ** 3;
-  const fixture = await fs.open(target, "w");
-  await fixture.truncate(size);
-  await fixture.write(Buffer.from("TAIL"), 0, 4, size - 4);
-  await fixture.close();
-  const server = createServer(async (req, res) => {
+  let fixture;
+  let server;
+  // Register before setup: a timeout while constructing the large file must
+  // not leave a later-created HTTP server alive and stall the entire suite.
+  t.after(async () => {
+    server?.closeAllConnections();
+    if (server?.listening) await new Promise((resolve) => server.close(resolve));
+    await fixture?.close();
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+  const started = Date.now();
+  await fs.writeFile(target, "");
+  // NTFS does not make truncate() sparse by default. Mark this exact temporary
+  // file first, otherwise CI may zero-fill 2 GiB before testing any HTTP code.
+  if (process.platform === "win32") {
+    await promisify(execFile)("fsutil.exe", ["sparse", "setflag", target], { timeout: 10000, windowsHide: true, signal: t.signal });
+  }
+  t.signal.throwIfAborted();
+  fixture = await fs.open(target, "r+");
+  try {
+    await fixture.truncate(size);
+    t.signal.throwIfAborted();
+    await fixture.write(Buffer.from("TAIL"), 0, 4, size - 4);
+  } finally {
+    await fixture.close();
+    fixture = null;
+  }
+  t.signal.throwIfAborted();
+  t.diagnostic(`Sparse fixture prepared in ${Date.now() - started}ms`);
+  server = createServer(async (req, res) => {
     try {
       await streamAssetFile(req, res, req.url === "/missing" ? path.join(root, "missing.mp4") : target, { contentType: req.url === "/image" ? "image/png" : "video/mp4" });
     } catch (error) {
@@ -36,41 +63,39 @@ test("2 GiB sparse media remains bounded through HTTP, supports seeks/HEAD, and 
     }
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(async () => {
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
-    await fs.rm(root, { recursive: true, force: true });
-  });
   const base = `http://127.0.0.1:${server.address().port}`;
   const bounded = { "x-aiyoucodex-bounded-media": "1" };
-  const initial = await fetch(base, { headers: bounded });
+  const requestSignal = () => AbortSignal.any([t.signal, AbortSignal.timeout(8000)]);
+  const read = (url, options = {}) => fetch(url, { ...options, signal: requestSignal() });
+  const initial = await read(base, { headers: bounded });
   assert.equal(initial.status, 206);
   assert.equal(initial.headers.get("content-range"), `bytes 0-${EMBEDDED_MEDIA_CHUNK_BYTES - 1}/${size}`);
   assert.equal(initial.headers.get("accept-ranges"), "bytes");
   assert.equal((await initial.arrayBuffer()).byteLength, EMBEDDED_MEDIA_CHUNK_BYTES);
   const seekStart = 500 * 1024 ** 2;
-  const seek = await fetch(base, { headers: { ...bounded, range: `bytes=${seekStart}-` } });
+  const seek = await read(base, { headers: { ...bounded, range: `bytes=${seekStart}-` } });
   assert.equal(seek.status, 206);
   assert.equal(seek.headers.get("content-range"), `bytes ${seekStart}-${seekStart + EMBEDDED_MEDIA_CHUNK_BYTES - 1}/${size}`);
   assert.equal((await seek.arrayBuffer()).byteLength, EMBEDDED_MEDIA_CHUNK_BYTES);
-  const suffix = await fetch(base, { headers: { ...bounded, range: "bytes=-4" } });
+  const suffix = await read(base, { headers: { ...bounded, range: "bytes=-4" } });
   assert.equal(suffix.headers.get("content-range"), `bytes ${size - 4}-${size - 1}/${size}`);
   assert.equal(await suffix.text(), "TAIL");
-  const head = await fetch(base, { method: "HEAD", headers: { ...bounded, range: "bytes=0-1" } });
+  t.diagnostic(`Bounded reads and seeks verified in ${Date.now() - started}ms`);
+  const head = await read(base, { method: "HEAD", headers: { ...bounded, range: "bytes=0-1" } });
   assert.equal(head.status, 200);
   assert.equal(Number(head.headers.get("content-length")), size);
   assert.equal((await head.arrayBuffer()).byteLength, 0);
-  const invalid = await fetch(base, { headers: { ...bounded, range: `bytes=${size}-` } });
+  const invalid = await read(base, { headers: { ...bounded, range: `bytes=${size}-` } });
   assert.equal(invalid.status, 416);
   assert.equal(invalid.headers.get("content-range"), `bytes */${size}`);
   assert.equal((await invalid.arrayBuffer()).byteLength, 0);
-  const missing = await fetch(`${base}/missing`, { headers: bounded });
+  const missing = await read(`${base}/missing`, { headers: bounded });
   assert.equal(missing.status, 404);
   // Direct streaming still advertises the full file; abort without buffering it.
   // An image header must not be rewritten to a video chunk either.
   for (const route of ["/", "/image", "/", "/"]) {
     await new Promise((resolve, reject) => {
-      const request = get(`${base}${route}`, { headers: route === "/image" ? bounded : {} }, (response) => {
+      const request = get(`${base}${route}`, { headers: route === "/image" ? bounded : {}, signal: requestSignal() }, (response) => {
         try {
           assert.equal(response.statusCode, 200);
           assert.equal(Number(response.headers["content-length"]), size);
@@ -82,7 +107,8 @@ test("2 GiB sparse media remains bounded through HTTP, supports seeks/HEAD, and 
       request.on("error", (error) => error.code === "ECONNRESET" ? resolve() : reject(error));
     });
   }
-  const stillAlive = await fetch(base, { headers: { ...bounded, range: "bytes=0-15" } });
+  const stillAlive = await read(base, { headers: { ...bounded, range: "bytes=0-15" } });
   assert.equal(stillAlive.status, 206);
   assert.equal((await stillAlive.arrayBuffer()).byteLength, 16);
+  t.diagnostic(`HEAD, invalid ranges and disconnect recovery verified in ${Date.now() - started}ms`);
 });
