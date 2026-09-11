@@ -20,6 +20,7 @@ test("public installer copies a portable runtime and activates it under the curr
       env: {
         ...process.env,
         HOME: testHome,
+        CODEX_HOME: path.join(testHome, ".codex"),
         CODEX_SIDEBAR_SOURCE_DIR: projectRoot,
         CODEX_SIDEBAR_INSTALL_DIR: installDir,
         CODEX_SIDEBAR_NODE: process.execPath,
@@ -33,6 +34,9 @@ test("public installer copies a portable runtime and activates it under the curr
     await access(path.join(testHome, "Applications", "AIYOUcodex.app"));
     await access(path.join(installDir, "scripts", "injector.mjs"));
     await access(path.join(installDir, "scripts", "runtime.mjs"));
+    await access(path.join(installDir, "lib", "conversation-folders.mjs"));
+    const hooks = JSON.parse(await readFile(path.join(testHome, ".codex", "hooks.json"), "utf8"));
+    assert.ok(hooks.hooks.UserPromptSubmit[0].hooks[0].command.includes(installDir));
     await access(path.join(installDir, "inject", "conversation-preview.user.js"));
     await access(path.join(installDir, "vendor", "codex-taskboard", "dist", "web", "index.html"));
     await access(path.join(installDir, "vendor", "codex-taskboard", "server", "index.mjs"));
@@ -63,7 +67,7 @@ test("public installer copies a portable runtime and activates it under the curr
     await assert.rejects(access(path.join(installDir, "codex-folder-switcher-verification.png")));
     const previousRuntime = await readFile(path.join(installDir, "scripts", "runtime.mjs"), "utf8");
     const upgraded = spawnSync("/bin/bash", ["install.sh"], {
-      cwd: projectRoot, encoding: "utf8", env: { ...process.env, HOME: testHome,
+      cwd: projectRoot, encoding: "utf8", env: { ...process.env, HOME: testHome, CODEX_HOME: path.join(testHome, ".codex"),
         CODEX_SIDEBAR_SOURCE_DIR: projectRoot, CODEX_SIDEBAR_INSTALL_DIR: installDir,
         CODEX_SIDEBAR_NODE: process.execPath, CODEX_SIDEBAR_SKIP_LAUNCHCTL: "1", CODEX_SIDEBAR_SKIP_OPEN: "1" },
     });
@@ -82,6 +86,7 @@ test("public uninstaller removes only the installed runtime, LaunchAgent, launch
   const sharedEnv = {
     ...process.env,
     HOME: testHome,
+    CODEX_HOME: path.join(testHome, ".codex"),
     CODEX_SIDEBAR_SOURCE_DIR: projectRoot,
     CODEX_SIDEBAR_INSTALL_DIR: installDir,
     CODEX_SIDEBAR_NODE: process.execPath,
@@ -103,6 +108,8 @@ test("public uninstaller removes only the installed runtime, LaunchAgent, launch
     });
     assert.equal(removed.status, 0, removed.stderr);
     assert.match(removed.stdout, /AIYOUcodex uninstalled/);
+    const remainingHooks = JSON.parse(await readFile(path.join(testHome, ".codex", "hooks.json"), "utf8"));
+    assert.deepEqual(remainingHooks.hooks, {}, "Uninstall must not leave dangling native command handlers");
     await assert.rejects(access(installDir));
     await assert.rejects(access(path.join(testHome, "Library", "LaunchAgents", "com.yubowen.codex-sidebar-enhancer.plist")));
     await assert.rejects(access(path.join(testHome, "Applications", "AIYOUcodex.app")));

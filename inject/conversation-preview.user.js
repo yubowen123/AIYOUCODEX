@@ -2,7 +2,7 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
-  const RUNTIME_VERSION = "2026-09-07.1";
+  const RUNTIME_VERSION = "2026-09-11.2";
   const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
@@ -20,6 +20,8 @@
   const SHORTCUT_SETTINGS_STORAGE_KEY = "codex-conversation-preview:shortcut-settings";
   const EFFICIENCY_PANEL_ID = "aiyoucodex-efficiency-panel";
   const TASK_CONTEXT_BUTTON_ID = "aiyoucodex-task-context-open";
+  const WORKSPACE_FOLDER_BUTTON_ID = "aiyoucodex-workspace-folder-open";
+  const WORKSPACE_FOLDER_MENU_ID = "aiyoucodex-workspace-folder-menu";
   const EFFICIENCY_BINDING = "__AIYOUCODEX_EFFICIENCY_REQUEST__";
   const EFFICIENCY_MODES = { smart: "智能", concise: "精简", detailed: "详细" };
   const EFFICIENCY_SCOPES = { global: "全局默认", project: "当前项目", thread: "当前对话" };
@@ -112,6 +114,11 @@
   try { window[SENTINEL]?.destroy?.(); } catch {}
 
   let destroyed = false;
+  let workspaceFolderButton = null;
+  let workspaceFolderMenu = null;
+  let workspaceFolderMenuTarget = "";
+  let workspaceFolderPending = null;
+  let workspaceFolderMessage = "";
   let observer = null;
   let syncTimer = null;
   let syncing = false;
@@ -133,6 +140,13 @@
   let customShortcutFrame = null;
   let customShortcutFrames = new Map();
   let customShortcutLastFocusedElement = null;
+  // Same-document reinjection must not create another native browser tab.
+  const nativeShortcutRecords = window.__AIYOUCODEX_NATIVE_SHORTCUT_RECORDS__ ||= new Map();
+  for (const record of nativeShortcutRecords.values()) {
+    if (record.status === "requested") record.status = "unconfirmed";
+  }
+  let nativeShortcutNotice = null;
+  const nativeShortcutTimers = new Set();
   let assetConsole = { available: false, label: "资产控制台", mode: "embedded" };
   let assetConsolePage = null;
   let assetConsoleFrame = null;
@@ -1002,6 +1016,20 @@
       #${TASK_CONTEXT_BUTTON_ID}:focus-visible { outline: 2px solid #328bfa; outline-offset: -2px; }
       #${TASK_CONTEXT_BUTTON_ID}:disabled { opacity: .4; cursor: default; }
       #${TASK_CONTEXT_BUTTON_ID}[hidden] { display: none !important; }
+      #${WORKSPACE_FOLDER_BUTTON_ID} { flex: 0 0 auto; display: inline-flex; gap: 4px; align-items: center; pointer-events: auto; -webkit-app-region: no-drag; cursor: pointer; height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; white-space: nowrap; }
+      #${WORKSPACE_FOLDER_BUTTON_ID}:hover { background: #80808018; }
+      #${WORKSPACE_FOLDER_BUTTON_ID}:focus-visible { outline: 2px solid #328bfa; outline-offset: -2px; }
+      #${WORKSPACE_FOLDER_BUTTON_ID}[hidden], #${WORKSPACE_FOLDER_MENU_ID}[hidden] { display: none !important; }
+      #${WORKSPACE_FOLDER_MENU_ID} { position: fixed; inset: auto; margin: 0; z-index: 2147483000; box-sizing: border-box; width: 300px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow: auto; padding: 8px; border: 1px solid color-mix(in srgb, CanvasText 15%, transparent); border-radius: 12px; background: Canvas; color: CanvasText; box-shadow: 0 8px 32px #0002; font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; pointer-events: auto; -webkit-app-region: no-drag; }
+      #${WORKSPACE_FOLDER_MENU_ID} * { box-sizing: border-box; -webkit-app-region: no-drag; }
+      #${WORKSPACE_FOLDER_MENU_ID}::backdrop { background: transparent; pointer-events: none; }
+      #${WORKSPACE_FOLDER_MENU_ID} button { display: block; width: 100%; border: 0; border-radius: 8px; padding: 10px; text-align: left; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+      #${WORKSPACE_FOLDER_MENU_ID} button:hover, #${WORKSPACE_FOLDER_MENU_ID} button:focus-visible { background: #328bfa16; outline: 2px solid transparent; }
+      #${WORKSPACE_FOLDER_MENU_ID} button:focus-visible { outline-color: #328bfa; }
+      #${WORKSPACE_FOLDER_MENU_ID} button:disabled { opacity: .45; cursor: default; }
+      #${WORKSPACE_FOLDER_MENU_ID} small { display: block; font-size: 11px; opacity: .7; }
+      #${WORKSPACE_FOLDER_MENU_ID} [data-workspace-folder-path], #${WORKSPACE_FOLDER_MENU_ID} [role="status"] { margin: 4px 10px; font-size: 11px; overflow-wrap: anywhere; }
+      #${WORKSPACE_FOLDER_MENU_ID} [data-workspace-folder-path] { opacity: .7; }
       #${EFFICIENCY_PANEL_ID}[data-efficiency-viewport-overlay="true"] {
         position: fixed !important; z-index: 100; flex: none;
         left: var(--aiyou-efficiency-left); top: var(--aiyou-efficiency-top);
@@ -2306,7 +2334,7 @@
   function validShortcutUrl(value) {
     try {
       const url = new URL(String(value || "").trim());
-      if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+      if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password) return null;
       return url.href;
     } catch {
       return null;
@@ -2348,7 +2376,7 @@
         name,
         url,
         icon: Object.hasOwn(SHORTCUT_ICON_PRESETS, raw.icon) ? raw.icon : "link",
-        openMode: raw.openMode === "browser" ? "browser" : "internal",
+        openMode: ["browser", "in-app"].includes(raw.openMode) ? raw.openMode : "internal",
         keepAlive: raw.keepAlive === true && raw.openMode !== "browser",
         managed: true,
       }];
@@ -2385,6 +2413,115 @@
     link.click();
     link.remove();
     return true;
+  }
+
+  function nativeShortcutThreadId() {
+    const nodes = Array.from(document.querySelectorAll('[data-app-action-sidebar-thread-id]'))
+      .filter((node) => node.getAttribute("data-app-action-sidebar-thread-active") === "true"
+        || node.getAttribute("data-app-action-sidebar-thread-selected") === "true"
+        || node.getAttribute("aria-current") === "page");
+    const ids = new Set(nodes.map((node) => normalizedThreadId(node.getAttribute("data-app-action-sidebar-thread-id"))));
+    const id = ids.size === 1 ? Array.from(ids)[0] : "";
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? id : "";
+  }
+
+  function showNativeShortcutNotice(text, record = null) {
+    nativeShortcutNotice?.remove();
+    const notice = document.createElement("section");
+    notice.id = "aiyoucodex-native-shortcut-notice";
+    notice.setAttribute("role", "status");
+    notice.dataset.browserTabId = record?.browserTabId || "";
+    notice.style.cssText = "position:fixed;right:24px;bottom:24px;z-index:2147483647;max-width:min(380px,calc(100vw - 48px));padding:16px;border:1px solid #bbc2ca;border-radius:12px;background:Canvas;color:CanvasText;box-shadow:0 4px 20px #0002;pointer-events:auto;-webkit-app-region:no-drag";
+    const message = document.createElement("p");
+    message.textContent = text;
+    message.style.cssText = "margin:0 0 8px;font-size:14px;line-height:1.5";
+    const dismiss = document.createElement("button");
+    dismiss.textContent = "知道了";
+    dismiss.type = "button";
+    dismiss.style.cssText = "min-height:32px;padding:4px 12px;cursor:pointer;-webkit-app-region:no-drag";
+    dismiss.onclick = () => notice.remove();
+    notice.append(message, dismiss);
+    document.body.appendChild(notice);
+    nativeShortcutNotice = notice;
+  }
+
+  function openNativeBrowserShortcut(item, { toggle = false } = {}) {
+    const url = validShortcutUrl(item?.url);
+    const conversationId = nativeShortcutThreadId();
+    if (!url || !conversationId) {
+      showNativeShortcutNotice("请先打开一个明确的对话，再打开此网页；没有创建新标签。");
+      return { ok: false, reason: "current-thread-unavailable" };
+    }
+    if (typeof window.electronBridge?.sendMessageFromView !== "function") {
+      showNativeShortcutNotice("当前宿主没有可用的 Codex 浏览器接口；未重新加载网页。");
+      return { ok: false, reason: "native-browser-unavailable" };
+    }
+    const key = JSON.stringify([conversationId, shortcutItemKey(item), url]);
+    let record = nativeShortcutRecords.get(key);
+    closeOtherWorkspacePanels("native-browser");
+    if (record) {
+      // No URL on reveal/toggle: preserve the current canvas, history and draft.
+      window.postMessage({ type: "toggle-browser-panel", conversationId,
+        browserTabId: record.browserTabId, ...(toggle ? {} : { open: true }),
+        source: "manual", initiator: "side_panel_menu" }, window.location.origin);
+      if (record.status === "unconfirmed") showNativeShortcutNotice("Codex 尚未确认网页加载。请检查右侧浏览器标签；为保护画布，没有自动刷新或重复创建。", record);
+      return { ok: true, status: record.status, browserTabId: record.browserTabId, created: false };
+    }
+    record = { conversationId, browserTabId: crypto.randomUUID(), url, name: item.name, status: "requested" };
+    nativeShortcutRecords.set(key, record);
+    showNativeShortcutNotice(`正在请求 Codex 浏览器打开 ${item.name}…`, record);
+    window.postMessage({ type: "open-browser-tab", conversationId,
+      browserTabId: record.browserTabId, initialUrl: url,
+      source: "manual", initiator: "side_panel_menu" }, window.location.origin);
+    const timer = setTimeout(() => {
+      nativeShortcutTimers.delete(timer);
+      if (destroyed || record.status !== "requested") return;
+      record.status = "unconfirmed";
+      if (nativeShortcutThreadId() === conversationId) {
+        showNativeShortcutNotice("Codex 浏览器未确认加载完成，可能尚未启用或当前任务未显示。请检查右侧浏览器标签；没有自动刷新，也没有创建第二个页面。", record);
+      }
+    }, 10000);
+    nativeShortcutTimers.add(timer);
+    return { ok: true, status: "requested", browserTabId: record.browserTabId, created: true };
+  }
+
+  function handleNativeShortcutMessage(event) {
+    if (event.source !== window && event.source !== null) return;
+    if (event.origin !== window.location.origin && !(event.source === null && event.origin === "")) return;
+    const data = event.data;
+    if (data?.type !== "browser-sidebar-state" || !data.snapshot) return;
+    const record = Array.from(nativeShortcutRecords.values()).find((value) =>
+      value.conversationId === data.conversationId && value.browserTabId === data.browserTabId);
+    if (!record) return;
+    const snapshot = data.snapshot;
+    if (snapshot.loadError) {
+      if (record.status === "failed") return;
+      record.status = "failed";
+      if (nativeShortcutThreadId() === record.conversationId) showNativeShortcutNotice(`${record.name} 加载失败，请在 Codex 浏览器中查看具体错误；没有自动重试。`, record);
+      return;
+    }
+    const committedUrl = validShortcutUrl(snapshot.committedUrl);
+    if (committedUrl && new URL(committedUrl).origin === new URL(record.url).origin
+      && snapshot.isLoading === false && snapshot.isWaitingForResponse === false) {
+      record.status = "loaded";
+      if (nativeShortcutNotice?.dataset.browserTabId === record.browserTabId) nativeShortcutNotice.remove();
+    }
+  }
+
+  function handleCustomShortcutPolicyViolation(event) {
+    if (event.disposition !== "enforce" || !["frame-src", "child-src"].includes(event.effectiveDirective)) return;
+    const record = Array.from(customShortcutFrames.values()).find((value) =>
+      value.url === event.blockedURI || new URL(value.url).origin === event.blockedURI);
+    if (!record) return;
+    record.blocked = true;
+    if (!customShortcutPageIsVisible() || customShortcutPage.dataset.codexCustomShortcutItem !== record.key) return;
+    showNativeShortcutNotice("当前 Codex 不允许此网页使用旧式嵌入。可切换到 Codex 浏览器面板；不会修改宿主安全策略。");
+    const open = document.createElement("button");
+    open.type = "button";
+    open.textContent = "使用 Codex 浏览器打开";
+    open.style.cssText = "display:block;min-height:36px;margin-top:8px;cursor:pointer;-webkit-app-region:no-drag";
+    open.onclick = () => openNativeBrowserShortcut(record.item);
+    nativeShortcutNotice.appendChild(open);
   }
 
   function restoreCustomShortcutNativeContent() {
@@ -2542,7 +2679,7 @@
     frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals allow-presentation");
     frame.setAttribute("allow", "clipboard-read; clipboard-write; fullscreen");
     customShortcutPage.querySelector(".codex-custom-shortcut-frame-stack")?.appendChild(frame);
-    const record = { key, url, keepAlive: item.keepAlive === true, frame };
+    const record = { key, url, item, keepAlive: item.keepAlive === true, frame };
     customShortcutFrames.set(key, record);
     updateCustomShortcutKeepAliveState();
     return { ...record, created: true };
@@ -2568,6 +2705,7 @@
   }
 
   function openCustomShortcutPanel(item) {
+    if (item?.openMode === "in-app") return openNativeBrowserShortcut(item).ok;
     const url = validShortcutUrl(item?.url);
     if (!url) return false;
     const mount = findCustomShortcutPageMount();
@@ -2602,9 +2740,15 @@
 
   function ensureManagedShortcut(shortcutId, options = {}) {
     const item = normalizedManagedShortcuts().find((candidate) =>
-      candidate.id === String(shortcutId || "") && candidate.openMode === "internal",
+      candidate.id === String(shortcutId || "") && ["internal", "in-app"].includes(candidate.openMode),
     );
     if (!item) return { ok: false, reason: "shortcut-not-found" };
+    if (item.openMode === "in-app") {
+      // Native page suspension is owned by Codex. Do not fake an iframe target
+      // or report an unacknowledged request as a running background canvas.
+      if (options?.visible !== true) return { ok: false, reason: "native-background-open-unavailable" };
+      return openNativeBrowserShortcut(item);
+    }
     if (options?.visible === true) {
       const opened = openCustomShortcutPanel(item);
       return opened
@@ -3669,6 +3813,7 @@
   function setEfficiencyData(value) {
     const next = value && typeof value === "object" ? value : null;
     const changedTarget = efficiencySnapshot && efficiencyTargetKey(next) !== efficiencyTargetKey();
+    if (changedTarget) { closeWorkspaceFolderMenu(false); workspaceFolderMessage = ""; }
     if (changedTarget) {
       // The opaque key identifies a backend-validated conversation, never a title or folder.
       efficiencyTargetDrafts.set(efficiencyTargetKey(), { taskDraft: efficiencyTaskDraft,
@@ -3760,6 +3905,7 @@
   }
 
   function resolveEfficiencyRequest(response) {
+    if (response?.requestId === workspaceFolderPending?.requestId) return resolveWorkspaceFolderRequest(response);
     const pending = efficiencyRequests.get(String(response?.requestId || ""));
     if (destroyed || !pending) return false;
     clearTimeout(pending.timer); efficiencyRequests.delete(String(response.requestId));
@@ -4029,7 +4175,12 @@
       || document.querySelector('[data-testid="app-shell-header-context-menu-surface"]:not([aria-hidden="true"])');
     const obstacle = surface?.querySelector('[data-app-shell-header-obstacle="true"]');
     // Restrict mounting to the native conversation toolbar: never a message's Share button.
-    if (!obstacle || !available) { if (button) button.hidden = true; return; }
+    if (!obstacle || !available) {
+      if (button) button.hidden = true;
+      if (workspaceFolderButton) workspaceFolderButton.hidden = true;
+      closeWorkspaceFolderMenu(false);
+      return;
+    }
     if (!button) {
       button = document.createElement("button"); button.id = TASK_CONTEXT_BUTTON_ID; button.type = "button";
       button.textContent = "任务上下文"; button.title = "查看、整理和确认当前对话的任务上下文";
@@ -4044,6 +4195,146 @@
     button.hidden = false;
     button.disabled = typeof window[EFFICIENCY_BINDING] !== "function";
     button.setAttribute("aria-expanded", String(efficiencyView === "context" && Boolean(efficiencyPanel && !efficiencyPanel.hidden)));
+    ensureWorkspaceFolderButton(obstacle, button);
+  }
+
+  function ensureWorkspaceFolderButton(obstacle, contextButton) {
+    if (destroyed) return;
+    if (!workspaceFolderButton) {
+      workspaceFolderButton = document.createElement("button");
+      workspaceFolderButton.id = WORKSPACE_FOLDER_BUTTON_ID;
+      workspaceFolderButton.type = "button";
+      workspaceFolderButton.textContent = "打开文件";
+      workspaceFolderButton.title = "打开当前对话所在文件夹，或在上级目录中选中它";
+      workspaceFolderButton.setAttribute("aria-haspopup", "menu");
+      workspaceFolderButton.setAttribute("aria-controls", WORKSPACE_FOLDER_MENU_ID);
+      workspaceFolderButton.onclick = (event) => {
+        event.stopPropagation();
+        if (workspaceFolderMenu && !workspaceFolderMenu.hidden) closeWorkspaceFolderMenu();
+        else openWorkspaceFolderMenu();
+      };
+      workspaceFolderButton.onkeydown = (event) => {
+        if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+        event.preventDefault(); event.stopPropagation();
+        openWorkspaceFolderMenu(event.key === "ArrowUp" ? -1 : 0);
+      };
+    }
+    // React may clone/replace its toolbar: keep our real event-owning element.
+    document.querySelectorAll(`#${WORKSPACE_FOLDER_BUTTON_ID}`).forEach((node) => {
+      if (node !== workspaceFolderButton) node.remove();
+    });
+    if (workspaceFolderButton.parentElement !== obstacle || workspaceFolderButton.nextElementSibling !== contextButton) {
+      obstacle.insertBefore(workspaceFolderButton, contextButton);
+    }
+    workspaceFolderButton.hidden = false;
+    workspaceFolderButton.setAttribute("aria-expanded", String(Boolean(workspaceFolderMenu && !workspaceFolderMenu.hidden)));
+    if (workspaceFolderMenu && !workspaceFolderMenu.hidden) { renderWorkspaceFolderMenu(); positionWorkspaceFolderMenu(); }
+  }
+
+  function renderWorkspaceFolderMenu() {
+    if (!workspaceFolderMenu || workspaceFolderMenu.hidden) return;
+    const folder = efficiencySnapshot?.workspaceFolder;
+    const connected = typeof window[EFFICIENCY_BINDING] === "function";
+    workspaceFolderMenu.querySelector("[data-workspace-folder-path]").textContent = folder?.path || "未关联本地目录";
+    workspaceFolderMenu.querySelector("[role=status]").textContent = workspaceFolderMessage
+      || (!connected ? "本地连接尚未就绪，请稍后重试。" : folder?.reason || "");
+    for (const button of workspaceFolderMenu.querySelectorAll("[data-workspace-folder-mode]")) {
+      button.disabled = !connected || !folder?.available || Boolean(workspaceFolderPending)
+        || (button.dataset.workspaceFolderMode === "parent" && !folder.canRevealParent);
+    }
+  }
+
+  function positionWorkspaceFolderMenu() {
+    if (!workspaceFolderMenu || workspaceFolderMenu.hidden) return;
+    if (!workspaceFolderButton?.isConnected || workspaceFolderButton.hidden) { closeWorkspaceFolderMenu(false); return; }
+    const rect = workspaceFolderButton.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
+    const width = viewport?.width || window.innerWidth, height = viewport?.height || window.innerHeight;
+    workspaceFolderMenu.style.maxWidth = `${Math.max(0, width - 16)}px`;
+    workspaceFolderMenu.style.maxHeight = `${Math.max(0, height - 16)}px`;
+    const menuRect = workspaceFolderMenu.getBoundingClientRect();
+    workspaceFolderMenu.style.left = `${Math.max(left + 8, Math.min(rect.right - menuRect.width, left + width - menuRect.width - 8))}px`;
+    workspaceFolderMenu.style.top = `${Math.max(top + 8, Math.min(rect.bottom + 8, top + height - menuRect.height - 8))}px`;
+  }
+
+  function openWorkspaceFolderMenu(focusIndex = 0) {
+    if (destroyed || !workspaceFolderButton?.isConnected || workspaceFolderButton.hidden) return;
+    if (!workspaceFolderMenu) {
+      workspaceFolderMenu = document.createElement("div");
+      workspaceFolderMenu.id = WORKSPACE_FOLDER_MENU_ID;
+      workspaceFolderMenu.setAttribute("role", "menu");
+      workspaceFolderMenu.setAttribute("aria-label", "打开文件");
+      workspaceFolderMenu.tabIndex = -1;
+      workspaceFolderMenu.hidden = true;
+      workspaceFolderMenu.innerHTML = `<p data-workspace-folder-path></p>
+        <button type="button" role="menuitem" data-workspace-folder-mode="parent">打开母文件夹<small>打开所属项目目录，并选中本对话文件夹</small></button>
+        <button type="button" role="menuitem" data-workspace-folder-mode="folder">打开子文件夹<small>直接进入本对话的专属文件夹</small></button>
+        <p role="status" aria-live="polite"></p>`;
+      workspaceFolderMenu.querySelectorAll("button").forEach((button) => {
+        button.onclick = (event) => { event.stopPropagation(); requestWorkspaceFolder(button.dataset.workspaceFolderMode); };
+      });
+      // The top layer avoids clipping by the native header and overlay panels.
+      if (typeof workspaceFolderMenu.showPopover === "function") workspaceFolderMenu.setAttribute("popover", "manual");
+      document.body.appendChild(workspaceFolderMenu);
+    }
+    workspaceFolderMenuTarget = efficiencyTargetKey();
+    workspaceFolderMessage = workspaceFolderPending ? "正在请求文件管理器…" : "";
+    workspaceFolderMenu.hidden = false;
+    try { if (workspaceFolderMenu.hasAttribute("popover") && !workspaceFolderMenu.matches(":popover-open")) workspaceFolderMenu.showPopover(); } catch { workspaceFolderMenu.removeAttribute("popover"); }
+    renderWorkspaceFolderMenu(); positionWorkspaceFolderMenu();
+    workspaceFolderButton.setAttribute("aria-expanded", "true");
+    const items = workspaceFolderMenu.querySelectorAll("button:not(:disabled)");
+    (items[focusIndex < 0 ? items.length - 1 : focusIndex] || workspaceFolderMenu).focus();
+  }
+
+  function closeWorkspaceFolderMenu(restoreFocus = true) {
+    if (!workspaceFolderMenu || workspaceFolderMenu.hidden) return;
+    try { if (workspaceFolderMenu.matches(":popover-open")) workspaceFolderMenu.hidePopover(); } catch {}
+    workspaceFolderMenu.hidden = true;
+    workspaceFolderButton?.setAttribute("aria-expanded", "false");
+    if (restoreFocus && workspaceFolderButton?.isConnected && !workspaceFolderButton.hidden) workspaceFolderButton.focus();
+  }
+
+  function handleWorkspaceFolderPointer(event) {
+    if (workspaceFolderMenu && !workspaceFolderMenu.hidden && !workspaceFolderMenu.contains(event.target)
+      && !workspaceFolderButton?.contains(event.target)) closeWorkspaceFolderMenu(false);
+  }
+
+  function handleWorkspaceFolderKeydown(event) {
+    if (!workspaceFolderMenu || workspaceFolderMenu.hidden) return false;
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeWorkspaceFolderMenu(); return true; }
+    if (event.key === "Tab") { closeWorkspaceFolderMenu(false); return true; }
+    if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key) || !workspaceFolderMenu.contains(event.target)) return false;
+    const items = [...workspaceFolderMenu.querySelectorAll("button:not(:disabled)")];
+    const index = items.indexOf(document.activeElement);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+      : (index + (event.key === "ArrowUp" ? -1 : 1) + items.length) % items.length;
+    event.preventDefault(); event.stopPropagation(); items[next]?.focus(); return true;
+  }
+
+  function requestWorkspaceFolder(mode) {
+    if (destroyed || workspaceFolderPending || workspaceFolderMenuTarget !== efficiencyTargetKey()) return;
+    const binding = window[EFFICIENCY_BINDING];
+    if (typeof binding !== "function" || !efficiencySnapshot?.workspaceFolder?.available) return;
+    const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+    const payload = { requestId, action: "openWorkspaceFolder", mode, expectedTargetKey: workspaceFolderMenuTarget };
+    const timer = setTimeout(() => resolveWorkspaceFolderRequest({ requestId, ok: false, error: "打开结果尚未确认，请检查文件管理器后重试。" }), 12_000);
+    workspaceFolderPending = { requestId, targetKey: workspaceFolderMenuTarget, timer };
+    workspaceFolderMessage = "正在请求文件管理器…"; renderWorkspaceFolderMenu();
+    const failed = () => resolveWorkspaceFolderRequest({ requestId, ok: false, error: "本地连接不可用，未确认打开。" });
+    try { Promise.resolve(binding(JSON.stringify(payload))).catch(failed); } catch { failed(); }
+  }
+
+  function resolveWorkspaceFolderRequest(response) {
+    const pending = workspaceFolderPending;
+    if (!pending || pending.requestId !== response?.requestId) return false;
+    clearTimeout(pending.timer); workspaceFolderPending = null;
+    if (destroyed || pending.targetKey !== efficiencyTargetKey()) return true;
+    workspaceFolderMessage = response.ok && response.data?.targetKey === pending.targetKey
+      ? String(response.data.folderResult?.message || "已请求打开文件管理器。")
+      : String(response.error || "当前对话已变化，请重新打开菜单。");
+    renderWorkspaceFolderMenu(); positionWorkspaceFolderMenu(); return true;
   }
 
   function openTaskContextPanel() {
@@ -4391,6 +4682,7 @@
         } else item.activate?.();
       }
       else if ((item.custom || item.managed) && item.openMode === "browser") openCustomShortcutInBrowser(item);
+      else if (item.managed && item.openMode === "in-app") openNativeBrowserShortcut(item, { toggle: true });
       else if (item.custom || item.managed) {
         if (shortcutPanelIsOpen(item)) closeCustomShortcutPanel();
         else openCustomShortcutPanel(item);
@@ -6343,6 +6635,7 @@
   }
 
   function handleWorkspaceEnhancementKeydown(event) {
+    if (handleWorkspaceFolderKeydown(event)) return;
     if (event.key === "Escape" && efficiencyPanel && !efficiencyPanel.hidden) {
       event.preventDefault(); closeEfficiencyPanel(); return;
     }
@@ -6440,7 +6733,7 @@
   }
 
   function handleHostMutations(records) {
-    const owned = `#${SHORTCUT_GRID_ID}, #${SECTION_TABS_ID}, #${FOLDER_SWITCHER_ID}, #${SHORTCUT_SETTINGS_ID}, #${SKILL_ORGANIZER_ID}, #${CUSTOM_SHORTCUT_PAGE_ID}, #${ASSET_CONSOLE_PAGE_ID}, #${EFFICIENCY_PANEL_ID}, #${TASK_CONTEXT_BUTTON_ID}, #${USAGE_ID}, #${TOGGLE_ID}, #${FALLBACK_TOOLTIP_ID}, .${CARD_CONTENT_CLASS}, .${SUMMARY_CLASS}, .${STATUS_BUTTON_CLASS}`;
+    const owned = `#${WORKSPACE_FOLDER_BUTTON_ID}, #${WORKSPACE_FOLDER_MENU_ID}, #aiyoucodex-native-shortcut-notice, #${SHORTCUT_GRID_ID}, #${SECTION_TABS_ID}, #${FOLDER_SWITCHER_ID}, #${SHORTCUT_SETTINGS_ID}, #${SKILL_ORGANIZER_ID}, #${CUSTOM_SHORTCUT_PAGE_ID}, #${ASSET_CONSOLE_PAGE_ID}, #${EFFICIENCY_PANEL_ID}, #${TASK_CONTEXT_BUTTON_ID}, #${USAGE_ID}, #${TOGGLE_ID}, #${FALLBACK_TOOLTIP_ID}, .${CARD_CONTENT_CLASS}, .${SUMMARY_CLASS}, .${STATUS_BUTTON_CLASS}`;
     if (records.some((record) => {
       const target = record.target?.nodeType === 1 ? record.target : record.target?.parentElement;
       if (target?.closest?.(owned)) return false;
@@ -6469,12 +6762,18 @@
     document.addEventListener("pointerover", handlePreviewPointerOver, true);
     document.addEventListener("pointerout", handlePreviewPointerOut, true);
     document.addEventListener("pointerdown", handleStatusDocumentPointerDown, true);
+    document.addEventListener("pointerdown", handleWorkspaceFolderPointer, true);
+    window.addEventListener("resize", positionWorkspaceFolderMenu);
+    window.visualViewport?.addEventListener("resize", positionWorkspaceFolderMenu);
+    document.addEventListener("scroll", positionWorkspaceFolderMenu, true);
     document.addEventListener("click", handlePinDocumentClick, true);
     document.addEventListener("click", handleNativeActivityClick, true);
     document.addEventListener("keydown", handleWorkspaceEnhancementKeydown, true);
     document.addEventListener("click", handleWorkspaceCommandClick, true);
     window.addEventListener("message", handleAssetConsoleMessage);
     window.addEventListener("message", handleWorkspacePanelMessage);
+    window.addEventListener("message", handleNativeShortcutMessage);
+    document.addEventListener("securitypolicyviolation", handleCustomShortcutPolicyViolation);
     window.addEventListener("resize", scheduleEfficiencyPanelLayout);
     window.visualViewport?.addEventListener("resize", scheduleEfficiencyPanelLayout);
     window.visualViewport?.addEventListener("scroll", scheduleEfficiencyPanelLayout);
@@ -6496,12 +6795,24 @@
     document.removeEventListener("pointerover", handlePreviewPointerOver, true);
     document.removeEventListener("pointerout", handlePreviewPointerOut, true);
     document.removeEventListener("pointerdown", handleStatusDocumentPointerDown, true);
+    document.removeEventListener("pointerdown", handleWorkspaceFolderPointer, true);
+    window.removeEventListener("resize", positionWorkspaceFolderMenu);
+    window.visualViewport?.removeEventListener("resize", positionWorkspaceFolderMenu);
+    document.removeEventListener("scroll", positionWorkspaceFolderMenu, true);
+    closeWorkspaceFolderMenu(false);
+    workspaceFolderMenu?.remove(); workspaceFolderButton?.remove();
+    clearTimeout(workspaceFolderPending?.timer); workspaceFolderPending = null;
     document.removeEventListener("click", handlePinDocumentClick, true);
     document.removeEventListener("click", handleNativeActivityClick, true);
     document.removeEventListener("keydown", handleWorkspaceEnhancementKeydown, true);
     document.removeEventListener("click", handleWorkspaceCommandClick, true);
     window.removeEventListener("message", handleAssetConsoleMessage);
     window.removeEventListener("message", handleWorkspacePanelMessage);
+    window.removeEventListener("message", handleNativeShortcutMessage);
+    document.removeEventListener("securitypolicyviolation", handleCustomShortcutPolicyViolation);
+    for (const timer of nativeShortcutTimers) clearTimeout(timer);
+    nativeShortcutTimers.clear();
+    nativeShortcutNotice?.remove();
     window.removeEventListener("resize", scheduleEfficiencyPanelLayout);
     window.visualViewport?.removeEventListener("resize", scheduleEfficiencyPanelLayout);
     window.visualViewport?.removeEventListener("scroll", scheduleEfficiencyPanelLayout);

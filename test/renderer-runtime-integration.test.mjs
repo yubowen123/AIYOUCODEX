@@ -77,11 +77,20 @@ test("production attach and delivery survive CDP reconnect; real document reload
   const catalog = [{ projectId: "fixture-project", projectName: "Fixture project", threadId: "11111111-1111-4111-8111-111111111111", title: "Fixture thread", updatedAt: "2026-09-05T10:00:00Z" }];
   const history = { ...catalog[0], totalCount: 1, sourceSize: 100,
     messages: [{ id: "fixture-message", role: "user", text: "Synthetic history fixture", timestamp: "2026-09-05T10:00:00Z" }] };
+  const conversationFolders = Object.freeze({ fixtureOnly: true });
+  const folderSyncCalls = [];
   const context = vm.createContext({
     connectCodexTarget: async (entry) => { const client = await connectCodexTarget(entry); clients.add(client); return client; },
     // Only external asset-service I/O is excluded from this renderer lifecycle test.
     createAssetConsoleBridge: () => ({ install: async () => {}, dispose: async () => {} }),
-    createEfficiencyController: () => ({ snapshot: async () => ({ version: 0 }), request: async () => ({ version: 0 }) }), EfficiencyBridge,
+    // Filesystem effects are exercised separately in conversation-folders.test;
+    // this VM must still verify that production attach wires the same store.
+    conversationFolders,
+    syncConversationFolders: async (...args) => { folderSyncCalls.push(args); },
+    createEfficiencyController: (options) => {
+      assert.equal(options.conversationFolders, conversationFolders);
+      return { snapshot: async () => ({ version: 0 }), request: async () => ({ version: 0 }) };
+    }, EfficiencyBridge,
     SCRIPT_ID_GLOBAL: "__CODEX_CONVERSATION_PREVIEW_SCRIPT_IDENTIFIER__", readFile, sourcePath: userSourcePath,
     readManagedShortcuts: async () => shortcuts, createHash,
     process: { stdout: { write() {} }, stderr: { write() {} } },
@@ -109,6 +118,9 @@ test("production attach and delivery survive CDP reconnect; real document reload
   await context.ensurePersistentManagedShortcuts(session);
   assert.equal(session.persistentShortcutReady.size, 1, "Watcher retry mounts and acknowledges the persistent shortcut");
   await context.pushPreviews(session);
+  assert.equal(folderSyncCalls.length, 1);
+  assert.equal(folderSyncCalls[0][0], catalog);
+  assert.equal(folderSyncCalls[0][1], null, "Unresolved tasks must not invent a folder binding");
   await waitForBrowserState(inspect, shortcutLoaded, "Persistent shortcut loads its actual document before recording navigation identity");
   assert.deepEqual(await inspect.evaluate("window.__fixtureDeliveries"), { snapshot: 1, history: 1, destroy: 0 });
   const first = await inspect.evaluate(`(()=>{const f=document.querySelector('iframe[data-codex-custom-shortcut-frame]');window.__fixtureOriginalFrame=f;return {epoch:window.__codexConversationPreviewInjection__.getHealth().documentEpoch,origin:f.contentWindow.performance.timeOrigin}})()`);

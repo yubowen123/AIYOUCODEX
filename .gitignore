@@ -23,3 +23,8 @@ hooks.json.aiyou-backup-*
 hooks.json.tmp-*
 hooks.json.lock/
 hooks.json.lock.*
+
+# Per-conversation directory mappings and identity markers are machine-local.
+**/conversation-folders/directories.json
+**/conversation-folders/directories.json.*
+.aiyoucodex-thread.json

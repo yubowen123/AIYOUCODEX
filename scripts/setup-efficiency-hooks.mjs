@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { copyFile, stat } from "node:fs/promises";
-import { constants } from "node:fs";
+import { constants, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -74,7 +74,7 @@ export async function setupEfficiencyHooks({ configPath = path.join(process.env.
   };
   return apply ? withEfficiencyFileLock(configPath, execute) : execute();
 }
-if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+if (process.argv[1] && pathToFileURL(realpathSync(path.resolve(process.argv[1]))).href === import.meta.url) {
   const args = process.argv.slice(2);
   const options = {};
   try {

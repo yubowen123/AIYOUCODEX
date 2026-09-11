@@ -42,6 +42,16 @@ if (Test-Path -LiteralPath $legacyMarker -PathType Leaf) {
   } catch {}
 }
 
+$hookSetup = Join-Path $fullInstallDir "scripts\setup-efficiency-hooks.mjs"
+if (Test-Path -LiteralPath $hookSetup -PathType Leaf) {
+  try {
+    $runtimeConfig = Get-Content -LiteralPath (Join-Path $fullInstallDir "windows\config.json") -Raw | ConvertFrom-Json
+    $conversationCodexHome = Get-Setting "CODEX_HOME" (Join-Path ([Environment]::GetFolderPath("UserProfile")) ".codex")
+    & $runtimeConfig.nodePath $hookSetup --remove --apply --config (Join-Path $conversationCodexHome "hooks.json")
+    if ($LASTEXITCODE -ne 0) { Write-Warning "Review AIYOUCODEX handlers in native /hooks." }
+  } catch { Write-Warning "Could not remove AIYOUCODEX hook handlers; review native /hooks." }
+}
+
 $targets = @(
   (Join-Path $startupDir "AIYOUcodex.lnk"),
   (Join-Path $startMenuDir "AIYOUcodex.lnk"),

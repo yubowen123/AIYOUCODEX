@@ -21,6 +21,9 @@ export const REQUIRED_PRIVATE_IGNORE_RULES = Object.freeze([
   "hooks.json.tmp-*",
   "hooks.json.lock/",
   "hooks.json.lock.*",
+  "**/conversation-folders/directories.json",
+  "**/conversation-folders/directories.json.*",
+  ".aiyoucodex-thread.json",
 ]);
 
 export function isPrivateConfigPath(filePath) {
@@ -32,6 +35,9 @@ export function isPrivateConfigPath(filePath) {
     /^managed-shortcuts(?:\.[a-z0-9_-]+)*\.json$/iu.test(basename)
     || /\.(?:private|local)\.json$/iu.test(basename)
     || segments.includes(".aiyoucodex-private")
+    || basename === ".aiyoucodex-thread.json"
+    || segments.some((segment, index) => segment.toLowerCase() === "conversation-folders"
+      && /^directories\.json(?:\.|$)/iu.test(segments[index + 1] || ""))
     || segments.some((segment) => /^hook-events\.json(?:\.|$)/iu.test(segment))
     || segments.some((segment) => /^hooks\.json\.(?:aiyou-backup-|tmp-|lock(?:\.|$))/iu.test(segment))
     || segments.some((segment, index) => segment.toLowerCase() === "efficiency"

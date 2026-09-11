@@ -114,6 +114,13 @@ if [[ -d "${BACKUP_DIR}" ]]; then
   printf 'Previous runtime retained for recovery: %s\n' "${BACKUP_DIR}"
 fi
 
+# Register the standard pre-prompt hooks for new-install output directories.
+# Preserve unrelated handlers; native trust is never changed by this installer.
+if ! "${NODE_PATH}" "${INSTALL_DIR}/scripts/setup-efficiency-hooks.mjs" --apply --config "${CODEX_HOME:-${HOME}/.codex}/hooks.json"; then
+  printf 'Conversation output hooks could not be configured; review docs/CONVERSATION-FOLDERS.md.\n' >&2
+fi
+printf 'For new hook definitions, review and trust the AIYOUCODEX handlers in native Codex /hooks.\n'
+
 if [[ "${CODEX_SIDEBAR_SKIP_OPEN:-0}" != "1" ]]; then
   /usr/bin/open "${HOME}/Applications/AIYOUcodex.app"
 fi
