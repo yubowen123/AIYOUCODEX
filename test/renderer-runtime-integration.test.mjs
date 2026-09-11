@@ -8,9 +8,9 @@ import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import vm from "node:vm";
 import test from "node:test";
-import { CdpClient, connectCodexTarget } from "../scripts/cdp-client.mjs";
+import { connectCodexTarget } from "../scripts/cdp-client.mjs";
 import { RENDERER_HEALTH_EXPRESSION, acceptDocumentHealth, canReuseRenderer } from "../lib/renderer-health.mjs";
-import { waitForBrowserState } from "./helpers/browser-state.mjs";
+import { connectFixtureBrowser, waitForBrowserState } from "./helpers/browser-state.mjs";
 import { EfficiencyBridge } from "../lib/efficiency-bridge.mjs";
 import { SkillOrganizationBridge, createSkillOrganizationController } from "../lib/skill-organization.mjs";
 
@@ -49,7 +49,7 @@ test("production attach and delivery survive CDP reconnect; real document reload
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   const browser = spawn(executable, ["--headless=new", "--no-sandbox", "--no-first-run", "--no-default-browser-check",
-    "--disable-extensions", "--remote-debugging-port=0", `--user-data-dir=${profile}`, origin], { stdio: "ignore" });
+    "--disable-extensions", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
   const clients = new Set();
   t.after(async () => {
     for (const client of clients) client.close();
@@ -59,16 +59,9 @@ test("production attach and delivery survive CDP reconnect; real document reload
     await new Promise((resolve) => server.close(resolve));
     await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
-  let port;
-  for (let index = 0; index < 70; index += 1) {
-    try { port = Number((await readFile(path.join(profile, "DevToolsActivePort"), "utf8")).split("\n")[0]); break; } catch {}
-    await delay(100);
-  }
-  assert.ok(port);
-  const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-  const target = targets.find((entry) => entry.type === "page");
-  const inspect = new CdpClient(target.webSocketDebuggerUrl);
-  await inspect.connect();
+  // Own the navigated fixture target. The first Windows startup page can be a
+  // different tab that never navigates to the command-line URL.
+  const { client: inspect, target } = await connectFixtureBrowser({ browser, profile, url: origin });
   clients.add(inspect);
   await waitForBrowserState(inspect, `location.origin===${JSON.stringify(origin)}&&document.readyState==='complete'&&!!document.querySelector('main')`, "Fixture navigation and native panel mount are ready before attach");
   const shortcutLoaded = `(()=>{const frame=document.querySelector('iframe[data-codex-custom-shortcut-frame]');return !!frame&&frame.contentDocument?.readyState==='complete'&&frame.contentWindow.location.href===${JSON.stringify(`${origin}/panel`)}})()`;
