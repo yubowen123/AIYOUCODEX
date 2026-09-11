@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 import { runEfficiencyHook } from "../lib/efficiency-hook.mjs";
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
+import os from "node:os";
+import { createConversationFolders, runConversationFolderHook } from "../lib/conversation-folders.mjs";
 
 export function resolveNativeDefaultSkills(selections, { cwd, homeDir, timeoutMs = 1400 } = {}) {
   if (!selections.length) return Promise.resolve([]);
@@ -48,18 +51,35 @@ async function main() {
     process.stdout.write(`${JSON.stringify(resolved)}\n`);
     return;
   }
-  const result = await runEfficiencyHook(event, {
-    resolveThread: async (threadId) => threadId === event.session_id ? { projectPath: event.cwd || null } : null,
-    resolveSkills: (selections, options) => resolveNativeDefaultSkills(selections, { ...options, cwd: event.cwd }),
-  });
+  let folderContext = "", folderWarning = "";
+  try {
+    folderContext = await runConversationFolderHook(event, { folders: createConversationFolders(),
+      indexPath: path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "session_index.jsonl") });
+  } catch {
+    folderWarning = "AIYOUcodex 对话专属目录暂不可用；不要假设文件已归档，请检查输出位置。";
+  }
+  let result = {};
+  try {
+    result = await runEfficiencyHook(event, {
+      resolveThread: async (threadId) => threadId === event.session_id ? { projectPath: event.cwd || null } : null,
+      resolveSkills: (selections, options) => resolveNativeDefaultSkills(selections, { ...options, cwd: event.cwd }),
+      contextReserve: folderContext.length + 1,
+    });
+  } catch {
+    // Directory delivery must not depend on a valid optional output-preference file.
+    result.systemMessage = "AIYOUcodex 输出偏好暂不可用，保留原生对话与目录规则。";
+  }
+  if (folderContext) result.hookSpecificOutput = { hookEventName: event.hook_event_name,
+    additionalContext: [result.hookSpecificOutput?.additionalContext, folderContext].filter(Boolean).join("\n") };
+  if (folderWarning) result.systemMessage = folderWarning;
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
 // Only native Codex invokes this CLI. Its session cwd is authoritative for this
 // invocation; the UI uses an independent backend resolver and cannot supply it.
-// No transcript, prompt body or credential file is opened. Skill resolution
+// Only the title index is read for directory naming; no transcript body or credential file is opened. Skill resolution
 // returns installed metadata only, never the contents/instructions of a Skill.
-if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+if (process.argv[1] && pathToFileURL(realpathSync(path.resolve(process.argv[1]))).href === import.meta.url) {
   main().catch(() => {
     // Fail open without putting paths, local state, or raw input into model context.
     process.stderr.write("AIYOUCODEX efficiency hook unavailable; native conversation continues.\n");

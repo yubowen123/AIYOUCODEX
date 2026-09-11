@@ -18,6 +18,7 @@ test("Windows public installer creates a user-local runtime and login shortcuts"
   const sentinel = path.join(testRoot, "keep.txt");
   const env = {
     ...process.env,
+    CODEX_HOME: path.join(testRoot, "codex-home"),
     CODEX_SIDEBAR_SOURCE_DIR: projectRoot,
     CODEX_SIDEBAR_INSTALL_DIR: installDir,
     CODEX_SIDEBAR_LOGS_DIR: logsDir,

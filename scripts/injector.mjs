@@ -20,6 +20,7 @@ import { AssetConsoleBridge } from "../lib/asset-console-bridge.mjs";
 import { readInstalledSkillCatalog } from "../lib/skill-catalog.mjs";
 import { readManagedShortcuts } from "../lib/managed-shortcuts.mjs";
 import { createEfficiencyController, EfficiencyBridge } from "../lib/efficiency-bridge.mjs";
+import { createConversationFolders, createConversationFolderSync } from "../lib/conversation-folders.mjs";
 import { executeConfirmedContext } from "../lib/context-execution.mjs";
 import { RENDERER_HEALTH_EXPRESSION, acceptDocumentHealth, canReuseRenderer, recordUpdateFailure, rendererReadiness } from "../lib/renderer-health.mjs";
 
@@ -41,6 +42,8 @@ function parseArgs(argv) {
 
 const options = parseArgs(process.argv.slice(2));
 const repository = new PreviewRepository();
+const conversationFolders = createConversationFolders();
+const syncConversationFolders = createConversationFolderSync({ folders: conversationFolders, repository });
 
 let stopped = false;
 const sessions = new Map();
@@ -75,7 +78,7 @@ async function disposeRendererSession(session, { destroy = false } = {}) {
 async function attachTarget(target) {
   const client = await connectCodexTarget(target);
   const assetConsoleBridge = createAssetConsoleBridge();
-  const efficiencyController = createEfficiencyController({ repository,
+  const efficiencyController = createEfficiencyController({ repository, conversationFolders,
     readActiveContext: () => readActiveConversationContext({ client }),
     executeContext: (payload) => executeConfirmedContext({ client, ...payload }) });
   const efficiencyBridge = new EfficiencyBridge(efficiencyController);
@@ -293,6 +296,8 @@ async function pushPreviews(session) {
     readActiveTaskThreads(),
   ]);
   const authoritative = activeContext?.threadId ? await repository.resolveEfficiencyThread(activeContext.threadId) : null;
+  try { await syncConversationFolders(recentCatalog, authoritative); }
+  catch { /* A folder failure must not tear down sidebar cards or chat. */ }
   const catalogKey = authoritative?.projectPath || "";
   let catalogEntry = skillCatalogCache.get(catalogKey);
   if (!catalogEntry || Date.now() >= catalogEntry.expiresAt) {

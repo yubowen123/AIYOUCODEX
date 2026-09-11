@@ -30,6 +30,14 @@ if [[ "${CODEX_SIDEBAR_SKIP_LAUNCHCTL:-0}" != "1" ]]; then
   fi
 fi
 
+# Remove only owned native handlers before removing their runtime. Preserve outputs/state.
+HOOK_NODE="${CODEX_SIDEBAR_NODE:-}"
+if [[ -z "${HOOK_NODE}" ]] && command -v node >/dev/null 2>&1; then HOOK_NODE="$(command -v node)"; fi
+if [[ -n "${HOOK_NODE}" && -f "${INSTALL_DIR}/scripts/setup-efficiency-hooks.mjs" ]]; then
+  "${HOOK_NODE}" "${INSTALL_DIR}/scripts/setup-efficiency-hooks.mjs" --remove --apply --config "${CODEX_HOME:-${HOME}/.codex}/hooks.json" \
+    || printf 'Could not remove AIYOUCODEX hook handlers; review native /hooks.\n' >&2
+fi
+
 for TARGET in \
   "${PLIST_PATH}" \
   "${LEGACY_PLIST_PATH}" \

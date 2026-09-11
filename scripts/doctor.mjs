@@ -48,6 +48,8 @@ const required = [
   path.join(root, "lib", "efficiency-store.mjs"),
   path.join(root, "lib", "efficiency-hook.mjs"),
   path.join(root, "lib", "efficiency-bridge.mjs"),
+  path.join(root, "lib", "workspace-folder.mjs"),
+  path.join(root, "lib", "conversation-folders.mjs"),
   path.join(root, "lib", "context-draft.mjs"),
   path.join(root, "lib", "context-execution.mjs"),
   path.join(root, "lib", "skill-catalog.mjs"),

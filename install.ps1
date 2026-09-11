@@ -201,6 +201,10 @@ try {
   }
 
   if (Test-Path -LiteralPath $backupDir) { Write-Output "Previous runtime retained for recovery: $backupDir" }
+  $conversationCodexHome = Get-Setting "CODEX_HOME" (Join-Path ([Environment]::GetFolderPath("UserProfile")) ".codex")
+  & $nodePath (Join-Path $fullInstallDir "scripts\setup-efficiency-hooks.mjs") --apply --config (Join-Path $conversationCodexHome "hooks.json")
+  if ($LASTEXITCODE -ne 0) { Write-Warning "Conversation output hooks could not be configured; see docs/CONVERSATION-FOLDERS.md." }
+  Write-Output "Review and trust new AIYOUCODEX handlers in native Codex /hooks. Native trust was not changed."
   if ((Get-Setting "CODEX_SIDEBAR_SKIP_OPEN" "0") -ne "1") {
     & $powerShellPath -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $launcherPath
   }

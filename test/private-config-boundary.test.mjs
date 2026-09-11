@@ -32,6 +32,11 @@ test("local shortcut profiles and private overrides are recognized at any depth"
     "nested/hooks.json.lock/owner.json",
     "nested/hooks.json.lock.stale-123/owner.json",
     "nested\\efficiency\\state.json",
+    "efficiency/conversation-folders/directories.json",
+    "nested/conversation-folders/directories.json.tmp-123",
+    "conversation-folders/directories.json.lock/owner.json",
+    ".aiyoucodex-thread.json",
+    "nested/.aiyoucodex-thread.json",
   ];
   for (const filePath of privatePaths) assert.equal(isPrivateConfigPath(filePath), true, filePath);
 
@@ -42,6 +47,9 @@ test("local shortcut profiles and private overrides are recognized at any depth"
     "vendor/state.json",
     "state.json",
     "lib/efficiency-store.mjs",
+    "lib/conversation-folders.mjs",
+    "test/conversation-folders.test.mjs",
+    "docs/CONVERSATION-FOLDERS.md",
     "test/efficiency-hook.test.mjs",
     "docs/OUTPUT-EFFICIENCY.md",
     "examples/hooks.json",
@@ -87,6 +95,8 @@ test("npm ignore rules physically exclude local-only profiles from a package", a
       "efficiency/state.json.tmp-123", "efficiency/hook-events.json", "hook-events.json",
       "nested/hook-events.json.tmp-123", "hooks.json.aiyou-backup-123", "nested/hooks.json.aiyou-backup-123",
       "hooks.json.tmp-123", "hooks.json.lock/owner.json", "hooks.json.lock.reaper/owner.json",
+      "efficiency/conversation-folders/directories.json", "nested/conversation-folders/directories.json.tmp-123",
+      "conversation-folders/directories.json.lock/owner.json", ".aiyoucodex-thread.json", "nested/.aiyoucodex-thread.json",
       "vendor/state.json",
     ]) {
       await mkdir(path.dirname(path.join(fixture, relative)), { recursive: true });
