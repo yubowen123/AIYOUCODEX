@@ -10,6 +10,7 @@ import { createEfficiencyStore } from "../lib/efficiency-store.mjs";
 import { PreviewRepository } from "../lib/preview-data.mjs";
 
 const A = "11111111-1111-4111-8111-111111111111", B = "22222222-2222-4222-8222-222222222222";
+const folderData = (context) => JSON.parse(context.split("\n").find((line) => line.startsWith("{") && line.includes('"outputDirectory"')));
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), "aiyou-conversation-folders-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -26,6 +27,15 @@ test("names preserve Chinese, sanitize portable invalid characters and reserve d
   assert.equal(conversationFolderName("CON.txt", A), "_CON.txt");
   assert.match(conversationFolderName("...", A), /^新对话-/u);
   assert.ok(Buffer.byteLength(conversationFolderName("图片😀".repeat(100), A)) <= 150);
+});
+
+test("folder context round-trips POSIX and Windows paths through its JSON data boundary", () => {
+  for (const directory of ["/work/中文 空格/输出", "D:\\中文 空格\\输出"]) {
+    const entry = { threadId: A, path: directory, workspace: directory };
+    assert.deepEqual(folderData(renderConversationFolderContext(entry)), {
+      threadId: A, outputDirectory: directory, workspace: directory,
+    });
+  }
 });
 
 test("create before use, persist by exact ID, rename with contents, and reveal correct parent", async (t) => {
@@ -108,7 +118,7 @@ test("native hook creates output path, emits on every prompt, ignores agents and
   const event = { hook_event_name: "UserPromptSubmit", session_id: A, cwd: f.workspace, turn_id: "turn-1" };
   const context = await runConversationFolderHook(event, { folders: f.folders, indexPath });
   const entry = (await f.folders.read()).threads[A];
-  assert.ok(context.includes(entry.path)); assert.ok(context.includes("复制到此目录"));
+  assert.equal(folderData(context).outputDirectory, entry.path); assert.ok(context.includes("复制到此目录"));
   await appendFile(indexPath, row("新图像任务"));
   await runConversationFolderHook(event, { folders: f.folders, indexPath });
   assert.equal((await f.folders.read()).threads[A].path, entry.path);
@@ -192,7 +202,7 @@ test("installed hook CLI emits folder context independently of output preference
   });
   assert.equal(result.code, 0); assert.equal(result.stderr, "");
   const output = JSON.parse(result.stdout);
-  assert.ok(output.hookSpecificOutput.additionalContext.includes(path.join(f.workspace, "真实钩子流程")));
+  assert.equal(folderData(output.hookSpecificOutput.additionalContext).outputDirectory, path.join(f.workspace, "真实钩子流程"));
   assert.ok(output.hookSpecificOutput.additionalContext.length <= 4096);
   assert.equal(output.decision, undefined);
   assert.ok((await readdir(f.workspace)).includes("真实钩子流程"));

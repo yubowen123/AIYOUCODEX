@@ -32,12 +32,15 @@ test("real directory checks preserve named symlinks, refuse files/deletions and 
   const folder = path.join(root, "中文 空格 项目");
   await mkdir(folder);
   const calls = [];
-  const options = { platform: "darwin", launch: async (...args) => { calls.push(args); } };
+  // Real tmp paths use the host's syntax, unlike the pure cross-platform cases.
+  const options = { platform: process.platform === "win32" ? "win32" : "darwin", env: { SystemRoot: "C:\\Windows" },
+    launch: async (...args) => { calls.push(args); } };
   const record = { threadId: "a", projectPath: folder };
   const request = { record, mode: "parent", validateTarget: async () => true };
   const result = await openWorkspaceFolder(request, options);
   assert.equal(result.status, "requested");
-  assert.deepEqual(calls[0].slice(0, 2), ["/usr/bin/open", ["-R", folder]]);
+  assert.deepEqual(calls[0].slice(0, 2), process.platform === "win32"
+    ? ["C:\\Windows\\explorer.exe", ["/select,", folder]] : ["/usr/bin/open", ["-R", folder]]);
   assert.equal(calls[0][2].shell, false);
   await assert.rejects(openWorkspaceFolder({ ...request, validateTarget: async () => false }, options), /已变化/u);
   await assert.rejects(openWorkspaceFolder({ ...request, mode: "invalid" }, options), /请选择/u);
