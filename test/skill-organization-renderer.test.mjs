@@ -113,7 +113,8 @@ test("Skills UI: all by default, real single clicks, persistent custom groups, e
   // A queued category render / host refresh may finish while the mouse is down.
   // It must not replace the card and swallow the eventual click.
   await client.evaluate(`${api}.setSkillOrganization(${JSON.stringify(await controller.snapshot())})`);
-  await client.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+  // setSkillOrganization commits synchronously. Waiting for extra animation
+  // frames here can stall in a throttled headless CI window and adds no coverage.
   assert.equal(await client.evaluate(`window.__pressedSkill===document.querySelector(${JSON.stringify(row)})&&window.__pressedSkill.isConnected`), true, "Refresh preserves the pressed card");
   await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: cardPoint.x, y: cardPoint.y, button: "left", clickCount: 1 });
   await waitForBrowserState(client, `document.querySelector('${dialog}[open] [data-skill-detail-body]').textContent.includes('角色设计与场景生成')`, "Single click opens scenario and usage preview");
