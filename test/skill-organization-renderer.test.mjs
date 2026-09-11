@@ -105,7 +105,15 @@ test("Skills UI: all by default, real single clicks, persistent custom groups, e
   await writeFile(imageSkill.skillFile, "---\nname: imagegen\ndescription: 图片创作工具\n---\n## 适用场景\n角色设计与场景生成\n## 使用方法\n1. 提供参考图片\n2. 说明风格与尺寸\n<img src=x onerror='window.__unsafe=true'>\n## 输入要求\n参考图片\n## 输出结果\n图片文件\n");
   const dialog = "#aiyoucodex-skill-details";
   assert.equal(actions.some((action) => action.action === "describeSkill"), false, "No full descriptions preloaded");
-  await click(row);
+  const cardPoint = await point(row);
+  await client.evaluate(`window.__pressedSkill=document.querySelector(${JSON.stringify(row)})`);
+  await client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: cardPoint.x, y: cardPoint.y, button: "left", clickCount: 1 });
+  // A queued category render / host refresh may finish while the mouse is down.
+  // It must not replace the card and swallow the eventual click.
+  await client.evaluate(`${api}.setSkillOrganization(${JSON.stringify(await controller.snapshot())})`);
+  await client.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+  assert.equal(await client.evaluate(`window.__pressedSkill===document.querySelector(${JSON.stringify(row)})&&window.__pressedSkill.isConnected`), true, "Refresh preserves the pressed card");
+  await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: cardPoint.x, y: cardPoint.y, button: "left", clickCount: 1 });
   await waitForBrowserState(client, `document.querySelector('${dialog}[open] [data-skill-detail-body]').textContent.includes('角色设计与场景生成')`, "Single click opens scenario and usage preview");
   assert.equal(await client.evaluate("window.__added.length"), 0, "Reading does not insert or send");
   assert.equal(await client.evaluate(`!!document.querySelector('${dialog} img')||!!window.__unsafe`), false, "Source HTML is inert text");

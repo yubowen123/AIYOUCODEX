@@ -2,7 +2,7 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
-  const RUNTIME_VERSION = "2026-09-11.4";
+  const RUNTIME_VERSION = "2026-09-11.5";
   const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
@@ -3397,25 +3397,31 @@
       shell.removeAttribute("aria-busy");
       return;
     }
-    grid.replaceChildren(...visible.map((entry) => {
-      const row = document.createElement("div");
+    // Preserve card and action-button identity across host snapshots and queued
+    // filter renders, including the interval between mouse press and release.
+    const existingRows = new Map([...grid.children].filter((node) => node.dataset.skillId).map((node) => [node.dataset.skillId, node]));
+    for (const node of [...grid.children]) if (!node.dataset.skillId) node.remove();
+    visible.forEach((entry, index) => {
+      const id = skillFavoriteKey(entry);
+      const row = existingRows.get(id) || document.createElement("div");
       row.className = "codex-skill-row";
-      row.dataset.skillId = skillFavoriteKey(entry);
+      row.dataset.skillId = id;
       row.title = entry.skillFile || entry.path || entry.title;
       row.setAttribute("role", "button");
       row.tabIndex = 0;
-      const copy = document.createElement("span");
-      copy.innerHTML = '<span class="codex-skill-name"></span><span class="codex-skill-description"></span><span class="codex-skill-category"></span>';
-      copy.querySelector(".codex-skill-name").textContent = entry.title;
-      copy.querySelector(".codex-skill-description").textContent = entry.description;
+      const copy = row.firstElementChild || document.createElement("span");
+      if (!copy.childElementCount) copy.innerHTML = '<span class="codex-skill-name"></span><span class="codex-skill-description"></span><span class="codex-skill-category"></span>';
+      const updateCopy = (selector, value) => { const node = copy.querySelector(selector); if (node.textContent !== value) node.textContent = value; };
+      updateCopy(".codex-skill-name", entry.title);
+      updateCopy(".codex-skill-description", entry.description);
       const category = skillOrganization.groups.find((group) => group.id === entry.categoryId);
-      copy.querySelector(".codex-skill-category").textContent = category ? `${category.label} · ${entry.classificationSource === "manual" ? "手动" : "自动"}` : "";
-      const favorite = document.createElement("button");
+      updateCopy(".codex-skill-category", category ? `${category.label} · ${entry.classificationSource === "manual" ? "手动" : "自动"}` : "");
+      const favorite = row.querySelector(".codex-skill-favorite") || document.createElement("button");
       favorite.type = "button";
       favorite.className = "codex-skill-favorite";
       favorite.setAttribute("aria-pressed", String(skillOrganizerFavorites.has(skillFavoriteKey(entry))));
       favorite.setAttribute("aria-label", `${skillOrganizerFavorites.has(skillFavoriteKey(entry)) ? "取消常用" : "加入常用"}：${entry.title}`);
-      favorite.textContent = "★";
+      if (favorite.textContent !== "★") favorite.textContent = "★";
       favorite.onclick = (event) => {
         event.stopPropagation();
         if (skillOrganizerFavorites.has(skillFavoriteKey(entry))) skillOrganizerFavorites.delete(skillFavoriteKey(entry));
@@ -3423,12 +3429,12 @@
         try { localStorage.setItem(SKILL_FAVORITES_KEY, JSON.stringify([...skillOrganizerFavorites])); } catch {}
         renderSkillOrganizer();
       };
-      const use = document.createElement("button");
+      const use = row.querySelector(".codex-skill-use") || document.createElement("button");
       use.type = "button";
       use.className = "codex-skill-use";
       use.setAttribute("aria-label", `添加到对话：${entry.title}`);
       use.title = "添加到对话";
-      use.textContent = "+";
+      if (use.textContent !== "+") use.textContent = "+";
       use.onclick = (event) => { event.stopPropagation(); void addSkillToConversation(entry); };
       const open = () => openSkillDetails(entry, row);
       row.onclick = open;
@@ -3439,9 +3445,11 @@
         } else if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); }
       };
       row.oncontextmenu = (event) => { event.preventDefault(); showSkillContextMenu(entry, event.clientX, event.clientY); };
-      row.append(copy, favorite, use);
-      return row;
-    }));
+      if (!row.childElementCount) row.append(copy, favorite, use);
+      if (grid.children[index] !== row) grid.insertBefore(row, grid.children[index] || null);
+      existingRows.delete(id);
+    });
+    for (const row of existingRows.values()) row.remove();
     shell.removeAttribute("aria-busy");
   }
 
