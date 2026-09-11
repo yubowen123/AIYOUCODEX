@@ -18,6 +18,8 @@ import { createDesktopAppRuntime } from "../lib/desktop-runtime.mjs";
 import { readActiveTaskThreads } from "../lib/taskboard-status.mjs";
 import { AssetConsoleBridge } from "../lib/asset-console-bridge.mjs";
 import { readInstalledSkillCatalog } from "../lib/skill-catalog.mjs";
+import { createSkillOrganizationStore, createSkillOrganizationController, SkillOrganizationBridge } from "../lib/skill-organization.mjs";
+import { createSkillProvenanceIndex } from "../lib/skill-provenance.mjs";
 import { readManagedShortcuts } from "../lib/managed-shortcuts.mjs";
 import { createEfficiencyController, EfficiencyBridge } from "../lib/efficiency-bridge.mjs";
 import { createConversationFolders, createConversationFolderSync } from "../lib/conversation-folders.mjs";
@@ -49,6 +51,12 @@ let stopped = false;
 const sessions = new Map();
 let persistentShortcutOwnerTargetId = "";
 const skillCatalogCache = new Map();
+const skillOrganizationStore = createSkillOrganizationStore();
+const skillProvenance = createSkillProvenanceIndex({ listSessions: async () => {
+  await repository.refreshEfficiencyIndex();
+  return [...repository.filesById].map(([threadId, filePath]) => ({ threadId, filePath,
+    title: repository.metadataById.get(threadId)?.title || "未命名对话" }));
+} });
 let discoveryFailures = 0;
 const desktopAppRecovery = new DesktopAppRecovery();
 const desktopAppRuntime = createDesktopAppRuntime();
@@ -71,6 +79,7 @@ async function disposeRendererSession(session, { destroy = false } = {}) {
   }
   await session.assetConsoleBridge.dispose();
   session.efficiencyBridge?.dispose();
+  session.skillOrganizationBridge?.dispose();
   session.client.close();
   session.deliveredHistoryKey = "";
 }
@@ -82,6 +91,12 @@ async function attachTarget(target) {
     readActiveContext: () => readActiveConversationContext({ client }),
     executeContext: (payload) => executeConfirmedContext({ client, ...payload }) });
   const efficiencyBridge = new EfficiencyBridge(efficiencyController);
+  const skillOrganizationController = createSkillOrganizationController({ store: skillOrganizationStore, trace: skillProvenance.trace, readCatalog: async ({ refresh = false } = {}) => {
+    const active = await readActiveConversationContext({ client });
+    const record = active?.threadId ? await repository.resolveEfficiencyThread(active.threadId) : null;
+    return readCachedSkillCatalog(record?.projectPath || "", { refresh });
+  } });
+  const skillOrganizationBridge = new SkillOrganizationBridge(skillOrganizationController);
   try {
     // New-document registration must be enabled on this exact CDP connection.
     await client.send("Page.enable");
@@ -107,6 +122,7 @@ async function attachTarget(target) {
     await client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] = ${JSON.stringify(registered.identifier)}`);
     await assetConsoleBridge.install(client);
     await efficiencyBridge.install(client);
+    await skillOrganizationBridge.install(client);
     process.stdout.write(`[${new Date().toISOString()}] Codex conversation preview attached to renderer ${target.id}\n`);
     const session = {
       targetId: target.id,
@@ -114,6 +130,8 @@ async function attachTarget(target) {
       assetConsoleBridge,
       efficiencyController,
       efficiencyBridge,
+      skillOrganizationController,
+      skillOrganizationBridge,
       registeredScriptIdentifier: registered.identifier,
       deliveredHistoryKey: "",
       persistentShortcutIds: managedShortcuts
@@ -127,6 +145,7 @@ async function attachTarget(target) {
   } catch (error) {
     await assetConsoleBridge.dispose().catch(() => {});
     efficiencyBridge.dispose();
+    skillOrganizationBridge.dispose();
     client.close();
     throw error;
   }
@@ -270,6 +289,23 @@ async function pushConversationHistory(session, activeContext = null) {
   session.deliveredHistoryKey = historyKey;
 }
 
+async function readCachedSkillCatalog(catalogKey, { refresh = false } = {}) {
+  let entry = skillCatalogCache.get(catalogKey);
+  if (entry?.pending) return entry.pending;
+  if (!refresh && entry && Date.now() < entry.expiresAt) return entry.skills;
+  entry = { pending: readInstalledSkillCatalog({ cwd: catalogKey || undefined }) };
+  skillCatalogCache.set(catalogKey, entry);
+  try {
+    entry.skills = await entry.pending;
+    entry.expiresAt = Date.now() + 5 * 60_000;
+    return entry.skills;
+  } catch (error) { skillCatalogCache.delete(catalogKey); throw error; }
+  finally {
+    delete entry.pending;
+    if (skillCatalogCache.size > 12) skillCatalogCache.delete(skillCatalogCache.keys().next().value);
+  }
+}
+
 async function pushPreviews(session) {
   if (!session?.client) return;
   const [requests, activeContext, recentCatalog, pinnedThreadIds, taskboardStatus] = await Promise.all([
@@ -299,13 +335,10 @@ async function pushPreviews(session) {
   try { await syncConversationFolders(recentCatalog, authoritative); }
   catch { /* A folder failure must not tear down sidebar cards or chat. */ }
   const catalogKey = authoritative?.projectPath || "";
-  let catalogEntry = skillCatalogCache.get(catalogKey);
-  if (!catalogEntry || Date.now() >= catalogEntry.expiresAt) {
-    catalogEntry = { skills: await readInstalledSkillCatalog({ cwd: catalogKey || undefined }), expiresAt: Date.now() + 5 * 60_000 };
-    skillCatalogCache.set(catalogKey, catalogEntry);
-    if (skillCatalogCache.size > 12) skillCatalogCache.delete(skillCatalogCache.keys().next().value);
-  }
-  const skillCatalog = catalogEntry.skills;
+  const skillCatalog = await readCachedSkillCatalog(catalogKey);
+  let skillOrganization;
+  try { skillOrganization = await session.skillOrganizationController.snapshot(skillCatalog); }
+  catch { /* A corrupt optional preference must not stop cards or Skills discovery. */ }
   const interruptedCatalog = await repository.readInterruptedCatalog({
     activeThreadIds: taskboardStatus.activeThreadIds,
   });
@@ -334,7 +367,8 @@ async function pushPreviews(session) {
   try { efficiency = await session.efficiencyController.snapshot(); }
   catch { /* Keep the previous efficiency panel state; saves still fail closed. */ }
   const snapshot = { previews, usage, searchCatalog, recentCatalog, interruptedCatalog, ...(efficiency ? { efficiency } : {}),
-    pinnedThreads: pinnedThreadIds, activeProjectThreads: taskboardStatus.activeThreadIds, skillCatalog };
+    pinnedThreads: pinnedThreadIds, activeProjectThreads: taskboardStatus.activeThreadIds,
+    ...(skillOrganization ? { skillOrganization } : { skillCatalog }) };
   const serialized = JSON.stringify(snapshot);
   const snapshotHash = createHash("sha256").update(serialized).digest("hex");
   if (session.deliveredSnapshotHash !== snapshotHash) await session.client.evaluate(`(() => {

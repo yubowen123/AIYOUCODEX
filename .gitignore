@@ -28,3 +28,9 @@ hooks.json.lock.*
 **/conversation-folders/directories.json
 **/conversation-folders/directories.json.*
 .aiyoucodex-thread.json
+
+# Per-user Skill category names and exact-source assignments are local only.
+**/skills/organization.json
+**/skills/organization.json.*
+**/skills/provenance.json
+**/skills/provenance.json.*

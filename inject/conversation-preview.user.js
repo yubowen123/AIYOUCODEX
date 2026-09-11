@@ -2,7 +2,7 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
-  const RUNTIME_VERSION = "2026-09-11.2";
+  const RUNTIME_VERSION = "2026-09-11.4";
   const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
@@ -163,7 +163,17 @@
   let skillOrganizerSource = null;
   let skillOrganizerCatalog = [];
   let skillOrganizerCatalogSignature = "";
-  let skillOrganizerFilter = "常用";
+  let skillOrganizerFilter = "all";
+  let skillOrganization = { version: 0, groups: [{ id: "all", label: "全部", builtin: true }, { id: "common", label: "常用", builtin: true }] };
+  const skillOrganizationRequests = new Map();
+  let skillOrganizationMessage = "";
+  let skillContextCleanup = null;
+  let skillDetailsDialog = null;
+  let skillDetailsEntry = null;
+  let skillDetailsGeneration = 0;
+  let skillDetailsReturnFocus = null;
+  const skillDetailsRequests = new Map();
+  let skillTraceGeneration = 0;
   let skillOrganizerQuery = "";
   let skillOrganizerNativeVisible = false;
   let skillOrganizerFavorites = null;
@@ -1882,7 +1892,21 @@
         background: transparent;
         color: inherit;
       }
-      #${SKILL_ORGANIZER_ID} .codex-skill-filter-list { display: flex; flex-wrap: wrap; gap: 7px; }
+      #${SKILL_ORGANIZER_ID} .codex-skill-filter-list { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 7px; padding-bottom: 4px; }
+      #${SKILL_ORGANIZER_ID} .codex-skill-filter { flex: 0 0 auto; white-space: nowrap; }
+      #${SKILL_ORGANIZER_ID} .codex-skill-head-actions { display: flex; align-items: center; gap: 6px; }
+      #${SKILL_ORGANIZER_ID} .codex-skill-status { display: block; font-size: 11px; font-weight: normal; max-width: 360px; }
+      #${SKILL_ORGANIZER_ID} .codex-skill-category { display: block; margin-top: 4px; font-size: 10px; opacity: .65; }
+      #${SKILL_ORGANIZER_ID} .codex-skill-group-manager {
+        position: absolute; inset: 12px; z-index: 50; overflow: auto; padding: 16px;
+        border: 1px solid color-mix(in srgb, currentColor 16%, transparent); border-radius: 12px;
+        background: var(--color-token-bg-primary, Canvas); box-shadow: 0 8px 30px #0002;
+      }
+      #${SKILL_ORGANIZER_ID} .codex-skill-group-manager[hidden] { display: none; }
+      #${SKILL_ORGANIZER_ID} .codex-skill-group-manager form { display: flex; gap: 6px; margin-top: 12px; align-items: center; }
+      #${SKILL_ORGANIZER_ID} .codex-skill-group-manager input { flex: 1; min-width: 0; padding: 9px; border: 1px solid #8886; border-radius: 6px; background: transparent; color: inherit; }
+      #${SKILL_ORGANIZER_ID} .codex-skill-group-manager button { padding: 7px; border: 1px solid #8886; border-radius: 6px; background: transparent; cursor: pointer; }
+      #${SKILL_ORGANIZER_ID} .codex-skill-group-manager button:disabled { opacity: .5; cursor: wait; }
       #${SKILL_ORGANIZER_ID} .codex-skill-filter {
         padding: 6px 10px;
         border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
@@ -1952,10 +1976,29 @@
         width: 30px; height: 30px; border: 0; border-radius: 8px; background: color-mix(in srgb, #2f80ed 10%, transparent); color: #1767c0; cursor: pointer; font-size: 16px;
       }
       .codex-skill-context-menu {
-        position: fixed; z-index: 10000; min-width: 150px; padding: 6px; border: 1px solid color-mix(in srgb, currentColor 14%, transparent); border-radius: 10px; background: var(--color-token-bg-primary, Canvas); box-shadow: 0 14px 34px color-mix(in srgb, black 20%, transparent);
+        position: fixed; inset: auto; margin: 0; z-index: 10000; min-width: 190px; max-width: calc(100vw - 16px); max-height: min(440px, calc(100vh - 16px)); overflow: auto; padding: 6px; color: var(--color-token-text-primary, CanvasText); border: 1px solid color-mix(in srgb, currentColor 14%, transparent); border-radius: 10px; background: var(--color-token-bg-primary, Canvas); box-shadow: 0 14px 34px color-mix(in srgb, black 20%, transparent); -webkit-app-region: no-drag;
       }
       .codex-skill-context-menu button { width: 100%; padding: 8px 10px; border: 0; border-radius: 7px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
       .codex-skill-context-menu button:hover { background: color-mix(in srgb, currentColor 7%, transparent); }
+      .codex-skill-context-menu button:disabled { opacity: .5; cursor: not-allowed; }
+      #aiyoucodex-skill-details { width: min(820px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: 0; border: 1px solid #cfd3dc; border-radius: 18px; overflow: hidden; color: #20232b; background: #fff; font: 14px/1.65 system-ui, sans-serif; -webkit-app-region: no-drag; }
+      #aiyoucodex-skill-details[open] { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+      #aiyoucodex-skill-details::backdrop { background: #17233755; }
+      #aiyoucodex-skill-details header { display: flex; align-items: flex-start; gap: 18px; padding: 18px 24px; border-bottom: 1px solid #e5e7eb; }
+      #aiyoucodex-skill-details header > div { flex: 1; min-width: 0; }
+      #aiyoucodex-skill-details h2 { margin: 0; font-size: 20px; overflow-wrap: anywhere; }
+      #aiyoucodex-skill-details p { margin: 6px 0; }
+      #aiyoucodex-skill-details button { padding: 8px 12px; background: #f4f5f7; border: 1px solid #ddd; border-radius: 9px; cursor: pointer; -webkit-app-region: no-drag; }
+      #aiyoucodex-skill-details button:disabled { opacity: .5; cursor: default; }
+      #aiyoucodex-skill-details [data-skill-detail-close] { width: 36px; height: 36px; flex: none; padding: 0; font-size: 24px; }
+      #aiyoucodex-skill-details [data-skill-detail-body] { overflow: auto; overscroll-behavior: contain; padding: 4px 24px 20px; }
+      #aiyoucodex-skill-details section { margin-top: 20px; }
+      #aiyoucodex-skill-details h3 { font-size: 16px; margin: 0 0 8px; }
+      #aiyoucodex-skill-details .skill-document-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+      #aiyoucodex-skill-details summary { cursor: pointer; margin-top: 20px; }
+      #aiyoucodex-skill-details footer { padding: 12px 24px; border-top: 1px solid #e5e7eb; display: flex; flex-wrap: wrap; gap: 8px; }
+      #aiyoucodex-skill-details [data-skill-detail-status] { width: 100%; color: #666; }
+      #aiyoucodex-skill-details [data-skill-detail-use] { background: #3478f6; color: white; border-color: transparent; }
       [${WORKSPACE_PANEL_ATTRIBUTE}]::before {
         content: ""; position: absolute; z-index: 5; top: 0; bottom: 0; left: -4px; width: 8px; cursor: ew-resize;
       }
@@ -3229,8 +3272,6 @@
     } catch {}
   }
 
-  const SKILL_FILTERS = ["常用", "视频创作", "导演镜头", "画面风格", "资产工作台", "写作研究", "工具管理", "全部"];
-
   function loadSkillFavorites(catalog) {
     if (skillOrganizerFavorites) return skillOrganizerFavorites;
     try {
@@ -3267,18 +3308,13 @@
   }
 
   function skillMatchesCategory(entry, category) {
-    const text = `${entry.title} ${entry.description}`;
-    if (category === "全部") return true;
-    if (category === "常用") return skillOrganizerFavorites?.has(skillFavoriteKey(entry)) === true;
-    if (category === "视频创作") return /视频|影像|seedance|即梦|minimax|剪辑|节奏|音乐|音效|mv|生成/i.test(text);
-    if (category === "导演镜头") return /导演|镜头|分镜|动作|摄影|表演|角色|转场|vfx|特效/i.test(text);
-    if (category === "画面风格") return /风格|美学|视觉|画面|图像|灯光|材质|构图|色彩|写实/i.test(text);
-    if (category === "资产工作台") return /资产|素材|工作台|归档|账本|管线|codex|知识卡|下载|清理/i.test(text);
-    if (category === "写作研究") return /写作|研究|知识|文章|公众号|小红书|脚本|语义|阅读|剧本/i.test(text);
-    return /工具|管理|浏览器|网页|数据|表格|文档|安装|审计|测试|调试|skill|codex|plugin/i.test(text);
+    if (category === "all") return true;
+    if (category === "common") return skillOrganizerFavorites?.has(skillFavoriteKey(entry)) === true;
+    return entry.categoryId === category;
   }
 
   function clearSkillOrganizer() {
+    skillTraceGeneration += 1; closeSkillDetails(false);
     skillOrganizerRenderGeneration += 1;
     if (skillOrganizerRenderFrame !== null) cancelAnimationFrame(skillOrganizerRenderFrame);
     skillOrganizerRenderFrame = null;
@@ -3287,11 +3323,10 @@
     skillOrganizerSource = null;
     skillOrganizerCatalog = [];
     skillOrganizerCatalogSignature = "";
-    skillOrganizerFilter = "常用";
+    skillOrganizerFilter = "all";
     skillOrganizerQuery = "";
     skillOrganizerNativeVisible = false;
-    skillContextMenu?.remove();
-    skillContextMenu = null;
+    closeSkillContextMenu();
   }
 
   function syncSkillOrganizerFilterSelection(shell, selected = skillOrganizerFilter) {
@@ -3304,16 +3339,14 @@
     const generation = ++skillOrganizerRenderGeneration;
     if (skillOrganizerRenderFrame !== null) cancelAnimationFrame(skillOrganizerRenderFrame);
     skillOrganizerRenderFrame = requestAnimationFrame(() => {
-      skillOrganizerRenderFrame = requestAnimationFrame(() => {
-        skillOrganizerRenderFrame = null;
-        if (generation !== skillOrganizerRenderGeneration) return;
-        renderSkillOrganizer();
-      });
+      skillOrganizerRenderFrame = null;
+      if (generation !== skillOrganizerRenderGeneration) return;
+      renderSkillOrganizer();
     });
   }
 
   function selectSkillOrganizerFilter(label) {
-    if (!SKILL_FILTERS.includes(label) || skillOrganizerFilter === label) return;
+    if (!skillOrganization.groups.some((group) => group.id === label) || skillOrganizerFilter === label) return;
     skillOrganizerFilter = label;
     const shell = document.getElementById(SKILL_ORGANIZER_ID);
     if (!shell) return;
@@ -3324,27 +3357,31 @@
 
   function renderSkillOrganizer() {
     const shell = document.getElementById(SKILL_ORGANIZER_ID);
-    if (!shell || (!hostSkillCatalog.length && !skillOrganizerSource?.isConnected)) return;
+    if (!shell) return;
     loadSkillFavorites(skillOrganizerCatalog);
     if (skillOrganizerSource?.isConnected) {
       skillOrganizerSource.setAttribute(SKILL_NATIVE_SECTION_ATTR, skillOrganizerNativeVisible ? "visible" : "hidden");
     }
     const filters = shell.querySelector(".codex-skill-filter-list");
-    if (!filters.childElementCount) {
-      filters.append(...SKILL_FILTERS.map((label) => {
-        const button = document.createElement("button");
+    // Reconcile by stable ID; polling and category changes never replace a
+    // button between pointerdown and click, nor steal focus from search/forms.
+    const existing = new Map([...filters.children].map((button) => [button.dataset.codexSkillFilter, button]));
+    skillOrganization.groups.forEach(({ id, label }, index) => {
+        const button = existing.get(id) || document.createElement("button");
         button.type = "button";
         button.className = "codex-skill-filter";
-        button.dataset.codexSkillFilter = label;
-        button.textContent = label;
+        button.dataset.codexSkillFilter = id;
+        if (button.textContent !== label) button.textContent = label;
         button.onpointerdown = (event) => {
-          if (event.button === 0) selectSkillOrganizerFilter(label);
+          if (event.button === 0) selectSkillOrganizerFilter(id);
         };
-        button.onclick = () => selectSkillOrganizerFilter(label);
-        return button;
-      }));
-    }
+        button.onclick = () => selectSkillOrganizerFilter(id);
+        if (filters.children[index] !== button) filters.insertBefore(button, filters.children[index] || null);
+        existing.delete(id);
+    });
+    for (const button of existing.values()) button.remove();
     syncSkillOrganizerFilterSelection(shell);
+    renderSkillOrganizationStatus();
     const terms = skillOrganizerQuery.toLocaleLowerCase("zh-CN").split(/\s+/).filter(Boolean);
     const visible = skillOrganizerCatalog.filter((entry) => {
       const text = `${entry.title} ${entry.description}`.toLocaleLowerCase("zh-CN");
@@ -3363,12 +3400,16 @@
     grid.replaceChildren(...visible.map((entry) => {
       const row = document.createElement("div");
       row.className = "codex-skill-row";
+      row.dataset.skillId = skillFavoriteKey(entry);
+      row.title = entry.skillFile || entry.path || entry.title;
       row.setAttribute("role", "button");
       row.tabIndex = 0;
       const copy = document.createElement("span");
-      copy.innerHTML = '<span class="codex-skill-name"></span><span class="codex-skill-description"></span>';
+      copy.innerHTML = '<span class="codex-skill-name"></span><span class="codex-skill-description"></span><span class="codex-skill-category"></span>';
       copy.querySelector(".codex-skill-name").textContent = entry.title;
       copy.querySelector(".codex-skill-description").textContent = entry.description;
+      const category = skillOrganization.groups.find((group) => group.id === entry.categoryId);
+      copy.querySelector(".codex-skill-category").textContent = category ? `${category.label} · ${entry.classificationSource === "manual" ? "手动" : "自动"}` : "";
       const favorite = document.createElement("button");
       favorite.type = "button";
       favorite.className = "codex-skill-favorite";
@@ -3389,12 +3430,14 @@
       use.title = "添加到对话";
       use.textContent = "+";
       use.onclick = (event) => { event.stopPropagation(); void addSkillToConversation(entry); };
-      const open = () => {
-        if (entry.card?.isConnected) entry.card.click();
-        else row.toggleAttribute("data-expanded");
-      };
+      const open = () => openSkillDetails(entry, row);
       row.onclick = open;
-      row.onkeydown = (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } };
+      row.onkeydown = (event) => {
+        if (event.target !== row) return;
+        if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+          event.preventDefault(); const rect = row.getBoundingClientRect(); showSkillContextMenu(entry, rect.x + 12, rect.y + 12);
+        } else if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); }
+      };
       row.oncontextmenu = (event) => { event.preventDefault(); showSkillContextMenu(entry, event.clientX, event.clientY); };
       row.append(copy, favorite, use);
       return row;
@@ -3496,8 +3539,7 @@
   }
 
   async function addSkillToConversation(entry) {
-    skillContextMenu?.remove();
-    skillContextMenu = null;
+    closeSkillContextMenu();
     let added = false;
     try {
       added = await window.__codexTaskboardInjection__?.addSkillToComposer?.({
@@ -3513,20 +3555,261 @@
     return added;
   }
 
+  function renderSkillOrganizationStatus() {
+    const shell = document.getElementById(SKILL_ORGANIZER_ID);
+    if (!shell) return;
+    shell.querySelectorAll("[data-skill-organization-status]").forEach((node) => { node.textContent = skillOrganizationMessage; });
+    const pending = skillOrganizationRequests.size > 0;
+    shell.querySelectorAll(".codex-skill-group-manager input, .codex-skill-group-manager button:not([data-skill-manager-close]), [data-skill-refresh]")
+      .forEach((node) => { node.disabled = pending; });
+  }
+
+  function setSkillOrganization(value) {
+    if (!value || !Number.isSafeInteger(value.version) || value.version < skillOrganization.version || !Array.isArray(value.groups) || !Array.isArray(value.catalog)) return;
+    skillOrganization = { version: value.version, groups: value.groups };
+    if (!value.groups.some((group) => group.id === skillOrganizerFilter)) skillOrganizerFilter = "all";
+    setSkillCatalog(value.catalog);
+  }
+
+  function requestSkillOrganization(action, fields = {}) {
+    if (skillOrganizationRequests.size || destroyed) return Promise.resolve(null);
+    const binding = window.__AIYOUCODEX_SKILLS_REQUEST__;
+    if (typeof binding !== "function") {
+      skillOrganizationMessage = "本地分类服务尚未连接，请等待 AIYOUcodex 增强服务就绪。";
+      renderSkillOrganizationStatus(); return Promise.resolve(null);
+    }
+    const requestId = `skills-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const payload = { requestId, action, ...fields,
+      ...(!["refresh", "revealSkill", "traceSkill"].includes(action) ? { expectedVersion: skillOrganization.version } : {}) };
+    const result = new Promise((resolve) => {
+      const timer = setTimeout(() => resolveSkillOrganizationRequest({ requestId, ok: false,
+        error: "操作结果尚未确认，请刷新后核对；不要重复新建分类。" }), action === "refresh" ? 25_000 : 10_000);
+      skillOrganizationRequests.set(requestId, { resolve, timer, action });
+    });
+    skillOrganizationMessage = action === "refresh" ? "正在刷新目录…" : action === "revealSkill" ? "正在定位文件…" : action === "traceSkill" ? "正在查找创建 / 最近优化对话…" : "正在保存分类…";
+    renderSkillOrganizationStatus();
+    try { Promise.resolve(binding(JSON.stringify(payload))).catch(() => resolveSkillOrganizationRequest({ requestId, ok: false, error: "分类服务连接失败，请刷新核对。" })); }
+    catch { resolveSkillOrganizationRequest({ requestId, ok: false, error: "分类请求未发送成功。" }); }
+    return result;
+  }
+
+  function resolveSkillOrganizationRequest(response) {
+    if (skillDetailsRequests.has(response?.requestId)) return resolveSkillDetailsRequest(response);
+    const pending = skillOrganizationRequests.get(response?.requestId);
+    if (!pending || destroyed) return false;
+    clearTimeout(pending.timer); skillOrganizationRequests.delete(response.requestId);
+    if (response.ok) {
+      if (response.data?.catalog) setSkillOrganization(response.data);
+      skillOrganizationMessage = response.data?.traceResult?.message || response.data?.revealResult?.message || (pending.action === "refresh" ? "目录已刷新 · 本地自动分类 · 0 Token" : "分类已保存，刷新与重启后仍保留。");
+    } else skillOrganizationMessage = response.error || "操作未完成，请刷新后核对。";
+    renderSkillOrganizationStatus(); pending.resolve(response.ok ? response.data : null);
+    return true;
+  }
+
+  function openSkillGroupManager() {
+    const shell = document.getElementById(SKILL_ORGANIZER_ID);
+    if (!shell) return;
+    closeSkillContextMenu();
+    let manager = shell.querySelector(".codex-skill-group-manager");
+    if (!manager) { manager = document.createElement("div"); manager.className = "codex-skill-group-manager"; shell.appendChild(manager); }
+    manager.hidden = false;
+    manager.setAttribute("role", "region"); manager.setAttribute("aria-label", "分类管理");
+    manager.innerHTML = '<div class="codex-skill-organizer-head"><strong>分类管理</strong><button type="button" data-skill-manager-close aria-label="关闭分类管理">×</button></div><p>6 个自动分类覆盖全部 Skills。右键卡片可手动移动，或恢复自动分类。</p><p>删除自定义分类只恢复其中 Skills 的自动分类，不删除或移动源文件。</p><form data-skill-create-group><input maxlength="24" required placeholder="自定义分类名称" aria-label="新分类名称"><button type="submit">新建分类</button></form><div data-skill-custom-groups></div><p role="status" data-skill-organization-status></p>';
+    manager.querySelector("[data-skill-manager-close]").onclick = () => {
+      manager.hidden = true; shell.querySelector("[data-skill-manage]")?.focus();
+    };
+    const create = manager.querySelector("[data-skill-create-group]");
+    create.onsubmit = async (event) => {
+      event.preventDefault();
+      const result = await requestSkillOrganization("createGroup", { label: create.querySelector("input").value });
+      if (result && !manager.hidden && manager.isConnected) openSkillGroupManager();
+    };
+    const list = manager.querySelector("[data-skill-custom-groups]");
+    for (const group of skillOrganization.groups.filter((group) => !group.builtin)) {
+      const row = document.createElement("form"); row.dataset.skillCustomGroup = group.id;
+      const input = document.createElement("input"); input.value = group.label; input.maxLength = 24; input.required = true; input.setAttribute("aria-label", `分类名称：${group.label}`);
+      const save = document.createElement("button"); save.type = "submit"; save.textContent = "改名";
+      const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "删除分类";
+      row.onsubmit = async (event) => {
+        event.preventDefault();
+        const result = await requestSkillOrganization("renameGroup", { groupId: group.id, label: input.value });
+        if (result && !manager.hidden && manager.isConnected) openSkillGroupManager();
+      };
+      remove.onclick = async () => {
+        const result = await requestSkillOrganization("deleteGroup", { groupId: group.id });
+        if (result && !manager.hidden && manager.isConnected) openSkillGroupManager();
+      };
+      row.append(input, save, remove); list.appendChild(row);
+    }
+    renderSkillOrganizationStatus(); create.querySelector("input").focus();
+  }
+
+  function closeSkillContextMenu() {
+    skillContextCleanup?.(); skillContextCleanup = null;
+    skillContextMenu?.remove(); skillContextMenu = null;
+  }
+
+  function closeSkillDetails(restoreFocus = true) {
+    skillDetailsGeneration += 1;
+    for (const pending of skillDetailsRequests.values()) clearTimeout(pending.timer);
+    skillDetailsRequests.clear();
+    const origin = skillDetailsReturnFocus, id = skillDetailsEntry?.id;
+    skillDetailsEntry = null; skillDetailsReturnFocus = null;
+    if (skillDetailsDialog?.open) skillDetailsDialog.close();
+    if (restoreFocus && !destroyed) {
+      const row = [...document.querySelectorAll(`#${SKILL_ORGANIZER_ID} [data-skill-id]`)].find((node) => node.dataset.skillId === id);
+      (origin?.isConnected ? origin : row || document.querySelector(`#${SKILL_ORGANIZER_ID} input`))?.focus();
+    }
+  }
+
+  function openSkillDetails(entry, origin = null) {
+    closeSkillContextMenu(); closeSkillDetails(false);
+    skillDetailsEntry = entry; skillDetailsReturnFocus = origin;
+    const generation = skillDetailsGeneration;
+    if (!skillDetailsDialog) {
+      const dialog = document.createElement("dialog"); dialog.id = "aiyoucodex-skill-details";
+      dialog.setAttribute("aria-labelledby", "aiyoucodex-skill-details-title");
+      dialog.innerHTML = '<header><div><h2 id="aiyoucodex-skill-details-title"></h2><p>使用方法与适用场景 · 本地说明</p></div><button type="button" data-skill-detail-close aria-label="关闭 Skill 介绍">×</button></header><div data-skill-detail-body></div><footer><p role="status" data-skill-detail-status></p><button type="button" data-skill-detail-use>添加到对话</button><button type="button" data-skill-detail-reveal>打开所在文件</button><button type="button" data-skill-detail-retry>重新读取</button></footer>';
+      dialog.querySelector("[data-skill-detail-close]").onclick = () => closeSkillDetails();
+      dialog.oncancel = (event) => { event.preventDefault(); closeSkillDetails(); };
+      dialog.onclick = (event) => {
+        const rect = dialog.getBoundingClientRect();
+        if (event.target === dialog && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) closeSkillDetails();
+      };
+      dialog.querySelector("[data-skill-detail-use]").onclick = () => {
+        const selected = skillDetailsEntry; closeSkillDetails(false); if (selected) void addSkillToConversation(selected);
+      };
+      dialog.querySelector("[data-skill-detail-retry]").onclick = () => {
+        if (skillDetailsEntry) openSkillDetails(skillDetailsEntry, skillDetailsReturnFocus);
+      };
+      dialog.querySelector("[data-skill-detail-reveal]").onclick = async () => {
+        const selected = skillDetailsEntry, revision = skillDetailsGeneration;
+        if (!selected) return;
+        const result = await requestSkillOrganization("revealSkill", { skillId: selected.id });
+        if (revision === skillDetailsGeneration) dialog.querySelector("[data-skill-detail-status]").textContent = result?.revealResult?.message || skillOrganizationMessage;
+      };
+      document.body.appendChild(dialog); skillDetailsDialog = dialog;
+    }
+    const dialog = skillDetailsDialog, body = dialog.querySelector("[data-skill-detail-body]");
+    dialog.querySelector("h2").textContent = entry.title;
+    const overview = document.createElement("p"); overview.className = "skill-document-text"; overview.textContent = entry.description || "";
+    body.replaceChildren(overview);
+    const available = Boolean(entry.skillFile && typeof window.__AIYOUCODEX_SKILLS_REQUEST__ === "function");
+    dialog.querySelector("[data-skill-detail-reveal]").disabled = !available;
+    const status = dialog.querySelector("[data-skill-detail-status]");
+    status.textContent = available ? "正在读取此 Skill 的说明…" : "尚无准确的本地文件来源，请刷新目录后重试。";
+    dialog.showModal(); dialog.querySelector("[data-skill-detail-close]").focus();
+    if (!available) return;
+    const requestId = `skill-details-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const timer = setTimeout(() => resolveSkillDetailsRequest({ requestId, ok: false, error: "读取超时，请重新读取。" }), 20_000);
+    skillDetailsRequests.set(requestId, { generation, skillId: entry.id, timer });
+    try {
+      Promise.resolve(window.__AIYOUCODEX_SKILLS_REQUEST__(JSON.stringify({ requestId, action: "describeSkill", skillId: entry.id })))
+        .catch(() => resolveSkillDetailsRequest({ requestId, ok: false, error: "说明服务暂未连接，请重新读取。" }));
+    } catch { resolveSkillDetailsRequest({ requestId, ok: false, error: "说明请求未发送成功，请重试。" }); }
+  }
+
+  function resolveSkillDetailsRequest(response) {
+    const pending = skillDetailsRequests.get(response?.requestId);
+    if (!pending) return false;
+    clearTimeout(pending.timer); skillDetailsRequests.delete(response.requestId);
+    if (destroyed || !skillDetailsDialog?.open || pending.generation !== skillDetailsGeneration || pending.skillId !== skillDetailsEntry?.id) return false;
+    const data = response.data?.skillDetails, dialog = skillDetailsDialog, status = dialog.querySelector("[data-skill-detail-status]");
+    if (!response.ok || data?.skillId !== pending.skillId) { status.textContent = response.error || "说明来源不匹配，请刷新目录后重试。"; return true; }
+    const body = dialog.querySelector("[data-skill-detail-body]"); body.replaceChildren();
+    const text = (value, parent) => { const node = document.createElement("p"); node.className = "skill-document-text"; node.textContent = value; parent.appendChild(node); };
+    const section = (title, excerpts, fallback = "") => {
+      if (!excerpts?.length && !fallback) return;
+      const node = document.createElement("section"), heading = document.createElement("h3"); heading.textContent = title; node.appendChild(heading);
+      if (excerpts?.length) for (const excerpt of excerpts) {
+        if (excerpt.heading && excerpt.heading !== title) { const label = document.createElement("strong"); label.textContent = excerpt.heading; node.appendChild(label); }
+        text(excerpt.text + (excerpt.truncated ? "\n（内容较长，仅展示节选）" : ""), node);
+      } else text(fallback, node);
+      body.appendChild(node);
+    };
+    section("功能介绍", null, data.overview || "原文件未提供功能简介。");
+    section("适用场景", data.scenarios, "原文件未单列适用场景，可参考功能介绍及下方原始说明。");
+    section("使用方法", data.usage, "通用调用方式：点击下方‘添加到对话’，再说明目标、提供相关材料和期望的输出。原文件未单列使用步骤，请结合原始说明使用。");
+    section("需要准备", data.inputs); section("预期产出", data.outputs);
+    const original = document.createElement("details"), summary = document.createElement("summary"); summary.textContent = "查看原始 Skill 说明";
+    original.appendChild(summary); text(data.document || "原文件没有正文。", original); body.appendChild(original);
+    text(`来源：${data.skillFile}`, body);
+    status.textContent = data.truncated ? "说明较长，当前展示节选；完整内容可通过‘打开所在文件’查看。" : "内容来自本地 SKILL.md。查看不会执行 Skill，也不会自动发送消息。";
+    return true;
+  }
+
   function showSkillContextMenu(entry, x, y) {
-    skillContextMenu?.remove();
+    closeSkillContextMenu();
     const menu = document.createElement("div");
     menu.className = "codex-skill-context-menu";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = "添加到对话";
-    button.onclick = () => void addSkillToConversation(entry);
-    menu.appendChild(button);
+    menu.setAttribute("role", "menu"); menu.setAttribute("aria-label", `Skill 操作：${entry.title}`);
+    const actionable = Boolean(entry.skillFile && typeof window.__AIYOUCODEX_SKILLS_REQUEST__ === "function");
+    const button = (label, action, disabled = false) => {
+      const node = document.createElement("button"); node.type = "button"; node.textContent = label;
+      node.setAttribute("role", "menuitem"); node.disabled = disabled; node.onclick = action; menu.appendChild(node); return node;
+    };
+    const position = () => {
+      const rect = menu.getBoundingClientRect();
+      menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))}px`;
+      menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))}px`;
+    };
+    button("添加到对话", () => void addSkillToConversation(entry));
+    const move = button("移动分类 ›", () => {
+      menu.replaceChildren();
+      button("← 返回", () => showSkillContextMenu(entry, x, y));
+      for (const group of skillOrganization.groups.filter((group) => !["all", "common"].includes(group.id))) {
+        const option = button(`${entry.categoryId === group.id ? "✓ " : ""}${group.label}`, async () => {
+          closeSkillContextMenu();
+          await requestSkillOrganization("moveSkill", { skillId: entry.id, groupId: group.id });
+        });
+        option.dataset.skillMoveGroup = group.id;
+      }
+      button("恢复自动分类", async () => { closeSkillContextMenu(); await requestSkillOrganization("moveSkill", { skillId: entry.id, groupId: null }); });
+      button("＋ 新建 / 管理分类", openSkillGroupManager);
+      position(); menu.querySelector("button")?.focus();
+    }, !actionable || skillOrganizationRequests.size > 0);
+    move.dataset.skillMenuMove = "true";
+    const reveal = button("打开所在文件", async () => {
+      closeSkillContextMenu(); await requestSkillOrganization("revealSkill", { skillId: entry.id });
+    }, !actionable || skillOrganizationRequests.size > 0);
+    reveal.title = "在所在文件夹中选中 SKILL.md"; reveal.dataset.skillMenuReveal = "true";
+    const trace = button("追溯 skills", () => { closeSkillContextMenu(); void traceSkillConversation(entry); }, !actionable || skillOrganizationRequests.size > 0);
+    trace.dataset.skillMenuTrace = "true"; trace.title = "打开最近可验证的优化对话；没有优化记录时打开创建对话";
+    if (!actionable) move.title = reveal.title = "目录尚未提供准确 Skill 文件，请刷新目录后重试。";
     document.body.appendChild(menu);
-    const rect = menu.getBoundingClientRect();
-    menu.style.left = `${Math.min(x, window.innerWidth - rect.width - 8)}px`;
-    menu.style.top = `${Math.min(y, window.innerHeight - rect.height - 8)}px`;
+    if (typeof menu.showPopover === "function") { menu.setAttribute("popover", "manual"); menu.showPopover(); }
     skillContextMenu = menu;
+    position();
+    const outside = (event) => { if (!menu.contains(event.target)) closeSkillContextMenu(); };
+    document.addEventListener("pointerdown", outside, true);
+    window.addEventListener("resize", position);
+    skillContextCleanup = () => { document.removeEventListener("pointerdown", outside, true); window.removeEventListener("resize", position); };
+    menu.onkeydown = (event) => {
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const buttons = [...menu.querySelectorAll("button:not(:disabled)")];
+      const index = buttons.indexOf(document.activeElement);
+      buttons[event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowUp" ? -1 : 1) + buttons.length) % buttons.length]?.focus();
+    };
+    menu.querySelector("button")?.focus();
+  }
+
+  async function traceSkillConversation(entry) {
+    const generation = ++skillTraceGeneration, start = Date.now();
+    while (!destroyed && generation === skillTraceGeneration) {
+      const result = (await requestSkillOrganization("traceSkill", { skillId: entry.id }))?.traceResult;
+      if (destroyed || generation !== skillTraceGeneration || !result) return;
+      if (result.status === "found") {
+        if (conversationRoute(result.threadId)) openAllProject({ threadId: result.threadId });
+        else { skillOrganizationMessage = "关联对话标识无效，未跳转。"; renderSkillOrganizationStatus(); }
+        return;
+      }
+      if (result.status !== "indexing") return;
+      if (Date.now() - start > 180_000) {
+        skillOrganizationMessage += " 历史较多，已保存进度，可稍后再次追溯。"; renderSkillOrganizationStatus(); return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
   }
 
   function createHostSkillOrganizer() {
@@ -3534,21 +3817,25 @@
     shell.id = SKILL_ORGANIZER_ID;
     shell.hidden = true;
     shell.innerHTML = `
-      <div class="codex-skill-organizer-head"><div><h2>Skills 分组</h2><p>搜索已安装 Skill；右键或点“+”添加到当前对话。</p></div><button type="button" class="codex-skill-close" aria-label="关闭 Skills 分组">×</button></div>
+      <div class="codex-skill-organizer-head"><div><h2>Skills 分组</h2><p>本地自动分类 · 0 Token；右键分类、定位或添加到对话。</p></div><div class="codex-skill-head-actions"><button type="button" class="codex-skill-native-toggle" data-skill-manage>分类管理</button><button type="button" class="codex-skill-close" aria-label="关闭 Skills 分组">×</button></div></div>
       <label class="codex-skill-search"><input type="search" placeholder="搜索名称或用途" aria-label="搜索已安装 Skill"></label>
       <div class="codex-skill-filter-list" role="group" aria-label="Skills 分组"></div>
-      <div class="codex-skill-result-head"><strong>已安装 Skills</strong><span class="codex-skill-result-count"></span></div>
+      <div class="codex-skill-result-head"><div><strong>已安装 Skills</strong><span class="codex-skill-status" role="status" data-skill-organization-status></span></div><span class="codex-skill-result-count"></span><button type="button" class="codex-skill-native-toggle" data-skill-refresh>刷新目录</button></div>
       <div class="codex-skill-grid"></div>`;
     shell.querySelector("input").oninput = (event) => { skillOrganizerQuery = event.target.value.trim(); renderSkillOrganizer(); };
     shell.querySelector(".codex-skill-close").onclick = () => closeSkillsGrouping();
+    shell.querySelector("[data-skill-manage]").onclick = openSkillGroupManager;
+    shell.querySelector("[data-skill-refresh]").onclick = () => void requestSkillOrganization("refresh");
     return initializeWorkspacePanel(shell, "skills");
   }
 
   function closeSkillsGrouping(restoreFocus = true) {
+    skillTraceGeneration += 1;
+    closeSkillDetails(false);
     const shell = document.getElementById(SKILL_ORGANIZER_ID);
     if (shell) shell.hidden = true;
-    skillContextMenu?.remove();
-    skillContextMenu = null;
+    closeSkillContextMenu();
+    const manager = shell?.querySelector(".codex-skill-group-manager"); if (manager) manager.hidden = true;
     skillOrganizerOpening = false;
     updateSkillsGroupingShortcutState();
     if (restoreFocus) currentComposer()?.focus();
@@ -3559,15 +3846,15 @@
     if (!mount) return false;
     closeOtherWorkspacePanels("skills");
     let shell = document.getElementById(SKILL_ORGANIZER_ID);
-    if (!shell || !hostSkillCatalog.length) {
+    if (!shell || !shell.querySelector("[data-skill-manage]")) {
       shell?.remove();
       shell = createHostSkillOrganizer();
     }
     if (shell.parentElement !== mount.surface) mount.surface.appendChild(shell);
     skillOrganizerCatalog = hostSkillCatalog.slice();
     skillOrganizerCatalogSignature = skillOrganizerCatalog.map((entry) => `${entry.name}\u0000${entry.description}`).join("\u0001");
-    skillOrganizerQuery = typeof options?.query === "string" ? options.query.trim() : skillOrganizerQuery;
-    if (skillOrganizerQuery) skillOrganizerFilter = "全部";
+    skillOrganizerQuery = typeof options?.query === "string" ? options.query.trim() : "";
+    skillOrganizerFilter = "all";
     const input = shell.querySelector("input");
     input.value = skillOrganizerQuery;
     shell.hidden = false;
@@ -3583,7 +3870,8 @@
       const name = typeof entry?.name === "string" ? entry.name.trim() : "";
       const title = typeof entry?.title === "string" ? entry.title.trim() : name;
       if (!name || !title) return [];
-      return [{ id: String(entry.id || name), name, title, description: String(entry.description || "打开查看 Skill 详情"), path: String(entry.path || ""), source: String(entry.source || "") }];
+      return [{ id: String(entry.id || name), name, title, description: String(entry.description || "打开查看 Skill 详情"), path: String(entry.path || ""), source: String(entry.source || ""),
+        skillFile: String(entry.skillFile || ""), categoryId: String(entry.categoryId || ""), automaticCategoryId: String(entry.automaticCategoryId || ""), classificationSource: String(entry.classificationSource || "") }];
     });
     const shell = document.getElementById(SKILL_ORGANIZER_ID);
     if (shell && !shell.hidden) {
@@ -6602,7 +6890,7 @@
     const setters = { previews: setPreviews, usage: setUsage, searchCatalog: setSearchCatalog,
       recentCatalog: setRecentCatalog, interruptedCatalog: setInterruptedCatalog,
       pinnedThreads: setPinnedThreads, activeProjectThreads: setActiveProjectThreads,
-      skillCatalog: setSkillCatalog, conversationHistory: setConversationHistory, efficiency: setEfficiencyData };
+      skillCatalog: setSkillCatalog, skillOrganization: setSkillOrganization, conversationHistory: setConversationHistory, efficiency: setEfficiencyData };
     for (const [key, setter] of Object.entries(setters)) {
       if (!Object.hasOwn(snapshot, key)) continue;
       const signature = JSON.stringify(snapshot[key]);
@@ -6635,6 +6923,18 @@
   }
 
   function handleWorkspaceEnhancementKeydown(event) {
+    if (event.key === "Escape" && skillDetailsDialog?.open) {
+      event.preventDefault(); closeSkillDetails(); return;
+    }
+    if (event.key === "Escape" && skillContextMenu) {
+      event.preventDefault(); closeSkillContextMenu();
+      document.getElementById(SKILL_ORGANIZER_ID)?.querySelector(".codex-skill-search input")?.focus(); return;
+    }
+    const skillManager = document.querySelector(`#${SKILL_ORGANIZER_ID} .codex-skill-group-manager:not([hidden])`);
+    if (event.key === "Escape" && skillManager) {
+      event.preventDefault(); skillManager.hidden = true;
+      document.querySelector(`#${SKILL_ORGANIZER_ID} [data-skill-manage]`)?.focus(); return;
+    }
     if (handleWorkspaceFolderKeydown(event)) return;
     if (event.key === "Escape" && efficiencyPanel && !efficiencyPanel.hidden) {
       event.preventDefault(); closeEfficiencyPanel(); return;
@@ -6733,7 +7033,7 @@
   }
 
   function handleHostMutations(records) {
-    const owned = `#${WORKSPACE_FOLDER_BUTTON_ID}, #${WORKSPACE_FOLDER_MENU_ID}, #aiyoucodex-native-shortcut-notice, #${SHORTCUT_GRID_ID}, #${SECTION_TABS_ID}, #${FOLDER_SWITCHER_ID}, #${SHORTCUT_SETTINGS_ID}, #${SKILL_ORGANIZER_ID}, #${CUSTOM_SHORTCUT_PAGE_ID}, #${ASSET_CONSOLE_PAGE_ID}, #${EFFICIENCY_PANEL_ID}, #${TASK_CONTEXT_BUTTON_ID}, #${USAGE_ID}, #${TOGGLE_ID}, #${FALLBACK_TOOLTIP_ID}, .${CARD_CONTENT_CLASS}, .${SUMMARY_CLASS}, .${STATUS_BUTTON_CLASS}`;
+    const owned = `#aiyoucodex-skill-details, #${WORKSPACE_FOLDER_BUTTON_ID}, #${WORKSPACE_FOLDER_MENU_ID}, .codex-skill-context-menu, #aiyoucodex-native-shortcut-notice, #${SHORTCUT_GRID_ID}, #${SECTION_TABS_ID}, #${FOLDER_SWITCHER_ID}, #${SHORTCUT_SETTINGS_ID}, #${SKILL_ORGANIZER_ID}, #${CUSTOM_SHORTCUT_PAGE_ID}, #${ASSET_CONSOLE_PAGE_ID}, #${EFFICIENCY_PANEL_ID}, #${TASK_CONTEXT_BUTTON_ID}, #${USAGE_ID}, #${TOGGLE_ID}, #${FALLBACK_TOOLTIP_ID}, .${CARD_CONTENT_CLASS}, .${SUMMARY_CLASS}, .${STATUS_BUTTON_CLASS}`;
     if (records.some((record) => {
       const target = record.target?.nodeType === 1 ? record.target : record.target?.parentElement;
       if (target?.closest?.(owned)) return false;
@@ -6836,6 +7136,9 @@
     efficiencyMountSurface = null; efficiencyResizeObserver?.disconnect(); efficiencyResizeObserver = null;
     for (const request of efficiencyRequests.values()) clearTimeout(request.timer);
     efficiencyRequests.clear(); efficiencyDrafts.clear(); efficiencyTargetDrafts.clear(); efficiencyTaskDraft = null;
+    for (const request of skillOrganizationRequests.values()) { clearTimeout(request.timer); request.resolve(null); }
+    skillOrganizationRequests.clear(); closeSkillContextMenu();
+    closeSkillDetails(false); skillDetailsDialog?.remove(); skillDetailsDialog = null;
     efficiencyExecutionPreview = null; document.getElementById(TASK_CONTEXT_BUTTON_ID)?.remove();
     document.getElementById(SHORTCUT_SETTINGS_ID)?.remove();
     clearSectionEnhancement();
@@ -6889,6 +7192,8 @@
     setAssetConsole,
     setAssetConsolePanel,
     setSkillCatalog,
+    setSkillOrganization,
+    resolveSkillOrganizationRequest,
     ensureManagedShortcut,
     openSkillsGrouping,
     openAssetConsolePanel,

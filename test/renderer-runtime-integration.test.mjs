@@ -12,6 +12,7 @@ import { CdpClient, connectCodexTarget } from "../scripts/cdp-client.mjs";
 import { RENDERER_HEALTH_EXPRESSION, acceptDocumentHealth, canReuseRenderer } from "../lib/renderer-health.mjs";
 import { waitForBrowserState } from "./helpers/browser-state.mjs";
 import { EfficiencyBridge } from "../lib/efficiency-bridge.mjs";
+import { SkillOrganizationBridge, createSkillOrganizationController } from "../lib/skill-organization.mjs";
 
 const injectorSource = await readFile(new URL("../scripts/injector.mjs", import.meta.url), "utf8");
 const userSourcePath = new URL("../inject/conversation-preview.user.js", import.meta.url);
@@ -90,7 +91,9 @@ test("production attach and delivery survive CDP reconnect; real document reload
     createEfficiencyController: (options) => {
       assert.equal(options.conversationFolders, conversationFolders);
       return { snapshot: async () => ({ version: 0 }), request: async () => ({ version: 0 }) };
-    }, EfficiencyBridge,
+    }, EfficiencyBridge, SkillOrganizationBridge, createSkillOrganizationController,
+    skillOrganizationStore: { read: async () => ({ version: 0, groups: [], assignments: {} }) },
+    skillProvenance: { trace: async () => ({ status: "unassociated" }) },
     SCRIPT_ID_GLOBAL: "__CODEX_CONVERSATION_PREVIEW_SCRIPT_IDENTIFIER__", readFile, sourcePath: userSourcePath,
     readManagedShortcuts: async () => shortcuts, createHash,
     process: { stdout: { write() {} }, stderr: { write() {} } },
@@ -103,7 +106,7 @@ test("production attach and delivery survive CDP reconnect; real document reload
     skillCatalogCache: new Map(),
   });
   for (const name of ["attachTarget", "disposeRendererSession", "ensurePersistentManagedShortcuts",
-    "readActiveConversationContext", "pushConversationHistory", "pushPreviews"]) {
+    "readActiveConversationContext", "readCachedSkillCatalog", "pushConversationHistory", "pushPreviews"]) {
     vm.runInContext(productionFunction(name), context);
   }
   const installDeliveryCounters = async () => inspect.evaluate(`(()=>{const api=window.__codexConversationPreviewInjection__;window.__fixtureDeliveries={snapshot:0,history:0,destroy:0};for(const [method,key]of [['setSnapshot','snapshot'],['setConversationHistory','history'],['destroy','destroy']]){const original=api[method];api[method]=(...args)=>{window.__fixtureDeliveries[key]+=1;return original(...args)}}})()`);
