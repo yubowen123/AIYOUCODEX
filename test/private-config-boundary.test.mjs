@@ -37,6 +37,10 @@ test("local shortcut profiles and private overrides are recognized at any depth"
     "conversation-folders/directories.json.lock/owner.json",
     ".aiyoucodex-thread.json",
     "nested/.aiyoucodex-thread.json",
+    "skills/organization.json",
+    "nested/skills/provenance.json",
+    "nested\\skills\\provenance.json.lock\\owner.json",
+    "skills/organization.json.tmp-123",
   ];
   for (const filePath of privatePaths) assert.equal(isPrivateConfigPath(filePath), true, filePath);
 
@@ -53,6 +57,8 @@ test("local shortcut profiles and private overrides are recognized at any depth"
     "test/efficiency-hook.test.mjs",
     "docs/OUTPUT-EFFICIENCY.md",
     "examples/hooks.json",
+    "lib/skill-organization.mjs",
+    "lib/skill-provenance.mjs",
   ];
   for (const filePath of publicPaths) assert.equal(isPrivateConfigPath(filePath), false, filePath);
 });
@@ -97,6 +103,8 @@ test("npm ignore rules physically exclude local-only profiles from a package", a
       "hooks.json.tmp-123", "hooks.json.lock/owner.json", "hooks.json.lock.reaper/owner.json",
       "efficiency/conversation-folders/directories.json", "nested/conversation-folders/directories.json.tmp-123",
       "conversation-folders/directories.json.lock/owner.json", ".aiyoucodex-thread.json", "nested/.aiyoucodex-thread.json",
+      "skills/organization.json", "nested/skills/provenance.json", "skills/organization.json.tmp-123",
+      "skills/provenance.json.lock/owner.json",
       "vendor/state.json",
     ]) {
       await mkdir(path.dirname(path.join(fixture, relative)), { recursive: true });
@@ -130,5 +138,9 @@ test("publication refuses accidentally force-tracked output-efficiency runtime s
     const alias = path.join(fixture, "checkout-alias");
     await symlink(fixture, alias, process.platform === "win32" ? "junction" : "dir");
     assert.throws(() => verifyPublicBoundary(alias), /Git tracked files contains local-only configuration:[\s\S]*efficiency\/state\.json/u);
+    await mkdir(path.join(fixture, "skills"));
+    await writeFile(path.join(fixture, "skills", "provenance.json"), "{}\n");
+    execFileSync("git", ["add", "-f", "skills/provenance.json"], { cwd: fixture, stdio: "ignore" });
+    assert.throws(() => verifyPublicBoundary(fixture), /skills\/provenance\.json/u);
   } finally { await rm(fixture, { recursive: true, force: true }); }
 });

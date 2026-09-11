@@ -32,3 +32,9 @@ hooks.json.lock.*
 **/conversation-folders/directories.json
 **/conversation-folders/directories.json.*
 .aiyoucodex-thread.json
+
+# Per-user Skill organization and provenance are local, not package assets.
+**/skills/organization.json
+**/skills/organization.json.*
+**/skills/provenance.json
+**/skills/provenance.json.*

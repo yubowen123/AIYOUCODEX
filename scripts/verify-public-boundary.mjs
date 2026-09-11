@@ -24,6 +24,10 @@ export const REQUIRED_PRIVATE_IGNORE_RULES = Object.freeze([
   "**/conversation-folders/directories.json",
   "**/conversation-folders/directories.json.*",
   ".aiyoucodex-thread.json",
+  "**/skills/organization.json",
+  "**/skills/organization.json.*",
+  "**/skills/provenance.json",
+  "**/skills/provenance.json.*",
 ]);
 
 export function isPrivateConfigPath(filePath) {
@@ -42,6 +46,8 @@ export function isPrivateConfigPath(filePath) {
     || segments.some((segment) => /^hooks\.json\.(?:aiyou-backup-|tmp-|lock(?:\.|$))/iu.test(segment))
     || segments.some((segment, index) => segment.toLowerCase() === "efficiency"
       && /^state\.json(?:\.|$)/iu.test(segments[index + 1] || ""))
+    || segments.some((segment, index) => segment.toLowerCase() === "skills"
+      && /^(?:organization|provenance)\.json(?:\.|$)/iu.test(segments[index + 1] || ""))
   );
 }
 

@@ -12,6 +12,7 @@ import { ExactDuplicateCleaner, normalizeDeduplication } from "./duplicate-clean
 import { PromptLibrary } from "./prompt-library.js";
 import { ThreeDWorkbench } from "./three-d-workbench.js";
 import { createProjectFolder, renameProjectFolder } from "./folder-operations.js";
+import { replaceFileAtomically } from "./atomic-file-replace.js";
 import { buildImageSequenceProfiles, classifyLocalAsset } from "./asset-smart-classifier.js";
 import { readImageDimensions } from "./image-dimensions.js";
 import { createAssetScanCoordinator } from "./asset-scan-coordinator.js";
@@ -346,7 +347,7 @@ async function saveConfig(config) {
   );
   try {
     await fs.writeFile(tempPath, JSON.stringify(normalized, null, 2) + "\n", "utf8");
-    await fs.rename(tempPath, configPath);
+    await replaceFileAtomically(tempPath, configPath);
   } finally {
     await fs.rm(tempPath, { force: true }).catch(() => {});
   }
