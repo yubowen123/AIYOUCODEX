@@ -70,7 +70,9 @@ test("Skills UI: all by default, real single clicks, persistent custom groups, e
     await client.evaluate(`${api}.setSnapshot({skillOrganization:${JSON.stringify(await controller.snapshot())}});${api}.openSkillsGrouping()`);
   }
   async function point(selector) {
-    await waitForBrowserState(client, `!!document.querySelector(${JSON.stringify(selector)})`, `Render target ${selector}`);
+    // Selection updates on pointerdown; rows commit on the next animation frame.
+    // Do not measure an old all-category position before the filter has settled.
+    await waitForBrowserState(client, `!document.querySelector('${panel}[aria-busy="true"]')&&!!document.querySelector(${JSON.stringify(selector)})`, `Render target ${selector}`);
     return client.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return null;e.scrollIntoView({block:'nearest',inline:'nearest'});const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;return {x,y,hit:document.elementFromPoint(x,y)?.closest(${JSON.stringify(selector)})===e}})()`);
   }
   async function click(selector, button = "left") {
