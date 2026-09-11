@@ -94,6 +94,55 @@ test("a live process lock times out rather than being stolen", async (t) => {
   await writeFile(path.join(`${store.filePath}.lock`, "owner.json"), JSON.stringify({ pid: process.pid, token: "live", createdAt: 0 }));
   await assert.rejects(withEfficiencyFileLock(store.filePath, () => {}, { timeoutMs: 30 }), { code: "EFFICIENCY_BUSY" });
 });
+test("Windows transient lock acquisition errors retry before running exactly one writer", async (t) => {
+  const { store } = await fixture(t);
+  const errors = ["EPERM", "EACCES", "EBUSY"];
+  let attempts = 0;
+  let writes = 0;
+  const result = await withEfficiencyFileLock(store.filePath, async () => {
+    writes += 1;
+    assert.equal(attempts, 4);
+    assert.equal(JSON.parse(await readFile(path.join(`${store.filePath}.lock`, "owner.json"), "utf8")).pid, process.pid);
+    return "saved";
+  }, {
+    platform: "win32",
+    mkdirLock: async (...args) => {
+      assert.equal(writes, 0);
+      const code = errors[attempts++];
+      if (code) throw Object.assign(new Error("Directory pending deletion"), { code });
+      return mkdir(...args);
+    },
+  });
+  assert.equal(result, "saved");
+  assert.equal(writes, 1);
+  await assert.rejects(readFile(path.join(`${store.filePath}.lock`, "owner.json")), { code: "ENOENT" });
+});
+test("persistent Windows acquisition errors time out without touching another writer's lock", async (t) => {
+  const { store } = await fixture(t);
+  const ownerPath = path.join(`${store.filePath}.lock`, "owner.json");
+  const owner = JSON.stringify({ pid: process.pid, token: "other-writer", createdAt: 0 });
+  await mkdir(`${store.filePath}.lock`);
+  await writeFile(ownerPath, owner);
+  let writes = 0;
+  await assert.rejects(withEfficiencyFileLock(store.filePath, () => { writes += 1; }, {
+    timeoutMs: 30,
+    platform: "win32",
+    mkdirLock: async () => { throw Object.assign(new Error("Still busy"), { code: "EPERM" }); },
+  }), { code: "EFFICIENCY_BUSY" });
+  assert.equal(writes, 0);
+  assert.equal(await readFile(ownerPath, "utf8"), owner);
+});
+test("non-Windows permission failures and unrelated acquisition errors fail immediately", async (t) => {
+  const { store } = await fixture(t);
+  for (const [platform, code] of [["darwin", "EPERM"], ["win32", "ENOENT"]]) {
+    let attempts = 0;
+    await assert.rejects(withEfficiencyFileLock(store.filePath, () => assert.fail("Writer must not run"), {
+      platform,
+      mkdirLock: async () => { attempts += 1; throw Object.assign(new Error("Not retryable"), { code }); },
+    }), { code });
+    assert.equal(attempts, 1);
+  }
+});
 test("a dead process lock is recovered without dropping its already saved state", async (t) => {
   const { store } = await fixture(t);
   await store.setContext({ threadId: "a", expectedVersion: 0, context: { goal: "preserved" } });
