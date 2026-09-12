@@ -60,6 +60,8 @@ const required = [
   path.join(root, "lib", "managed-shortcuts.mjs"),
   path.join(root, "scripts", "efficiency-hook.mjs"),
   path.join(root, "scripts", "setup-efficiency-hooks.mjs"),
+  ...["catalog", "providers", "local-extension", "media", "service", "http"].map(name => path.join(root, "lib", "model-arena", `${name}.mjs`)),
+  ...["index.html", "app.js", "style.css"].map(name => path.join(root, "model-arena", "public", name)),
   runtimePlan.assetConsole.serverPath,
   path.join(runtimePlan.assetConsole.staticRoot, "index.html"),
   path.join(runtimePlan.assetConsole.staticRoot, "app.js"),

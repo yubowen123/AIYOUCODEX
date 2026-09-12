@@ -15,6 +15,7 @@ codex-conversation-preview-verification.png
 # Local-only shortcut profiles and private overrides must never be published.
 managed-shortcuts.json
 *.private.json
+*.private.mjs
 *.local.json
 .aiyoucodex-private/
 
@@ -38,3 +39,13 @@ hooks.json.lock.*
 **/skills/organization.json.*
 **/skills/provenance.json
 **/skills/provenance.json.*
+
+# Arena channel settings, imported media and generation history are local only.
+**/model-arena/settings.json
+**/model-arena/settings.json.*
+**/model-arena/assets.json
+**/model-arena/assets.json.*
+**/model-arena/runs.json
+**/model-arena/runs.json.*
+**/model-arena/runs/
+**/model-arena/media/

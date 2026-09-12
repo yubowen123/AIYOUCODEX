@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>模型竞技场 · AIYOUcodex</title><link rel="stylesheet" href="style.css"></head>
+<body>
+  <main>
+    <header class="hero"><div><div class="eyebrow">AIYOUCODEX / MODEL ARENA</div><h1>模型竞技场<span class="badge">本机工作台</span></h1><p>一份素材，一次编排，多模型同场对比。</p></div><button id="config-button">API 与模型配置</button></header>
+    <div id="notice" role="status" aria-live="polite" hidden></div>
+    <button id="retry-connect" hidden>重试连接本机服务</button>
+    <nav class="steps" aria-label="工作步骤"><button data-view="config">01 配置模型</button><button data-view="generate">02 编排与生成</button><button data-view="results">03 对比与合成</button></nav>
+    <section id="config-view" hidden>
+      <div class="section-heading"><h2>接入渠道</h2><span>三组独立 API，四个 Seedance 型号共用一组</span></div>
+      <p class="muted">凭证从环境变量或本机 keys.md 读取；临时输入的 Key 仅驻留本次服务内存，不写入项目、历史或浏览器存储。</p>
+      <div id="families"></div>
+      <div class="section-heading"><h2>模型与能力</h2><span>H3：768P / 2K</span></div>
+      <p class="muted">分辨率按模型选择；比例、时长和素材上限按所选模型的共同限制执行。自定义上限只能收紧已验证能力。</p>
+      <div id="model-configs" class="model-configs"></div>
+      <div class="footer-action"><button id="save-config" class="primary">保存并进入生成页面 →</button></div>
+    </section>
+    <section id="generate-view" hidden>
+      <div class="section-heading"><h2>选择对比模型</h2><span id="model-count"></span></div><div id="model-picks" class="model-picks"></div>
+      <div class="parameters"><label>画幅比例<select id="ratio"></select></label><label>时长 / 秒<input id="duration" type="number" min="4" max="15" value="5"></label><label class="check"><input id="generate-audio" type="checkbox" checked>请求原声（支持的接口）</label></div>
+      <div id="limits" class="limits"></div>
+      <section class="composition"><div class="section-heading"><h2>参考资产</h2><div class="toolbar"><button id="local-upload">＋ 本地素材</button><button id="library-open">资产控制台</button><button id="recent-open">已导入</button></div></div>
+        <input id="file-input" type="file" accept=".png,.jpg,.jpeg,.webp,.mp4,.mov,.mp3,.wav" multiple hidden>
+        <p class="muted">点击资产的 @ 标签插入引用；素材按添加顺序编号，不会因模型选择而自动丢弃。</p><div id="assets" class="assets"></div>
+        <label class="prompt-label" for="prompt">视频提示词</label><textarea id="prompt" rows="7" placeholder="描述你希望对比的画面、动作、镜头与声音。输入 @ 可选择资产…"></textarea>
+        <div id="mentions" class="mentions" hidden></div>
+        <div class="footer-action"><span id="draft-hint" class="muted">草稿保存在本机，点击发送前先预览请求。</span><button id="preview" class="primary">预览并发送 →</button></div>
+      </section>
+    </section>
+    <section id="results-view" hidden><div class="section-heading"><h2>生成记录</h2><button id="refresh">刷新状态</button></div><p class="muted">向左右滑动对比结果；视频按需加载，不同时自动播放。关闭面板不影响已提交任务的状态查询。</p><div id="runs"></div><button id="runs-more" hidden>加载更早记录</button></section>
+    <footer class="footnote">本机保存配置、素材和任务记录 · 只有确认生成后，才向选定的 API 发送素材与提示词</footer>
+  </main>
+  <dialog id="preview-dialog"><form method="dialog" class="dialog-header"><h2>确认本次生成</h2><button aria-label="关闭确认窗口">×</button></form><div id="preview-content"></div><div class="footer-action"><button id="confirm" class="primary">确认生成</button></div></dialog>
+  <dialog id="library-dialog"><form method="dialog" class="dialog-header"><h2 id="picker-title">选择资产</h2><button aria-label="关闭资产选择">×</button></form><div class="picker-filters"><select id="library-project" aria-label="项目"></select><select id="library-kind" aria-label="资产类型"><option value="image">图片</option><option value="video">视频</option><option value="audio">音频</option></select><input id="library-query" placeholder="搜索资产名称"><button id="library-search">搜索</button></div><div id="library-list"></div><button id="library-more" hidden>加载更多</button></dialog>
+  <dialog id="url-dialog"><form method="dialog" class="dialog-header"><h2>素材公网地址</h2><button aria-label="关闭地址窗口">×</button></form><p class="muted">供官方通道引用同一份素材。仅填写该素材的公开只读 HTTPS 地址，不包含 Key 或签名参数。留空使用通道上传能力。</p><input id="asset-url" type="url" placeholder="https://your-domain.example/asset.mp4"><button id="save-asset-url" class="primary">保存地址</button></dialog>
+  <script src="app.js"></script>
+</body></html>

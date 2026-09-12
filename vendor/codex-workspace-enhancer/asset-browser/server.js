@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createArenaHandler } from "../../../lib/model-arena/http.mjs";
 import { createReadStream, promises as fs, readFileSync, watch } from "node:fs";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -2385,6 +2386,18 @@ function closeProjectWatchers(projectPath) {
   }
 }
 
+const arenaHandler = createArenaHandler({
+  root: path.join(path.dirname(configPath), "model-arena"),
+  readBody: readRequestBody, sendJson, serveFile,
+  resolveAsset: async (assetRef) => {
+    const config = await loadConfig();
+    const { filePath } = await resolveManagedAsset(config, assetRef);
+    const real = await fs.realpath(filePath);
+    const roots = await Promise.all(allManagedFolders(config).map(folder => fs.realpath(folder).catch(() => "")));
+    if (!roots.some(root => root && isPathInside(root, real))) throw new Error("仅能导入已关联项目中的真实素材文件");
+    return real;
+  },
+});
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
@@ -2409,6 +2422,8 @@ const server = createServer(async (req, res) => {
       sendJson(res, { error: "Local API authentication failed" }, 403);
       return;
     }
+
+    if (await arenaHandler(req, res, url)) return;
 
     if (url.pathname === "/api/prompt-library/health" && req.method === "GET") {
       sendJson(res, await promptLibrary.health());

@@ -18,6 +18,7 @@ test("Skills grouping and Asset Console are first-class visible shortcuts", () =
     [
       { id: "skills-grouping", label: "Skills 分组", defaultVisible: true },
       { id: "asset-console", label: "资产控制台", defaultVisible: true },
+      { id: "model-arena", label: "模型竞技场", defaultVisible: true },
     ],
   );
 });

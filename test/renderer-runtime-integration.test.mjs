@@ -44,7 +44,8 @@ test("production attach and delivery survive CDP reconnect; real document reload
   const fixture = `<title>Fixture</title><aside id="app-shell-sidebar"><nav><div><div><button class="sidebar-item"><span class="text-fade-truncate">新对话</span></button><button>+</button></div></div><div data-app-action-sidebar-scroll><div><section data-app-action-sidebar-section-heading="项目"><header><button data-app-action-sidebar-section-toggle aria-expanded="true">项目</button></header><div data-app-action-sidebar-thread-row data-app-action-sidebar-thread-active="true" data-app-action-sidebar-thread-id="11111111-1111-4111-8111-111111111111" data-app-action-sidebar-thread-title="Fixture thread">Fixture thread</div></section></div></div></nav></aside><main></main>`;
   const server = createServer((request, response) => {
     response.setHeader("content-type", "text/html;charset=utf-8");
-    response.end(request.url === "/panel" ? "<title>Local panel fixture</title><p>Persistent fixture</p>" : fixture);
+    response.end(request.url === "/panel" || request.url === "/arena"
+      ? `<title>Local panel fixture</title><p>${request.url === "/arena" ? "Arena" : "Asset"} fixture</p>` : fixture);
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
@@ -247,4 +248,67 @@ test("production attach and delivery survive CDP reconnect; real document reload
   await connectFixtureAssetBridge();
   await waitForBrowserState(inspect, assetVisible, "Renderer upgrade restores the previously open asset panel");
   assert.equal(await inspect.evaluate(assetVisible), true, "A renderer upgrade cleanup preserves the user's previously open panel");
+
+  // Exercise the actual shortcut handlers with pointer input, not element.click:
+  // hit-testing catches overlays that previously made panel controls unusable.
+  await inspect.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  await inspect.evaluate(`(()=>{
+    document.querySelector('#codex-asset-console-page .codex-asset-console-close').click();
+    const style=document.createElement('style');style.textContent='html,body{margin:0;width:100%;height:100%;overflow:hidden}body{display:flex}#app-shell-sidebar{width:400px;flex:0 0 400px;height:100%;overflow:auto}main{position:relative;display:flex;flex:1;min-width:0;height:100%}#fixture-chat{flex:1;min-width:0;height:100%}#fixture-native-toolbar{position:fixed;top:0;right:0;z-index:30;height:50px;width:120px;background:#eee}';document.head.append(style);
+    const chat=document.createElement('div');chat.id='fixture-chat';chat.innerHTML='<textarea id="arena-test-composer">Draft stays here</textarea>';document.querySelector('main').prepend(chat);
+    const native=document.createElement('button');native.id='fixture-native-toolbar';native.textContent='Native tools';document.body.append(native);
+    window.__arenaActions=[];
+    window.codexSidebarOpenAssetConsole=(raw)=>window.__arenaActions.push(JSON.parse(raw));
+    window.__codexConversationPreviewInjection__.refresh();
+  })()`);
+  const arenaShortcut = '[data-codex-sidebar-shortcut-name="模型竞技场"]';
+  const assetShortcut = '[data-codex-sidebar-shortcut-name="资产控制台"]';
+  const closeButton = '#codex-asset-console-page .codex-asset-console-close';
+  await waitForBrowserState(inspect, `!!document.querySelector(${JSON.stringify(arenaShortcut)})`, "Arena shortcut is rendered from the production catalogue");
+  const names = await inspect.evaluate("Array.from(document.querySelectorAll('[data-codex-sidebar-shortcut-card]')).map(button=>button.dataset.codexSidebarShortcutName)");
+  assert.equal(names.indexOf("模型竞技场"), names.indexOf("资产控制台") + 1, "Arena is immediately after Asset Console");
+  const pointerClick = async (selector) => {
+    const point = await inspect.evaluate(`(()=>{const button=document.querySelector(${JSON.stringify(selector)});button.scrollIntoView({block:'nearest',inline:'nearest'});const r=button.getBoundingClientRect();const x=r.left+r.width/2,y=r.top+r.height/2;const hit=document.elementFromPoint(x,y);return{x,y,width:r.width,height:r.height,hittable:button===hit||button.contains(hit),hit:hit?.id||hit?.className}})()`);
+    assert.ok(point.width > 0 && point.height > 0 && point.hittable, `Control must receive pointer input: ${selector}; ${JSON.stringify(point)}`);
+    await inspect.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    await inspect.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+  };
+  const deliver = (kind, route = kind === "arena" ? "/arena" : "/panel", state = "ready") => inspect.evaluate(`window.__codexConversationPreviewInjection__.setAssetConsolePanel(${JSON.stringify({ kind, state, url: `${origin}${route}` })})`);
+  const frameLoaded = (kind) => `(()=>{const page=document.getElementById('codex-asset-console-page'),frame=document.getElementById('codex-asset-console-frame');return !!page&&!page.hidden&&page.dataset.module===${JSON.stringify(kind)}&&frame?.contentDocument?.readyState==='complete'&&frame.contentWindow.location.pathname===${JSON.stringify(kind === "arena" ? "/arena" : "/panel")}})()`;
+  const actions = () => inspect.evaluate("window.__arenaActions.map(({action,kind})=>({action,kind}))");
+
+  await pointerClick(arenaShortcut);
+  assert.deepEqual(await actions(), [{ action: "open", kind: "arena" }], "A single pointer click requests Arena exactly once");
+  await deliver("arena");
+  await waitForBrowserState(inspect, frameLoaded("arena"), "Arena loads in the right-side panel");
+  assert.equal(await inspect.evaluate("document.getElementById('codex-asset-console-frame').title"), "模型竞技场");
+  await pointerClick(arenaShortcut);
+  assert.equal(await inspect.evaluate("document.getElementById('codex-asset-console-page').hidden&&!document.getElementById('codex-asset-console-frame')"), true, "Second click closes the panel and removes its renderer");
+  await deliver("arena");
+  assert.equal(await inspect.evaluate("!!document.getElementById('codex-asset-console-frame')"), false, "A late ready callback cannot reopen a closed panel");
+
+  await pointerClick(arenaShortcut);
+  await deliver("arena");
+  await waitForBrowserState(inspect, frameLoaded("arena"), "Arena reopens after explicit user click");
+  await pointerClick(assetShortcut);
+  assert.equal(await inspect.evaluate("document.getElementById('codex-asset-console-page').dataset.module==='asset'&&!document.getElementById('codex-asset-console-frame')"), true, "Switching modules detaches the old iframe before loading the new one");
+  await deliver("arena");
+  assert.equal(await inspect.evaluate("!!document.getElementById('codex-asset-console-frame')"), false, "Stale Arena readiness cannot populate Asset Console");
+  await deliver("asset");
+  await waitForBrowserState(inspect, frameLoaded("asset"), "Asset Console loads after switching");
+  await pointerClick(arenaShortcut);
+  await deliver("asset", "/panel", "error");
+  assert.equal(await inspect.evaluate("document.getElementById('codex-asset-console-page').dataset.state"), "loading", "A stale Asset error cannot replace Arena state");
+  await deliver("arena");
+  await waitForBrowserState(inspect, frameLoaded("arena"), "Arena reloads after switching back");
+  assert.equal(await inspect.evaluate("document.querySelectorAll('#codex-asset-console-frame').length"), 1, "Only the current module has a mounted iframe");
+  assert.equal(await inspect.evaluate(`document.querySelector(${JSON.stringify(closeButton)}).getAttribute('aria-label')`), "关闭模型竞技场");
+  await pointerClick(closeButton);
+  assert.equal(await inspect.evaluate("document.getElementById('codex-asset-console-page').hidden"), true, "Close receives pointer input despite native upper-right controls");
+  assert.equal(await inspect.evaluate("document.getElementById('arena-test-composer').value"), "Draft stays here", "Toggling and closing modules preserves the chat draft");
+  assert.deepEqual(await actions(), [
+    { action: "open", kind: "arena" }, { action: "close", kind: "arena" },
+    { action: "open", kind: "arena" }, { action: "open", kind: "asset" },
+    { action: "open", kind: "arena" }, { action: "close", kind: "arena" },
+  ], "Every physical click produces exactly one intended action");
 });

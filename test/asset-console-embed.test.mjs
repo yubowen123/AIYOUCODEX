@@ -14,6 +14,11 @@ const embedUrl = assetConsoleEmbedUrl(token);
 
 test("embedded Asset Console routes only its private sandbox frame to localhost", () => {
   assert.equal(assetConsoleRoute(`${embedUrl}app.js`, { token }), "/app.js");
+  assert.equal(assetConsoleRoute(`${embedUrl}model-arena/?embed=codex`, { token }), "/model-arena/?embed=codex");
+  assert.equal(assetConsoleRoute(`${embedUrl}model-arena/app.js`, { token }), "/model-arena/app.js");
+  assert.equal(assetConsoleRoute("https://web-sandbox.oaiusercontent.com/api/arena/state", { token, assetSession: true }), "/api/arena/state");
+  assert.equal(assetConsoleRoute("https://web-sandbox.oaiusercontent.com/api/arena/state", { token }), null);
+  assert.equal(assetConsoleRoute("https://web-sandbox.oaiusercontent.com/model-arena/app.js", { token, assetSession: true }), null);
   assert.equal(assetConsoleRoute("https://web-sandbox.oaiusercontent.com/api/projects", { token, assetSession: true }), "/api/projects");
   assert.equal(assetConsoleRoute("https://web-sandbox.oaiusercontent.com/api/projects", { token }), null);
   assert.equal(assetConsoleRoute("https://example.com/api/projects", { token, assetSession: true }), null);
