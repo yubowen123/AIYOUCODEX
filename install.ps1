@@ -36,6 +36,13 @@ function Copy-Package([string]$From, [string]$To) {
       Copy-Item -LiteralPath $source -Destination $To -Recurse -Force
     }
   }
+  # Copy only the public UI tree, never model settings, run history or media.
+  $arenaPublic = Join-Path $From "model-arena\public"
+  if (Test-Path -LiteralPath $arenaPublic -PathType Container) {
+    $arenaDestination = Join-Path $To "model-arena"
+    New-Item -ItemType Directory -Path $arenaDestination -Force | Out-Null
+    Copy-Item -LiteralPath $arenaPublic -Destination $arenaDestination -Recurse -Force
+  }
 }
 
 function Install-PortableNode([string]$Destination, [string]$Scratch) {

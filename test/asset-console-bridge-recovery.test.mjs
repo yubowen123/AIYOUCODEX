@@ -29,9 +29,48 @@ class Client {
 
 test("only app-owned sandbox embed URLs qualify for transport adoption", () => {
   assert.deepEqual(existingAssetConsoleEmbed(existingUrl), { token, embedUrl: assetConsoleEmbedUrl(token) });
+  for (const suffix of ["model-arena/?embed=codex", "model-arena/index.html?threadId=fixture"]) {
+    assert.deepEqual(existingAssetConsoleEmbed(`${assetConsoleEmbedUrl(token)}${suffix}`), { token, embedUrl: assetConsoleEmbedUrl(token) });
+  }
   for (const invalid of [null, "", "javascript:void(0)", "https://example.com/", existingUrl.replace("a1".repeat(24), "bad"), existingUrl.replace("?embed=codex", "other"), existingUrl.replace("https://", "https://user@")]) {
     assert.equal(existingAssetConsoleEmbed(invalid), null);
   }
+});
+
+test("Arena reconnect adopts the existing module document and preserves its API transport", async () => {
+  const bridge = new AssetConsoleBridge({ staticRoot, tokenPath: "/unused-in-unit-test" });
+  const client = new Client(`${assetConsoleEmbedUrl(token)}model-arena/?embed=codex`);
+  await bridge.install(client);
+  assert.equal(bridge.proxy.token, token);
+  assert.equal(bridge.proxy.assetSessions.has("child-session"), true);
+  assert.equal(client.expressions.some((text) => text.includes('"setAssetConsolePanel"')), false, "Adopting Arena must not navigate it or reopen it as Asset Console");
+  let requestedRoute;
+  bridge.requestLocal = async ({ route }) => { requestedRoute = route; return { status: 200, headers: {}, body: Buffer.from('{"runs":[]}') }; };
+  await bridge.proxyRequest({ requestId: "arena-state", frameId: "asset-frame", request: { url: "https://web-sandbox.oaiusercontent.com/api/arena/state", method: "GET", headers: {} } }, "child-session", bridge.proxy);
+  assert.equal(requestedRoute, "/api/arena/state");
+  assert.ok(client.calls.some((call) => call.method === "Fetch.fulfillRequest" && call.params.requestId === "arena-state"));
+  await bridge.dispose();
+});
+
+test("module binding selects Arena URL and ignores an earlier pending open after switching", async () => {
+  const bridge = new AssetConsoleBridge({ staticRoot, tokenPath: "/unused-in-unit-test" });
+  const pending = [];
+  const published = [];
+  bridge.waitForService = () => new Promise((resolve) => pending.push(resolve));
+  bridge.setupProxy = async () => ({ embedUrl: assetConsoleEmbedUrl(token) });
+  bridge.publish = async (value) => published.push(value);
+  const stale = bridge.handleBinding(JSON.stringify({ action: "open", kind: "asset" }));
+  const current = bridge.handleBinding(JSON.stringify({ action: "open", kind: "arena", threadId: "fixture-thread" }));
+  pending[1]();
+  await current;
+  pending[0]();
+  await stale;
+  assert.equal(published.length, 1, "Late completion of the previous module open cannot publish over the new module");
+  assert.equal(published[0].kind, "arena");
+  assert.equal(published[0].state, "ready");
+  const url = new URL(published[0].url);
+  assert.equal(url.pathname, `/__codex_asset_console__/${token}/model-arena/`);
+  assert.equal(url.searchParams.get("threadId"), "fixture-thread");
 });
 
 test("reconnecting a hidden or visible iframe restores API transport without navigating it", async () => {

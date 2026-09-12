@@ -2,7 +2,7 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
-  const RUNTIME_VERSION = "2026-09-11.5";
+  const RUNTIME_VERSION = "2026-09-12.1";
   const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
@@ -54,6 +54,7 @@
     code: '<path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"/>',
     skills: '<path d="M5 5.5h6M5 9h9M5 12.5h5M16.5 4v8M13 8h7M6 17.5h12M8.5 15v5M15.5 15v5"/>',
     assets: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 4V2M17 4V2M3 9h18M8 13h3v3H8zM14 13h3v3h-3z"/>',
+    arena: '<path d="M8 3h8v5a4 4 0 0 1-8 0V3ZM8 5H4v2a4 4 0 0 0 4 4m8-6h4v2a4 4 0 0 1-4 4M12 12v6m-4 3h8M9 18h6v3H9z"/>',
   };
   const HIDDEN_SHORTCUT_NAMES = new Set();
   const SECTION_TABS_ID = "codex-sidebar-section-tabs";
@@ -150,12 +151,14 @@
   let assetConsole = { available: false, label: "资产控制台", mode: "embedded" };
   let assetConsolePage = null;
   let assetConsoleFrame = null;
+  let assetConsoleKind = "asset";
   let assetConsoleReturnFocus = null;
   let assetConsoleRestorePending = false;
   try {
     const saved = JSON.parse(sessionStorage.getItem(ASSET_CONSOLE_OPEN_INTENT_KEY) || "null");
     const targetId = String(window[RENDERER_TARGET_ID_GLOBAL] || "");
     assetConsoleRestorePending = saved?.open === true && saved.targetId === targetId;
+    if (assetConsoleRestorePending && saved.kind === "arena") assetConsoleKind = "arena";
   } catch {}
   let conversationHistory = null;
   let historySignature = "";
@@ -3014,7 +3017,7 @@
     const binding = globalThis.codexSidebarOpenAssetConsole;
     if (typeof binding !== "function") return false;
     try {
-      binding(JSON.stringify({ action, ...currentCodexTaskContext() }));
+      binding(JSON.stringify({ action, kind: assetConsoleKind, ...currentCodexTaskContext() }));
       return true;
     } catch {
       return false;
@@ -3074,7 +3077,7 @@
     assetConsoleRestorePending = false;
     try {
       if (open) sessionStorage.setItem(ASSET_CONSOLE_OPEN_INTENT_KEY, JSON.stringify({
-        open: true, targetId: String(window[RENDERER_TARGET_ID_GLOBAL] || ""),
+        open: true, kind: assetConsoleKind, targetId: String(window[RENDERER_TARGET_ID_GLOBAL] || ""),
       }));
       else sessionStorage.removeItem(ASSET_CONSOLE_OPEN_INTENT_KEY);
     } catch {}
@@ -3090,7 +3093,7 @@
     // One attempt per restored document; a failed service connection remains a
     // visible retry state rather than repeatedly opening or stealing focus.
     assetConsoleRestorePending = false;
-    openAssetConsolePanel();
+    openAssetConsolePanel({ kind: assetConsoleKind });
   }
 
   function mountAssetConsolePage(surface) {
@@ -3128,11 +3131,22 @@
   }
 
   function openAssetConsolePanel(options = {}) {
+    const nextKind = options.kind === "arena" ? "arena" : "asset";
+    if (nextKind !== assetConsoleKind) {
+      assetConsoleFrame?.remove(); assetConsoleFrame = null;
+      if (assetConsolePage) assetConsolePage.dataset.state = "loading";
+    }
+    assetConsoleKind = nextKind;
     pendingAssetConsoleQuery = typeof options?.query === "string" ? options.query.trim() : "";
     closeOtherWorkspacePanels("asset");
     const mount = findCustomShortcutPageMount();
     if (!mount) return false;
     if (!assetConsolePage) assetConsolePage = createAssetConsolePage();
+    const panelName = assetConsoleKind === "arena" ? "模型竞技场" : "资产控制台";
+    assetConsolePage.dataset.module = assetConsoleKind;
+    assetConsolePage.setAttribute("aria-label", panelName);
+    setTextIfChanged(assetConsolePage.querySelector(".codex-asset-console-title"), panelName);
+    assetConsolePage.querySelector(".codex-asset-console-close").setAttribute("aria-label", `关闭${panelName}`);
     setAssetConsoleOpenIntent(true);
     assetConsoleReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     mountAssetConsolePage(mount.surface);
@@ -3177,6 +3191,7 @@
 
   function setAssetConsolePanel(value) {
     const state = value && typeof value === "object" ? value : {};
+    if (state.kind && state.kind !== assetConsoleKind) return;
     if (!assetConsolePage?.isConnected || assetConsolePage.hidden) return;
     if (state.state !== "ready" || typeof state.url !== "string" || !state.url) {
       assetConsoleFrame?.remove();
@@ -3193,7 +3208,7 @@
     assetConsoleFrame?.remove();
     const frame = document.createElement("iframe");
     frame.id = ASSET_CONSOLE_FRAME_ID;
-    frame.title = "资产控制台";
+    frame.title = assetConsoleKind === "arena" ? "模型竞技场" : "资产控制台";
     frame.src = state.url;
     frame.setAttribute("allow", "clipboard-read; clipboard-write; autoplay");
     frame.onload = () => {
@@ -4921,6 +4936,7 @@
     const enhancementItems = [
       { id: "skills-grouping", name: "Skills 分组", kind: "enhancement", icon: "skills", activate: openSkillsGrouping },
       { id: "asset-console", name: "资产控制台", kind: "enhancement", icon: "assets", activate: openAssetConsolePanel },
+      { id: "model-arena", name: "模型竞技场", kind: "enhancement", icon: "arena", activate: () => openAssetConsolePanel({ kind: "arena" }) },
     ];
     const managedItems = normalizedManagedShortcuts();
     const catalogItems = [
@@ -4974,7 +4990,7 @@
       else if (item.kind === "enhancement") {
         if (shortcutPanelIsOpen(item)) {
           if (item.id === "skills-grouping") closeSkillsGrouping();
-          else if (item.id === "asset-console") closeAssetConsolePanel();
+          else if (item.id === "asset-console" || item.id === "model-arena") closeAssetConsolePanel();
         } else item.activate?.();
       }
       else if ((item.custom || item.managed) && item.openMode === "browser") openCustomShortcutInBrowser(item);
@@ -5010,7 +5026,7 @@
   function shortcutPanelIsOpen(item) {
     if (item.custom || item.managed) return customShortcutPageIsVisible()
       && customShortcutPage.dataset.codexCustomShortcutItem === shortcutItemKey(item);
-    if (item.id === "asset-console") return Boolean(assetConsolePage && !assetConsolePage.hidden);
+    if (item.id === "asset-console" || item.id === "model-arena") return Boolean(assetConsolePage && !assetConsolePage.hidden && assetConsoleKind === (item.id === "model-arena" ? "arena" : "asset"));
     if (item.id === "skills-grouping") {
       const shell = document.getElementById(SKILL_ORGANIZER_ID);
       return skillOrganizerOpening || Boolean(shell && !shell.hidden);

@@ -24,6 +24,8 @@ test("public package contains every managed runtime and excludes local-only outp
   const required = [
     "inject/conversation-preview.user.js",
     "scripts/runtime.mjs",
+    ...["index.html", "app.js", "style.css"].map(name => `model-arena/public/${name}`),
+    ...["catalog", "providers", "local-extension", "media", "service", "http"].map(name => `lib/model-arena/${name}.mjs`),
     "vendor/codex-taskboard/VERSION.json",
     "vendor/codex-taskboard/dist/web/index.html",
     `vendor/codex-taskboard/dist/web/assets/${taskboardEntry}`,
