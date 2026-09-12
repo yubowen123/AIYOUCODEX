@@ -40,6 +40,12 @@ test("Windows public installer creates a user-local runtime and login shortcuts"
     assert.match(installed.stdout, /AIYOUcodex installed for Windows/);
     await access(path.join(installDir, "scripts", "injector.mjs"));
     await access(path.join(installDir, "inject", "conversation-preview.user.js"));
+    for (const relative of [
+      ...["index.html", "app.js", "style.css"].map(name => path.join("model-arena", "public", name)),
+      ...["catalog", "providers", "local-extension", "media", "service", "http"].map(name => path.join("lib", "model-arena", `${name}.mjs`)),
+    ]) {
+      assert.deepEqual(await readFile(path.join(installDir, relative)), await readFile(path.join(projectRoot, relative)), `${relative} must survive installation unchanged`);
+    }
     const config = JSON.parse(await readFile(path.join(installDir, "windows", "config.json"), "utf8"));
     assert.equal(path.resolve(config.nodePath), path.resolve(process.execPath));
     assert.equal(config.port, 9231);
