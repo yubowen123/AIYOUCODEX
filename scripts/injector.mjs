@@ -9,6 +9,8 @@ import { connectCodexTarget, readTargets, selectMainCodexTargets } from "./cdp-c
 import { PreviewRepository } from "../lib/preview-data.mjs";
 import { presentCardPreview } from "../lib/card-view.mjs";
 import { presentRateLimit } from "../lib/usage-data.mjs";
+import { createResetAnnouncementReader } from "../lib/reset-announcements.mjs";
+import { createResetMonitorController, requestResetMonitorNative, RESET_MONITOR_BINDING } from "../lib/reset-monitor.mjs";
 import {
   DesktopAppRecovery,
   reconcileRendererSessions,
@@ -44,11 +46,17 @@ function parseArgs(argv) {
 
 const options = parseArgs(process.argv.slice(2));
 const repository = new PreviewRepository();
+const readResetNotice = createResetAnnouncementReader();
 const conversationFolders = createConversationFolders();
 const syncConversationFolders = createConversationFolderSync({ folders: conversationFolders, repository });
 
 let stopped = false;
 const sessions = new Map();
+const resetMonitorController = createResetMonitorController({ nativeRequest: (method, params) => {
+  const client = [...sessions.values()][0]?.client;
+  if (!client) throw new Error("No connected Codex window");
+  return requestResetMonitorNative(client, method, params);
+} });
 let persistentShortcutOwnerTargetId = "";
 const skillCatalogCache = new Map();
 const skillOrganizationStore = createSkillOrganizationStore();
@@ -80,6 +88,7 @@ async function disposeRendererSession(session, { destroy = false } = {}) {
   await session.assetConsoleBridge.dispose();
   session.efficiencyBridge?.dispose();
   session.skillOrganizationBridge?.dispose();
+  session.resetMonitorBridge?.dispose();
   session.client.close();
   session.deliveredHistoryKey = "";
 }
@@ -97,6 +106,8 @@ async function attachTarget(target) {
     return readCachedSkillCatalog(record?.projectPath || "", { refresh });
   } });
   const skillOrganizationBridge = new SkillOrganizationBridge(skillOrganizationController);
+  const resetMonitorBridge = new EfficiencyBridge(resetMonitorController, { binding: RESET_MONITOR_BINDING,
+    resolver: "resolveResetMonitorRequest", publicErrorCodes: ["RESET_MONITOR_ERROR"], fallbackError: "监控设置未确认生效，请刷新核对。" });
   try {
     // New-document registration must be enabled on this exact CDP connection.
     await client.send("Page.enable");
@@ -123,6 +134,7 @@ async function attachTarget(target) {
     await assetConsoleBridge.install(client);
     await efficiencyBridge.install(client);
     await skillOrganizationBridge.install(client);
+    await resetMonitorBridge.install(client);
     process.stdout.write(`[${new Date().toISOString()}] Codex conversation preview attached to renderer ${target.id}\n`);
     const session = {
       targetId: target.id,
@@ -132,6 +144,7 @@ async function attachTarget(target) {
       efficiencyBridge,
       skillOrganizationController,
       skillOrganizationBridge,
+      resetMonitorBridge,
       registeredScriptIdentifier: registered.identifier,
       deliveredHistoryKey: "",
       persistentShortcutIds: managedShortcuts
@@ -146,6 +159,7 @@ async function attachTarget(target) {
     await assetConsoleBridge.dispose().catch(() => {});
     efficiencyBridge.dispose();
     skillOrganizationBridge.dispose();
+    resetMonitorBridge.dispose();
     client.close();
     throw error;
   }
@@ -362,6 +376,9 @@ async function pushPreviews(session) {
   ]);
   const previews = rawPreviews.map((preview) => presentCardPreview(preview));
   const usage = presentRateLimit(rawUsage, { timeZone: "Asia/Shanghai" });
+  usage.resetNotice = await readResetNotice();
+  usage.resetNotice.monitor = await resetMonitorController.snapshot();
+  usage.resetNotice.intervalHours = usage.resetNotice.monitor.intervalHours ?? 3;
   // A malformed optional policy must never stop native cards/history delivery.
   let efficiency;
   try { efficiency = await session.efficiencyController.snapshot(); }

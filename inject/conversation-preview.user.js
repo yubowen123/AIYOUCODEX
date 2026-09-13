@@ -2,12 +2,18 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
-  const RUNTIME_VERSION = "2026-09-12.1";
+  const RUNTIME_VERSION = "2026-09-13.2";
   const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
   const SWITCH_THUMB_CLASS = "codex-conversation-view-switch-thumb";
   const USAGE_ID = "codex-conversation-usage-status";
+  const RESET_NOTICE_ID = "aiyoucodex-reset-notice";
+  const RESET_DIALOG_ID = "aiyoucodex-reset-dialog";
+  let resetNoticeTimer = null;
+  let resetMonitorSnapshot = null;
+  let resetMonitorPending = null;
+  let resetMonitorDirty = false;
   const USAGE_TEXT_CLASS = "codex-conversation-usage-text";
   const USAGE_VALUE_CLASS = "codex-conversation-usage-value";
   const USAGE_FILL_CLASS = "codex-conversation-usage-fill";
@@ -914,6 +920,13 @@
         color: color-mix(in srgb, currentColor 55%, transparent);
         cursor: pointer;
       }
+      #${SHORTCUT_SETTINGS_ID} [data-reset-monitor-form] { margin: 0 0 18px; }
+      #${SHORTCUT_SETTINGS_ID} [data-reset-monitor-form] p { margin: 0; font-size: 12px; line-height: 1.6; white-space: pre-line; }
+      #${SHORTCUT_SETTINGS_ID} [data-reset-monitor-form] button { width: auto; height: auto; padding: 8px 12px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius: 8px; background: transparent; color: inherit; cursor: pointer; }
+      #${SHORTCUT_SETTINGS_ID} [data-reset-monitor-form] button[type="submit"] { background: #2563eb; color: white; }
+      #${SHORTCUT_SETTINGS_ID} [data-reset-monitor-form] button:disabled { opacity: .5; cursor: default; }
+      #${SHORTCUT_SETTINGS_ID} [data-reset-monitor-form] [role="status"][data-error="true"] { color: #b93832; }
+      #${SHORTCUT_SETTINGS_ID} [data-reset-monitor-form],
       #${SHORTCUT_SETTINGS_ID} [data-codex-shortcut-custom-form] {
         display: grid;
         gap: 11px;
@@ -929,6 +942,7 @@
         font-size: 11px;
       }
       #${SHORTCUT_SETTINGS_ID} .codex-shortcut-field input[type="text"],
+      #${SHORTCUT_SETTINGS_ID} .codex-shortcut-field input[type="number"],
       #${SHORTCUT_SETTINGS_ID} .codex-shortcut-field input[type="url"] {
         width: 100%;
         height: 34px;
@@ -1575,6 +1589,31 @@
       #${USAGE_ID}[data-tone="muted"] {
         opacity: 0.68;
       }
+      #${RESET_NOTICE_ID} {
+        display: flex !important; flex: 0 1 114px; flex-direction: column; justify-content: center;
+        width: 114px; min-width: 48px; height: 30px; padding: 2px 6px; margin: 0;
+        border: 1px solid color-mix(in srgb, currentColor 15%, transparent); border-radius: 8px;
+        background: color-mix(in srgb, currentColor 6%, Canvas); color: #586273;
+        cursor: pointer; -webkit-app-region: no-drag; font-variant-numeric: tabular-nums;
+      }
+      #${RESET_NOTICE_ID} span, #${RESET_NOTICE_ID} strong {
+        display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        font-size: 9px; line-height: 12px; text-align: center;
+      }
+      #${RESET_NOTICE_ID} strong { font-size: 11px; font-weight: 650; }
+      #${RESET_NOTICE_ID}:focus-visible { outline: 2px solid #3878ef; outline-offset: 2px; }
+      #${RESET_DIALOG_ID} {
+        width: min(430px, calc(100vw - 40px)); max-height: calc(100vh - 80px); box-sizing: border-box;
+        border: 1px solid color-mix(in srgb, currentColor 14%, transparent); border-radius: 16px;
+        padding: 20px; background: Canvas; color: CanvasText; overflow: auto; -webkit-app-region: no-drag;
+        box-shadow: 0 16px 60px #0003; font-size: 13px;
+      }
+      #${RESET_DIALOG_ID}::backdrop { background: #0004; }
+      #${RESET_DIALOG_ID} header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+      #${RESET_DIALOG_ID} h2 { font-size: 17px; margin: 0; }
+      #${RESET_DIALOG_ID} p { margin: 12px 0; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+      #${RESET_DIALOG_ID} button { width: 32px; height: 32px; border-radius: 8px; cursor: pointer; }
+      #${RESET_DIALOG_ID} a { color: #2968d8; text-decoration: underline; }
       #${USAGE_ID} .${USAGE_TEXT_CLASS} {
         min-width: 0;
         overflow: hidden;
@@ -4787,6 +4826,15 @@
         <div class="codex-shortcut-settings-body">
           <button type="button" data-aiyou-efficiency-open><span>输出偏好与默认 Skills</span><span aria-hidden="true">→</span></button>
           <p data-efficiency-open-error role="alert"></p>
+          <form data-reset-monitor-form>
+            <h3>重置公告监控</h3>
+            <label class="codex-shortcut-settings-row"><input type="checkbox" name="enabled">启用定时监控</label>
+            <label class="codex-shortcut-field">监控间隔（小时）<input type="number" name="intervalHours" min="1" max="168" step="1" value="3" required></label>
+            <p>默认每 3 小时，可输入 1–168 的整数。保存后更新实际定时计划；电脑休眠或任务忙碌时可能顺延。</p>
+            <p data-reset-monitor-summary></p>
+            <div><button type="submit">保存监控设置</button> <button type="button" data-reset-monitor-refresh>刷新状态</button></div>
+            <p data-reset-monitor-message role="status" aria-live="polite"></p>
+          </form>
           <h3>显示与隐藏</h3>
           <div class="codex-shortcut-settings-list" data-codex-shortcut-visibility-list></div>
           <form data-codex-shortcut-custom-form>
@@ -4803,6 +4851,15 @@
           </form>
         </div>
       </div>`;
+    const monitorForm = dialog.querySelector("[data-reset-monitor-form]");
+    monitorForm.addEventListener("input", () => { resetMonitorDirty = true; });
+    monitorForm.onsubmit = (event) => {
+      event.preventDefault(); event.stopPropagation();
+      if (!monitorForm.reportValidity() || resetMonitorPending) return;
+      requestResetMonitor("save", { intervalHours: Number(monitorForm.elements.intervalHours.value),
+        enabled: monitorForm.elements.enabled.checked, id: resetMonitorSnapshot?.id, revision: resetMonitorSnapshot?.revision });
+    };
+    monitorForm.querySelector("[data-reset-monitor-refresh]").onclick = () => requestResetMonitor("snapshot");
     const icons = dialog.querySelector("[data-codex-shortcut-icons]");
     icons.replaceChildren(...Object.keys(SHORTCUT_ICON_PRESETS).map((icon, index) => iconChoiceButton(icon, index === 0)));
     dialog.querySelector("[data-codex-shortcut-settings-close]").onclick = () => dialog.close();
@@ -4861,7 +4918,69 @@
     let dialog = document.getElementById(SHORTCUT_SETTINGS_ID);
     if (!dialog) dialog = createShortcutSettingsDialog();
     renderShortcutVisibilityList(dialog);
-    if (!dialog.open) dialog.showModal();
+    if (!dialog.open) {
+      resetMonitorDirty = false;
+      dialog.showModal();
+      renderResetMonitorSettings(true);
+      requestResetMonitor("snapshot");
+    }
+  }
+
+  function renderResetMonitorSettings(populate = false) {
+    const form = document.querySelector(`#${SHORTCUT_SETTINGS_ID} [data-reset-monitor-form]`);
+    if (!form) return;
+    const monitor = resetMonitorSnapshot;
+    if (populate && !resetMonitorDirty) {
+      form.elements.intervalHours.value = monitor?.intervalHours ?? 3;
+      form.elements.enabled.checked = monitor?.enabled === true;
+    }
+    const date = Number.isFinite(monitor?.nextRunAt) ? new Date(monitor.nextRunAt).toLocaleString("zh-CN") : "等待调度";
+    form.querySelector("[data-reset-monitor-summary]").textContent = monitor?.available && monitor.configured
+      ? `${monitor.enabled ? "已启用" : "已暂停"} · ${monitor.intervalHours ? `每 ${monitor.intervalHours} 小时` : "自定义计划（保存将改为小时间隔）"}\n下次监控：${monitor.enabled ? date : "暂停期间不执行"}`
+      : monitor?.message || "正在读取监控计划…";
+    form.querySelector('button[type="submit"]').disabled = Boolean(resetMonitorPending) || !monitor?.available || !monitor.configured;
+    form.querySelector("[data-reset-monitor-refresh]").disabled = Boolean(resetMonitorPending);
+    form.elements.enabled.disabled = Boolean(resetMonitorPending);
+    form.elements.intervalHours.disabled = Boolean(resetMonitorPending);
+  }
+
+  function requestResetMonitor(action, fields = {}) {
+    if (destroyed || resetMonitorPending) return;
+    const message = document.querySelector("[data-reset-monitor-message]");
+    const binding = window.__aiyoucodexResetMonitorRequest__;
+    if (typeof binding !== "function") {
+      message.textContent = "本地监控连接尚未就绪，请稍后刷新。"; message.dataset.error = "true"; return;
+    }
+    const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+    const timer = setTimeout(() => resolveResetMonitorRequest({ requestId, ok: false,
+      error: "请求结果尚未确认，请刷新实际计划。输入内容已保留。" }), 20000);
+    resetMonitorPending = { requestId, action, timer };
+    message.textContent = action === "save" ? "正在保存并核对定时计划…" : "正在读取定时计划…";
+    message.dataset.error = "false";
+    renderResetMonitorSettings();
+    const failed = () => resolveResetMonitorRequest({ requestId, ok: false, error: "本地连接失败，请刷新后重试。" });
+    try { Promise.resolve(binding(JSON.stringify({ requestId, action, ...fields }))).catch(failed); } catch { failed(); }
+  }
+
+  function resolveResetMonitorRequest(response) {
+    const pending = resetMonitorPending;
+    if (!pending || response?.requestId !== pending.requestId || destroyed) return false;
+    clearTimeout(pending.timer); resetMonitorPending = null;
+    const valid = response.ok && response.data?.available === true;
+    if (response.ok) resetMonitorSnapshot = response.data;
+    if (valid && pending.action === "save") resetMonitorDirty = false;
+    if (valid) {
+      usage.resetNotice = { ...usage.resetNotice, monitor: response.data, intervalHours: response.data.intervalHours ?? 3 };
+      updateResetNotice();
+    }
+    const message = document.querySelector("[data-reset-monitor-message]");
+    if (message) {
+      message.dataset.error = String(!valid);
+      message.textContent = !valid ? response.error || response.data?.message || "未确认生效，请刷新。"
+        : pending.action === "save" ? "已保存，实际定时计划已核对生效。" : "状态已刷新；未保存的输入保持不变。";
+    }
+    renderResetMonitorSettings(true);
+    return true;
   }
 
   function shortcutLabel(button) {
@@ -6538,6 +6657,98 @@
     status.dataset.remainingPercent = normalizedRemaining == null ? "" : String(normalizedRemaining);
     status.setAttribute("aria-label", usage.ariaLabel || "Codex 剩余量暂不可用");
     status.title = usage.ariaLabel || "Codex 剩余量暂不可用";
+    updateResetNotice();
+  }
+
+  function resetNoticePresentation() {
+    const notice = usage.resetNotice || {};
+    const event = notice.active;
+    const now = Date.now();
+    const stale = notice.checkStatus !== "ok" || !notice.lastSuccessAt || now - Date.parse(notice.lastSuccessAt) > Math.max(2, (notice.intervalHours || 3) * 2) * 3600000;
+    let label = "重置公告", value = "暂无明确预告", color = "#586273";
+    if (notice.checkStatus === "never" || !notice.checkStatus) value = "等待首次检查";
+    else if (notice.checkStatus === "error" || notice.checkStatus === "partial") value = "信息待核验";
+    else if (stale) value = "公告待更新";
+    if (event) {
+      if (!["original", "rss"].includes(event.verification)) value = "线索待核验";
+      else if (event.status === "tentative") value = "时间待确认";
+      else if (event.status === "completed") value = "公告称已重置";
+      else if (event.status === "cancelled") value = "本次已取消";
+      else if (event.status === "scheduled" && Number.isFinite(Date.parse(event.targetAt))) {
+        const remaining = Date.parse(event.targetAt) - now;
+        label = event.precision === "window" ? "预计窗口截止" : event.precision === "deadline" ? "预计最晚重置" : "预计重置倒计时";
+        if (remaining <= 0) {
+          value = "已到时 · 待核验";
+          color = "#b93832";
+        } else {
+          const minutes = Math.ceil(remaining / 60000);
+          const days = Math.floor(minutes / 1440), hours = Math.floor(minutes % 1440 / 60);
+          value = `${days ? `${days}天 ` : ""}${String(hours).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+          const hue = Math.round(45 * Math.min(1, remaining / 86400000));
+          color = remaining > 86400000 ? "#3568ae" : `hsl(${hue} 78% 36%)`;
+        }
+        if (stale) label += " · 待复核";
+      }
+    }
+    return { label, value, color, stale };
+  }
+
+  function updateResetNotice() {
+    const button = document.getElementById(RESET_NOTICE_ID);
+    if (!button) return;
+    const view = resetNoticePresentation();
+    setTextIfChanged(button.querySelector("span"), view.label);
+    setTextIfChanged(button.querySelector("strong"), view.value);
+    button.style.color = view.color;
+    button.dataset.stale = String(view.stale);
+    const title = `${view.label}：${view.value}。${usage.resetNotice?.active?.summary || "检查 @thsottiaux，点击查看来源和监控计划。"}`;
+    button.title = title;
+    button.setAttribute("aria-label", title);
+    const dialog = document.getElementById(RESET_DIALOG_ID);
+    if (dialog?.open) renderResetNoticeDetails(dialog);
+  }
+
+  function renderResetNoticeDetails(dialog) {
+    const notice = usage.resetNotice || {}, event = notice.active;
+    const view = resetNoticePresentation();
+    const localTime = (stamp) => Number.isFinite(Date.parse(stamp)) ? new Date(stamp).toLocaleString("zh-CN", { timeZoneName: "short" }) : "尚无";
+    const lines = [event?.summary || "暂无已核验的重置时间。", event ? `适用范围：${event.scope}（不代表当前账号一定适用）` : "",
+      `${view.label}：${view.value}`, event?.targetAt ? `公告预计时间：${event.windowStartAt ? localTime(event.windowStartAt) + " — " : ""}${localTime(event.targetAt)}` : "",
+      event?.timeBasis ? `时间依据：${event.timeBasis}` : "", event?.evidence ? `原文摘要：${event.evidence}` : "",
+      event ? `来源核验：${event.verification === "original" ? "X 原帖已核验" : event.verification === "rss" ? "FxEmbed RSS 转发原帖（非 X 直连）" : "仅线索，尚未核验原帖"}` : "",
+      `最近检查：${localTime(notice.lastCheckAt)}\n最近成功采集：${localTime(notice.lastSuccessAt)}\n检查频率：${notice.monitor?.available === false ? "计划暂不可读" : notice.monitor?.configured === false ? "尚未配置" : notice.monitor?.enabled === false ? "已暂停" : `每 ${notice.intervalHours || 3} 小时`}（可在设置中修改）`,
+      notice.checkMessage || "等待自动检查。", "这是公开公告的预计时间，不是账号常规重置时间；到时不代表额度已到账，也不会消耗你的重置券。"];
+    setTextIfChanged(dialog.querySelector("[data-reset-details]"), lines.filter(Boolean).join("\n\n"));
+    const link = dialog.querySelector("a");
+    const source = /^https:\/\/x\.com\/thsottiaux\/status\/\d{16,22}$/.test(event?.sourceUrl || "") ? event.sourceUrl : "https://x.com/thsottiaux";
+    if (link.href !== source) link.href = source;
+    setTextIfChanged(link, event ? "查看原始公告 ↗" : "查看 @thsottiaux 主页 ↗");
+  }
+
+  function openResetNotice() {
+    let dialog = document.getElementById(RESET_DIALOG_ID);
+    if (!dialog) {
+      dialog = document.createElement("dialog"); dialog.id = RESET_DIALOG_ID;
+      dialog.setAttribute("aria-labelledby", "aiyoucodex-reset-dialog-title");
+      dialog.innerHTML = '<header><h2 id="aiyoucodex-reset-dialog-title">重置公告</h2><button type="button" aria-label="关闭重置公告">×</button></header><p data-reset-details></p><a target="_blank" rel="noopener noreferrer"></a>';
+      dialog.querySelector("button").onclick = () => dialog.close();
+      document.body.appendChild(dialog);
+    }
+    if (dialog.open) { dialog.close(); return; }
+    renderResetNoticeDetails(dialog);
+    dialog.showModal();
+  }
+
+  function ensureResetNotice(host, status) {
+    let button = document.getElementById(RESET_NOTICE_ID);
+    if (!button) {
+      button = document.createElement("button"); button.id = RESET_NOTICE_ID; button.type = "button";
+      button.innerHTML = "<span></span><strong></strong>";
+      button.setAttribute("aria-haspopup", "dialog");
+      button.onpointerdown = (event) => { if (event.button === 0) { event.preventDefault(); event.stopPropagation(); openResetNotice(); } };
+      button.onclick = (event) => { event.preventDefault(); event.stopPropagation(); if (event.detail === 0) openResetNotice(); };
+    }
+    if (button.parentElement !== host || button.nextElementSibling !== status) host.insertBefore(button, status);
   }
 
   function ensureUsageStatus(host, switchButton) {
@@ -6566,6 +6777,7 @@
       status.append(label, value, track);
     }
     if (status.parentElement !== host || status.nextElementSibling !== switchButton) host.insertBefore(status, switchButton);
+    ensureResetNotice(host, status);
     updateUsageState();
   }
 
@@ -7057,6 +7269,7 @@
   }
 
   function handleHostMutations(records) {
+    records = records.filter((record) => !record.target?.closest?.(`#${RESET_NOTICE_ID}, #${RESET_DIALOG_ID}`));
     const owned = `#aiyoucodex-skill-details, #${WORKSPACE_FOLDER_BUTTON_ID}, #${WORKSPACE_FOLDER_MENU_ID}, .codex-skill-context-menu, #aiyoucodex-native-shortcut-notice, #${SHORTCUT_GRID_ID}, #${SECTION_TABS_ID}, #${FOLDER_SWITCHER_ID}, #${SHORTCUT_SETTINGS_ID}, #${SKILL_ORGANIZER_ID}, #${CUSTOM_SHORTCUT_PAGE_ID}, #${ASSET_CONSOLE_PAGE_ID}, #${EFFICIENCY_PANEL_ID}, #${TASK_CONTEXT_BUTTON_ID}, #${USAGE_ID}, #${TOGGLE_ID}, #${FALLBACK_TOOLTIP_ID}, .${CARD_CONTENT_CLASS}, .${SUMMARY_CLASS}, .${STATUS_BUTTON_CLASS}`;
     if (records.some((record) => {
       const target = record.target?.nodeType === 1 ? record.target : record.target?.parentElement;
@@ -7080,6 +7293,8 @@
 
   function start() {
     installStyles();
+    resetNoticeTimer = setInterval(() => { if (!document.hidden) updateResetNotice(); }, 30_000);
+    document.addEventListener("visibilitychange", updateResetNotice);
     updateViewState();
     observer = new MutationObserver(handleHostMutations);
     observeHost();
@@ -7107,6 +7322,11 @@
 
   function destroy() {
     destroyed = true;
+    clearTimeout(resetMonitorPending?.timer); resetMonitorPending = null;
+    clearInterval(resetNoticeTimer); resetNoticeTimer = null;
+    document.removeEventListener("visibilitychange", updateResetNotice);
+    document.getElementById(RESET_NOTICE_ID)?.remove();
+    document.getElementById(RESET_DIALOG_ID)?.remove();
     for (const cleanup of workspaceResizeCleanups) cleanup();
     skillOrganizerOpenGeneration += 1;
     skillOrganizerOpenObserver?.disconnect();
@@ -7227,6 +7447,7 @@
     getEfficiencyState,
     setEfficiencyData,
     resolveEfficiencyRequest,
+    resolveResetMonitorRequest,
     routeWorkspaceCommand,
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
