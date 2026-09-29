@@ -245,6 +245,7 @@
   let folderPreSearchId = null;
   let folderTagsExpanded = false;
   let projectCreateAttempt = 0;
+  let folderNewChatPending = false;
   let searchCatalog = [];
   let searchCatalogByProject = new Map();
   let searchCatalogByThread = new Map();
@@ -1557,6 +1558,10 @@
         border-radius: 8px !important;
         pointer-events: auto !important;
         -webkit-app-region: no-drag !important;
+      }
+      #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-actions] button:disabled {
+        opacity: .45 !important;
+        cursor: not-allowed !important;
       }
       #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-sort-menu] {
         position: absolute;
@@ -6790,37 +6795,74 @@
     return nativeFolderCreateButton(item);
   }
 
-  function syncCurrentFolderNewChatButton(item) {
-    const button = document.querySelector(`#${SECTION_TABS_ID} [data-codex-sidebar-current-folder-new-chat]`);
-    if (!button) return;
-    const source = currentFolderChatSource(item);
-    button.hidden = !source?.isConnected;
-    button.disabled = !source?.isConnected || source.disabled || source.getAttribute("aria-disabled") === "true";
-    const actions = button.closest("[data-codex-sidebar-project-actions]");
-    if (actions) actions.hidden = activeSectionTab !== "项目"
-      || (button.hidden && !actions.querySelector("[data-codex-native-action-proxies] button"));
-    if (!source?.isConnected) {
-      button.dataset.codexSidebarCurrentFolderNewChat = "";
-      button.setAttribute("aria-label", "在当前文件夹中新建对话");
-      button.title = "当前没有可用的原生新建对话入口";
-      return;
-    }
-    button.dataset.codexSidebarCurrentFolderNewChat = item?.id || ALL_FOLDER_ID;
-    button.setAttribute("aria-label", item ? `在“${item.label}”中新建对话` : "新建对话");
-    button.title = item ? `在“${item.label}”中新建对话` : "新建对话";
+  function currentFolderWorkspaceRoot(item) {
+    if (!item?.id || item.id === ALL_FOLDER_ID) return "";
+    const entries = searchCatalogByProject.get(item.id) || [];
+    const roots = new Set(entries.map((entry) => String(entry.projectRootPath || "").trim()).filter(Boolean));
+    if (roots.size !== 1) return "";
+    const root = roots.values().next().value;
+    return /^(?:\/(?!\/)|[A-Za-z]:[\\/])/.test(root) ? root : "";
   }
 
-  function handleCurrentFolderNewChat(event) {
+  function syncCurrentFolderNewChatButton(item) {
+    const buttons = document.querySelectorAll(`#${SECTION_TABS_ID} [data-codex-sidebar-current-folder-new-chat], #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-new-chat]`);
+    if (!buttons.length) return;
+    const source = currentFolderChatSource(item);
+    const workspaceRoot = !source?.isConnected && currentFolderWorkspaceRoot(item);
+    const workspaceAvailable = Boolean(workspaceRoot && typeof window.electronBridge?.sendMessageFromView === "function");
+    const available = source?.isConnected || workspaceAvailable;
+    for (const button of buttons) {
+      // The search-row action is a persistent third control. The legacy tab
+      // action stays hidden when its native source is unavailable.
+      button.hidden = !available && !button.closest(`#${FOLDER_SWITCHER_ID}`);
+      button.disabled = !available || folderNewChatPending || Boolean(source?.isConnected
+        && (source.disabled || source.getAttribute("aria-disabled") === "true"));
+      const actions = button.closest("[data-codex-sidebar-project-actions]");
+      if (actions) actions.hidden = activeSectionTab !== "项目"
+        || (button.hidden && !actions.querySelector("[data-codex-native-action-proxies] button"));
+      if (!available) {
+        button.dataset.codexSidebarCurrentFolderNewChat = "";
+        button.setAttribute("aria-label", "新建对话");
+        button.title = "当前项目没有可用的原生新建对话入口";
+        continue;
+      }
+      button.dataset.codexSidebarCurrentFolderNewChat = item?.id || ALL_FOLDER_ID;
+      button.setAttribute("aria-label", item ? `在“${item.label}”中新建对话` : "新建对话");
+      button.title = item ? `在“${item.label}”中新建对话` : "新建对话";
+    }
+  }
+
+  async function handleCurrentFolderNewChat(event) {
     event.preventDefault();
     event.stopPropagation();
+    if (folderNewChatPending) return;
     const item = nativeFolderSources()?.items.find((candidate) => candidate.id === activeFolderId) || folderSources.get(activeFolderId);
     const source = currentFolderChatSource(item);
-    if (!source?.isConnected || source.disabled || source.getAttribute("aria-disabled") === "true") {
+    if (source?.isConnected && !source.disabled && source.getAttribute("aria-disabled") !== "true") {
+      source.click();
+      return;
+    }
+    const workspaceRoot = !source?.isConnected && currentFolderWorkspaceRoot(item);
+    const bridge = window.electronBridge;
+    if (!workspaceRoot || typeof bridge?.sendMessageFromView !== "function") {
       syncCurrentFolderNewChatButton(item);
       scheduleSync();
       return;
     }
-    source.click();
+    folderNewChatPending = true;
+    syncCurrentFolderNewChatButton(item);
+    try {
+      // The existing Taskboard integration uses the same native bridge and
+      // blank route when Codex no longer renders per-project chat buttons.
+      await bridge.sendMessageFromView({ type: "electron-set-active-workspace-root", root: workspaceRoot });
+      if (!destroyed) window.postMessage({ type: "navigate-to-route", path: "/", state: { focusComposerNonce: Date.now() } }, window.location.origin);
+    } catch {
+      showNativeShortcutNotice("未能打开新对话；工作区切换失败，请使用 Codex 原生“新对话”入口。");
+    } finally {
+      folderNewChatPending = false;
+      syncCurrentFolderNewChatButton(item);
+      scheduleSync();
+    }
   }
 
   function moveActiveFolderActions(item) {
@@ -7253,7 +7295,15 @@
     createButton.title = "创建项目";
     createButton.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
     createButton.onclick = startProjectCreation;
-    actions.append(sortButton, createButton, sortMenu);
+    const newChatButton = document.createElement("button");
+    newChatButton.type = "button";
+    newChatButton.dataset.codexSidebarFolderNewChat = "true";
+    newChatButton.disabled = true;
+    newChatButton.setAttribute("aria-label", "新建对话");
+    newChatButton.title = "当前项目没有可用的原生新建对话入口";
+    newChatButton.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6.33 1.81H4.67A2.86 2.86 0 0 0 1.81 4.67v6.66a2.86 2.86 0 0 0 2.86 2.86h6.66a2.86 2.86 0 0 0 2.86-2.86V9.67" stroke="currentColor" stroke-width="1.15" stroke-linecap="round"/><path d="m7.05 9.96.52-2.09 4.38-4.38a1.42 1.42 0 0 1 2 2L9.57 9.87l-2.52.09Z" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round"/></svg>';
+    newChatButton.onclick = handleCurrentFolderNewChat;
+    actions.append(sortButton, createButton, newChatButton, sortMenu);
     searchRow.append(searchShell, actions);
 
     const tags = document.createElement("div");
@@ -7430,6 +7480,8 @@
       || root?.parentElement !== host
       || root?.dataset.sourceIds !== signature
       || root?.dataset.sourceMode !== sources.sourceMode
+      || ["[data-codex-sidebar-folder-sort]", "[data-codex-sidebar-project-create]", "[data-codex-sidebar-folder-new-chat]"].some((selector) =>
+        typeof root?.querySelector(selector)?.onclick !== "function")
       || sources.items.some((item) => item.virtual
         ? !folderSources.get(item.id)?.virtual
         : folderSources.get(item.id)?.row !== item.row);
