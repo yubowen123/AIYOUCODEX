@@ -4,7 +4,7 @@ AIYOUcodex 是一套面向 macOS 与 Windows Codex 桌面体验的本地交互�
 
 GitHub 开源地址：[https://github.com/yubowen123/AIYOUCODEX](https://github.com/yubowen123/AIYOUCODEX)
 
-![AIYOUcodex 全项目知识卡片](.github/assets/AIYOUcodex-project-overview-20260929.png)
+![AIYOUcodex 全项目功能地图：七组功能与 GitHub 地址](.github/assets/AIYOUcodex-project-overview-detailed-20260930.png)
 
 当前发行版：**v1.4.0**。项目管理、Skills 分组、本地资产库、快捷入口设置及对应的 macOS/Windows 后台运行时会作为同一安装包更新，不需要分别安装。
 
