@@ -65,6 +65,11 @@ test("main Codex target keeps supporting legacy Codex titles", () => {
   assert.equal(selectMainCodexTarget([main]), main);
 });
 
+test("main Codex target accepts an active conversation title on the app page", () => {
+  const main = target({ title: "优化Codex 对话展示交互样式" });
+  assert.equal(selectMainCodexTarget([main]), main);
+});
+
 test("main Codex target rejects routed overlays and unrelated pages", () => {
   assert.equal(selectMainCodexTarget([
     target({ title: "ChatGPT", url: "app://-/index.html?initialRoute=%2Favatar-overlay" }),

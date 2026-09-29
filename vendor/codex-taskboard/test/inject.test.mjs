@@ -12,7 +12,7 @@ const webApp = await readFile(new URL("../web/src/App.tsx", import.meta.url), "u
 
 test("injection is an idempotent IIFE guarded by its current source hash", () => {
   assert.match(source, /^\(\(\) => \{/);
-  assert.match(source, /const VERSION = "0\.6\.11"/);
+  assert.match(source, /const VERSION = "0\.6\.12"/);
   assert.match(source, /const SOURCE_HASH = window\.__CODEX_TASKBOARD_SOURCE_HASH__/);
   assert.match(source, /const SENTINEL_KEY = "__codexTaskboardInjection__"/);
   assert.match(source, /previous\?\.sourceHash === SOURCE_HASH/);
@@ -52,7 +52,7 @@ test("entry clones the native Plugins row and mounts a resizable side panel", ()
   assert.match(source, /const button = reference\.cloneNode\(true\)/);
   assert.match(source, /button\.setAttribute\("aria-label", `打开\$\{ENTRY_LABEL\}`\)/);
   assert.match(source, /button\.setAttribute\("title", ENTRY_LABEL\)/);
-  assert.match(source, /if \(label\) label\.textContent = ENTRY_LABEL/);
+  assert.match(source, /label\.textContent = ENTRY_LABEL/);
   assert.match(source, /reference\.after\(entry\)/);
   assert.match(source, /document\.querySelector\("\.app-shell-main-content-frame"\)/);
   assert.match(source, /const surface = viewport\?\.parentElement/);

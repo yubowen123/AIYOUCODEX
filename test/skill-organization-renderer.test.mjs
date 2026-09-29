@@ -173,6 +173,29 @@ test("Skills UI: all by default, real single clicks, persistent custom groups, e
   await click(row, "right"); await click(`${menu} button`);
   additions.push(...await client.evaluate("window.__added"));
   assert.equal(additions.length, 1); assert.equal(additions[0].skillPath, imageSkill.path);
+  // The taskboard launcher is optional. With it unavailable, the renderer
+  // must still use the live Codex picker and create a path-bound mention.
+  await client.evaluate(`(() => {
+    window.__codexTaskboardInjection__ = null;
+    const composer = document.querySelector('#composer');
+    composer.setAttribute('data-codex-composer', 'true');
+    const overlay = document.createElement('div');
+    overlay.dataset.composerOverlayFloatingUi = 'true';
+    overlay.style.cssText = 'position:fixed;left:1px;top:1px;width:240px;height:40px;display:block;z-index:99999';
+    const button = document.createElement('button');
+    button.dataset.listNavigationItem = 'true';
+    button.innerHTML = '<span>${imageSkill.title}</span>';
+    button.onclick = () => {
+      const mention = document.createElement('span');
+      mention.setAttribute('skill-mention-name', '${imageSkill.name}');
+      mention.setAttribute('skill-mention-path', ${JSON.stringify(imageSkill.path)});
+      mention.textContent = '${imageSkill.title}';
+      composer.appendChild(mention); overlay.remove();
+    };
+    overlay.appendChild(button); document.body.appendChild(overlay);
+  })()`);
+  await click(`${row} .codex-skill-use`);
+  await waitForBrowserState(client, `!!document.querySelector('#composer [skill-mention-path="${imageSkill.path}"]')`, "Native picker creates a Skill mention without taskboard launcher");
   await click(row, "right"); await client.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
   assert.equal(await client.evaluate(`!document.querySelector('${menu}')&&!document.querySelector('${panel}').hidden`), true, "Escape closes only the menu");
   await click(row, "right"); await click("#outside"); assert.equal(await client.evaluate(`!document.querySelector('${menu}')`), true);
@@ -194,7 +217,8 @@ test("Skills UI: all by default, real single clicks, persistent custom groups, e
   assert.equal((await store.read()).assignments[imageSkill.id], undefined);
   await click("[data-skill-manager-close]");
   assert.equal(await client.evaluate(`document.querySelector('${panel} [aria-pressed=true]').dataset.codexSkillFilter`), "all", "Deleting selected custom group falls back to all");
-  assert.equal(await client.evaluate("document.getElementById('composer').textContent"), "保留已有聊天草稿");
+  assert.match(await client.evaluate("document.getElementById('composer').textContent"), /保留已有聊天草稿/);
+  assert.equal(await client.evaluate(`!!document.querySelector('#composer [skill-mention-path="${imageSkill.path}"]')`), true);
   assert.deepEqual(await client.evaluate("window.__errors"), []);
   const count = await client.evaluate(`${api}.getHealth().syncCount`); await delay(400);
   assert.ok(await client.evaluate(`${api}.getHealth().syncCount`) - count < 4, "No self-triggered mutation loop");

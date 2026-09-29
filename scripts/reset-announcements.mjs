@@ -17,7 +17,7 @@ try {
     const input = await readFile(args[1], "utf8");
     if (Buffer.byteLength(input) > 128 * 1024) throw new Error("Check input is too large");
     const state = await recordResetCheck(JSON.parse(input));
-    console.log(JSON.stringify({ ok: true, path: resetAnnouncementPath(), checkStatus: state.checkStatus, events: state.events.length }));
+    console.log(JSON.stringify({ ok: true, path: resetAnnouncementPath(), checkStatus: state.checkStatus, events: state.events.length, history: state.history.length }));
   } else {
     throw new Error("Usage: node scripts/reset-announcements.mjs status | collect | record --file <check.json>");
   }

@@ -96,10 +96,12 @@ test("project tab actions include a selected-folder new-chat proxy", () => {
   );
   assert.match(source, /\[data-codex-sidebar-current-folder-new-chat\]/);
   assert.match(source, /data-codex-sidebar-current-folder-new-chat\][\s\S]{0,180}flex:\s*0 0 26px/);
-  assert.match(source, /dataset\.codexSidebarCurrentFolderNewChat\s*=\s*item\.id/);
+  assert.match(source, /dataset\.codexSidebarCurrentFolderNewChat\s*=\s*item\?\.id \|\| ALL_FOLDER_ID/);
   assert.match(source, /`在“\$\{item\.label\}”中新建对话`/);
-  assert.match(source, /function handleCurrentFolderNewChat[\s\S]{0,420}nativeFolderCreateButton\(item\)[\s\S]{0,220}source\.click\(\)/);
-  assert.match(source, /button\.hidden = true/);
+  assert.match(source, /function handleCurrentFolderNewChat[\s\S]{0,420}currentFolderChatSource\(item\)[\s\S]{0,400}source\.click\(\)/);
+  assert.match(source, /function syncCurrentFolderNewChatButton[\s\S]*?button\.hidden = !source\?\.isConnected;[\s\S]*?button\.disabled = !source\?\.isConnected/);
+  assert.doesNotMatch(source, /function openNativeProjectsPage\(/,
+    "A missing native new-chat action must not be replaced by generic Projects navigation");
 });
 
 test("public shortcut grid exposes bundled project management and accepts external managed entries", () => {
@@ -127,9 +129,9 @@ test("header controls opt their shared toolbar host out of the Electron drag reg
   assert.match(source, /removeProperty\("-webkit-app-region"\)/);
 });
 
-test("view switch responds on pointer down before Codex can consume the click", () => {
-  assert.match(source, /button\.onpointerdown = handleViewTogglePointerDown/);
-  assert.match(source, /event\.detail > 0/);
+test("view switch lives in settings instead of crowding the native header", () => {
+  assert.match(source, /dialog\.querySelector\(`#\$\{TOGGLE_ID\}`\)\.onclick = handleViewToggle/);
+  assert.match(source, /if \(headerToggle && !headerToggle\.closest\(`#\$\{SHORTCUT_SETTINGS_ID\}`\)\) headerToggle\.remove\(\)/);
 });
 
 test("section enhancement fails closed when Codex native anchors are incomplete", () => {

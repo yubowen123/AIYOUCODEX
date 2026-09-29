@@ -1,17 +1,84 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, writeFile, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
-import { defaults, normalizeSettings, constraints, profile, validateDraft, PROTOCOLS } from "../lib/model-arena/catalog.mjs";
+import { defaults, normalizeSettings, constraints, profile, validateDraft, PROTOCOLS, IMAGE_MODELS, imageConstraints, imageProfile, validateImageDraft } from "../lib/model-arena/catalog.mjs";
 import { Credentials, Provider, buildPayload, parseTask, publicUrl } from "../lib/model-arena/providers.mjs";
 import { ArenaService } from "../lib/model-arena/service.mjs";
-import { compositePlan } from "../lib/model-arena/media.mjs";
+import { compositePlan, imageCompositePlan } from "../lib/model-arena/media.mjs";
 
 const draft = { models: ["seedance20", "h3", "wan3"], assetIds: [], prompt: "同一个人物走进房间", duration: 5, ratio: "16:9", generateAudio: true };
 const image = i => ({ id: `image${i}`, name: `image${i}.png`, type: "image", size: 1000, width: 1024, height: 1536, duration: 0 });
 function configured() { const raw = defaults(); for (const f of Object.values(raw.families)) { f.identity = { id: "test-user", name: "测试" }; if (!f.baseUrl) f.baseUrl = "https://fixture.example"; } return normalizeSettings(raw, defaults()); }
+function configuredImage(ids = ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"]) {
+  const raw = defaults(); raw.imageConfigured = true;
+  for (const item of Object.values(raw.imageModels)) item.enabled = false;
+  for (const id of ids) raw.imageModels[id].enabled = true;
+  return normalizeSettings(raw, defaults());
+}
+
+test("image catalogue stays opt-in and applies the strict common reference contract", () => {
+  const initial = defaults(); assert.ok(IMAGE_MODELS.length >= 20); assert.ok(Object.values(initial.imageModels).every(model => model.enabled === false));
+  const cfg = configuredImage(), constraints = imageConstraints(["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"], cfg);
+  assert.equal(constraints.references, 10); assert.ok(constraints.ratios.includes("1:1")); assert.ok(constraints.resolutions.includes("2K"));
+  assert.equal(imageProfile("gpt-image-2.5-sunburst", cfg).kind, "image");
+  const input = { mode: "image", models: ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"], assetIds: ["image0"], prompt: "@图片1 保持人物，改为雨夜霓虹", ratio: "1:1", resolution: "2K" };
+  assert.equal(validateImageDraft(input, cfg, [image(0)]).resolution, "2K");
+  assert.throws(() => validateImageDraft(input, cfg, [{ ...image(0), type: "video" }]), /仅支持图片/);
+  assert.throws(() => validateImageDraft({ ...input, models: ["gpt-image-2.5-sunburst"], assetIds: Array.from({ length: 11 }, (_, i) => `image${i}`) }, cfg, Array.from({ length: 11 }, (_, i) => image(i))), /最多 10/);
+  assert.throws(() => validateImageDraft({ ...input, models: ["gpt-image-2.5-sunburst"] }, defaults(), [image(0)]), /尚未完成 API 配置/);
+});
+
+test("image provider payloads and inline results keep supplier contracts separate", () => {
+  const cfg = configuredImage(["gpt-image-2.5-sunburst", "seedream-5.0-flash", "gemini-3.1-flash-image", "flux-2-pro"]);
+  const request = { mode: "image", prompt: "雨夜街头", ratio: "16:9", resolution: "2K" }, refs = [{ type: "image", url: "data:image/png;base64,AAAA" }];
+  const openai = buildPayload(imageProfile("gpt-image-2.5-sunburst", cfg), cfg.imageFamilies["openai-image"], request, []);
+  assert.equal(openai.model, "gpt-image-2.5-sunburst"); assert.match(openai.size, /^\d+x\d+$/);
+  const ark = buildPayload(imageProfile("seedream-5.0-flash", cfg), cfg.imageFamilies["ark-image"], request, refs);
+  assert.equal(ark.image, refs[0].url); assert.equal(ark.response_format, "url");
+  const google = buildPayload(imageProfile("gemini-3.1-flash-image", cfg), cfg.imageFamilies["google-image"], request, refs);
+  assert.equal(google.input[1].type, "image"); assert.equal(google.response_format.image_size, "2K");
+  const bfl = buildPayload(imageProfile("flux-2-pro", cfg), cfg.imageFamilies["bfl-image"], request, []);
+  assert.ok(bfl.width > bfl.height);
+  const parsed = parseTask("openai-image", { data: [{ b64_json: "AAAA" }] }, { creating: true, kind: "image" });
+  assert.equal(parsed.state, "succeeded"); assert.match(parsed.url, /^data:image\/png;base64,/);
+});
+
+test("image contact sheet is bounded to 2–6 images", () => {
+  const plan = imageCompositePlan([{ label: "A" }, { label: "B" }, { label: "C" }]);
+  assert.equal(plan.width, 1920); assert.equal(plan.height, 640); assert.match(plan.filter, /xstack=inputs=3/);
+  assert.throws(() => imageCompositePlan([{ label: "A" }])); assert.throws(() => imageCompositePlan(Array(7).fill({ label: "A" })));
+});
+
+test("legacy video-only settings hydrate every current image model without rewriting disk", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arena-legacy-settings-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const legacy = configured(); delete legacy.imageFamilies; delete legacy.imageModels; delete legacy.imageConfigured;
+  await mkdir(root, { recursive: true }); const file = path.join(root, "settings.json"), body = JSON.stringify(legacy, null, 2); await writeFile(file, body);
+  const service = new ArenaService({ root, interval: 1000000 }); t.after(() => service.close()); await service.ready;
+  const snapshot = await service.snapshot(); assert.equal(Object.keys(snapshot.settings.imageModels).length, IMAGE_MODELS.length);
+  assert.ok(snapshot.imageModels.every(model => snapshot.settings.imageModels[model.id])); assert.equal(await readFile(file, "utf8"), body);
+});
+
+test("image preview, multi-model execution and contact-sheet output share the existing confirmation gate", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "arena-image-run-")), submitted = [];
+  const provider = { credentials: { setSession() {} }, preflight: async () => {}, liveCheck: async () => {}, upload: async () => { throw new Error("no references expected"); },
+    submit: async model => { submitted.push(model.id); return { id: `image-${model.id}`, state: "succeeded", url: "data:image/png;base64,AAAA" }; }, poll: async () => ({ state: "running" }) };
+  const service = new ArenaService({ root, provider, interval: 1000000,
+    downloadImage: async (_, destination) => { await writeFile(destination, "fixture-image"); return { type: "image", mime: "image/png", size: 13, width: 1024, height: 1024, duration: 0, sha256: "fixture" }; },
+    composeImages: async (inputs, destination, layout) => { assert.equal(inputs.length, 2); assert.equal(layout, "grid"); await writeFile(destination, "fixture-sheet"); return { type: "image", mime: "image/png", size: 13, width: 1280, height: 640, duration: 0, sha256: "sheet" }; },
+  });
+  t.after(async () => { await service.close(); await rm(root, { recursive: true, force: true }); }); await service.ready;
+  await service.saveSettings({ ...configuredImage(), version: 0 });
+  const preview = await service.preview({ mode: "image", models: ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"], assetIds: [], prompt: "同一角色的电影海报", ratio: "1:1", resolution: "2K" });
+  assert.equal(preview.count, 2); assert.ok(preview.requests.every(request => request.payload.size === "2048x2048"));
+  const run = await service.confirm({ token: preview.token, fingerprint: preview.fingerprint }); await settle(service);
+  assert.deepEqual(submitted.sort(), ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]);
+  const completed = (await service.snapshot()).runs.find(item => item.id === run.id); assert.ok(completed.jobs.every(job => job.state === "succeeded" && job.output.type === "image"));
+  await service.composite(run.id, completed.jobs.map(job => job.id), "grid"); await until(() => !service.composing);
+  const sheet = (await service.snapshot()).runs.find(item => item.id === run.id).composite; assert.equal(sheet.state, "succeeded"); assert.equal(sheet.output.type, "image");
+});
 
 test("H3 has exactly 768P and 2K; common inputs do not force common output resolution", () => {
   const cfg = configured(); assert.deepEqual(profile("h3", cfg).resolutions, ["768P", "2K"]);

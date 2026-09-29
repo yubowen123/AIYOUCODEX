@@ -10,7 +10,7 @@ import { PreviewRepository } from "../lib/preview-data.mjs";
 import { presentCardPreview } from "../lib/card-view.mjs";
 import { presentRateLimit } from "../lib/usage-data.mjs";
 import { createResetAnnouncementReader } from "../lib/reset-announcements.mjs";
-import { createResetMonitorController, requestResetMonitorNative, RESET_MONITOR_BINDING } from "../lib/reset-monitor.mjs";
+import { createResetMonitorController, RESET_MONITOR_BINDING } from "../lib/reset-monitor.mjs";
 import {
   DesktopAppRecovery,
   reconcileRendererSessions,
@@ -52,13 +52,29 @@ const syncConversationFolders = createConversationFolderSync({ folders: conversa
 
 let stopped = false;
 const sessions = new Map();
-const resetMonitorController = createResetMonitorController({ nativeRequest: (method, params) => {
-  const client = [...sessions.values()][0]?.client;
-  if (!client) throw new Error("No connected Codex window");
-  return requestResetMonitorNative(client, method, params);
-} });
+const resetMonitorController = createResetMonitorController();
 let persistentShortcutOwnerTargetId = "";
 const skillCatalogCache = new Map();
+let rendererSourceHashCheckedAt = 0;
+let cachedRendererSourceHash = null;
+
+async function expectedRendererSourceHash() {
+  const now = Date.now();
+  if (now - rendererSourceHashCheckedAt < 5_000) return cachedRendererSourceHash;
+  rendererSourceHashCheckedAt = now;
+  try {
+    const [userSource, managedShortcuts] = await Promise.all([
+      readFile(sourcePath, "utf8"), readManagedShortcuts(),
+    ]);
+    // A partial edit must not replace a healthy renderer with invalid source.
+    new Function(userSource);
+    cachedRendererSourceHash = createHash("sha256").update(userSource)
+      .update(JSON.stringify(managedShortcuts)).digest("hex");
+  } catch {
+    cachedRendererSourceHash = null;
+  }
+  return cachedRendererSourceHash;
+}
 const skillOrganizationStore = createSkillOrganizationStore();
 const skillProvenance = createSkillProvenanceIndex({ listSessions: async () => {
   await repository.refreshEfficiencyIndex();
@@ -228,6 +244,11 @@ async function reconcileTargets() {
       try {
         const snapshot = await session.client.evaluate(RENDERER_HEALTH_EXPRESSION);
         const alive = acceptDocumentHealth(session, snapshot);
+        const expectedHash = alive ? await expectedRendererSourceHash() : null;
+        if (expectedHash && snapshot.sourceHash !== expectedHash) {
+          process.stdout.write(`[${new Date().toISOString()}] renderer ${session.targetId} source changed; reattaching without restarting Codex\n`);
+          return false;
+        }
         if (alive && session.bridgeDocumentEpoch !== session.documentEpoch) {
           await session.assetConsoleBridge.install(session.client);
           session.bridgeDocumentEpoch = session.documentEpoch;
@@ -376,9 +397,10 @@ async function pushPreviews(session) {
   ]);
   const previews = rawPreviews.map((preview) => presentCardPreview(preview));
   const usage = presentRateLimit(rawUsage, { timeZone: "Asia/Shanghai" });
-  usage.resetNotice = await readResetNotice();
+  usage.resetNotice = await readResetNotice({ accountReset: usage.resetAccount || null });
   usage.resetNotice.monitor = await resetMonitorController.snapshot();
-  usage.resetNotice.intervalHours = usage.resetNotice.monitor.intervalHours ?? 3;
+  usage.resetNotice.intervalHours = usage.resetNotice.monitor.intervalHours ?? 0.25;
+  usage.resetNotice.intervalMinutes = usage.resetNotice.monitor.intervalMinutes;
   // A malformed optional policy must never stop native cards/history delivery.
   let efficiency;
   try { efficiency = await session.efficiencyController.snapshot(); }

@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "0.6.11";
+  const VERSION = "0.6.12";
   const SOURCE_HASH = window.__CODEX_TASKBOARD_SOURCE_HASH__;
   const SENTINEL_KEY = "__codexTaskboardInjection__";
   const DEFAULT_TASKBOARD_URL = "http://127.0.0.1:47823/?host=codex";
@@ -303,8 +303,12 @@
   }
 
   function replaceEntryIcon(button) {
-    const icon = button.querySelector("svg");
-    if (!icon) return;
+    // Do not reuse native SVG classes, symbols, CSS masks or visibility state.
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("width", "20");
+    icon.setAttribute("height", "20");
+    icon.setAttribute("aria-hidden", "true");
+    icon.style.flexShrink = "0";
     icon.setAttribute("viewBox", "0 0 24 24");
     icon.setAttribute("fill", "none");
     icon.setAttribute("stroke", "currentColor");
@@ -315,6 +319,7 @@
       <rect x="3.5" y="4" width="17" height="16" rx="2.5"></rect>
       <path d="M9 4v16M14.5 8h2.5M14.5 12h2.5M14.5 16h2.5"></path>
     `;
+    button.prepend(icon);
   }
 
   function createEntry(reference) {
@@ -330,10 +335,12 @@
     button.setAttribute("title", ENTRY_LABEL);
     button.setAttribute(OWNED_ATTRIBUTE, "true");
     button.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
-    const label = button.querySelector(".text-fade-truncate")
-      || Array.from(button.querySelectorAll("span")).find((node) => buttonMatches(node, PLUGIN_LABELS));
-    if (label) label.textContent = ENTRY_LABEL;
-    else button.textContent = ENTRY_LABEL;
+    // Only borrow the button shell. Native label nesting changes must not
+    // delete the project icon or retain the plugin's mask/badge children.
+    const label = document.createElement("span");
+    label.className = "text-fade-truncate";
+    label.textContent = ENTRY_LABEL;
+    button.replaceChildren(label);
     replaceEntryIcon(button);
     button.addEventListener("click", (event) => {
       event.preventDefault();

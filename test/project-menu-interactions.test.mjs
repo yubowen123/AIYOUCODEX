@@ -97,7 +97,12 @@ test("six lanes follow live message order and colors; popup shortcuts toggle and
   await click("#codex-taskboard-close");
   await waitForBrowserState(client, `!${shown("#codex-taskboard-page")}`, "Close works even during loading");
   await click(shortcut("项目管理"));
-  await waitForBrowserState(client, "!!document.querySelector('#codex-taskboard-frame')&&!document.querySelector('#codex-taskboard-frame').hidden", "Project frame ready");
+  try {
+    await waitForBrowserState(client, "!!document.querySelector('#codex-taskboard-frame')&&!document.querySelector('#codex-taskboard-frame').hidden", "Project frame ready");
+  } catch (error) {
+    const state = await client.evaluate("({page:document.getElementById('codex-taskboard-page')?.outerHTML.slice(0,2000),frames:[...document.querySelectorAll('iframe')].map(f=>({id:f.id,src:f.getAttribute('src'),hidden:f.hidden})),errors:window.__codexConversationPreviewInjection__?.getHealth?.().errors})");
+    throw new Error(`${error.message}; ${JSON.stringify(state)}`, { cause: error });
+  }
   await client.evaluate("window.fixtureFrame=document.getElementById('codex-taskboard-frame');window.fixtureFrame.contentDocument.getElementById('draft').value='Unsubmitted board draft'");
   await click(shortcut("项目管理"));
   await waitForBrowserState(client, `!${shown("#codex-taskboard-page")}`, "Second project click collapses");

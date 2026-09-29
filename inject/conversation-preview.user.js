@@ -2,7 +2,7 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
-  const RUNTIME_VERSION = "2026-09-13.2";
+  const RUNTIME_VERSION = "2026-09-29.1";
   const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
@@ -61,6 +61,8 @@
     skills: '<path d="M5 5.5h6M5 9h9M5 12.5h5M16.5 4v8M13 8h7M6 17.5h12M8.5 15v5M15.5 15v5"/>',
     assets: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 4V2M17 4V2M3 9h18M8 13h3v3H8zM14 13h3v3h-3z"/>',
     arena: '<path d="M8 3h8v5a4 4 0 0 1-8 0V3ZM8 5H4v2a4 4 0 0 0 4 4m8-6h4v2a4 4 0 0 1-4 4M12 12v6m-4 3h8M9 18h6v3H9z"/>',
+    newChat: '<path d="M5 5.5A2.5 2.5 0 0 1 7.5 3h9A2.5 2.5 0 0 1 19 5.5v9a2.5 2.5 0 0 1-2.5 2.5H9l-4 4V5.5Z"/><path d="M9 10h6m-3-3v6"/>',
+    project: '<rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M9 4v16m5.5-12h2.5m-2.5 4h2.5m-2.5 4h2.5"/>',
   };
   const HIDDEN_SHORTCUT_NAMES = new Set();
   const SECTION_TABS_ID = "codex-sidebar-section-tabs";
@@ -69,6 +71,7 @@
   const SECTION_NAMES = [...NATIVE_SECTION_NAMES, "中断"];
   const NATIVE_SHORTCUT_LABEL_ALIASES = new Map([
     ["新对话", "新对话"],
+    ["新聊天", "新对话"],
     ["new chat", "新对话"],
     ["拉取请求", "拉取请求"],
     ["pull request", "拉取请求"],
@@ -102,6 +105,7 @@
   const ALL_FOLDER_ID = "__all__";
   const ALL_PROJECTS_PANEL_ID = "codex-sidebar-all-projects";
   const FOLDER_STORAGE_KEY = "codex-conversation-preview:folder-id";
+  const FOLDER_SORT_STORAGE_KEY = "codex-conversation-preview:folder-sort";
   const PINNED_THREAD_TIMES_STORAGE_KEY = "codex-conversation-preview:pinned-thread-times";
   const VIEW_STORAGE_KEY = "codex-conversation-preview:view-mode";
   const THREAD_STATUS_STORAGE_KEY = "codex-conversation-preview:thread-statuses";
@@ -121,6 +125,9 @@
   try { window[SENTINEL]?.destroy?.(); } catch {}
 
   let destroyed = false;
+  const sectionTabRoots = new WeakSet();
+  const nativeActionProxyStates = new WeakMap();
+  let taskContextButton = null;
   let workspaceFolderButton = null;
   let workspaceFolderMenu = null;
   let workspaceFolderMenuTarget = "";
@@ -136,6 +143,7 @@
   let anchorRetryTimer = null;
   let previews = new Map();
   let shortcutSources = new Map();
+  const shortcutRoots = new WeakSet();
   let shortcutSourcesMissingSince = 0;
   let shortcutCatalog = [];
   let shortcutSettings = {
@@ -233,8 +241,10 @@
   let activeSectionTab = null;
   let activeFolderId = null;
   let folderSearchQuery = "";
+  let folderSortMode = "recent";
   let folderPreSearchId = null;
   let folderTagsExpanded = false;
+  let projectCreateAttempt = 0;
   let searchCatalog = [];
   let searchCatalogByProject = new Map();
   let searchCatalogByThread = new Map();
@@ -280,6 +290,10 @@
     if (SECTION_NAMES.includes(savedSectionTab)) activeSectionTab = savedSectionTab;
   } catch {}
   try { activeFolderId = localStorage.getItem(FOLDER_STORAGE_KEY) || null; } catch {}
+  try {
+    const savedFolderSort = localStorage.getItem(FOLDER_SORT_STORAGE_KEY);
+    if (["recent", "name", "native"].includes(savedFolderSort)) folderSortMode = savedFolderSort;
+  } catch {}
   try {
     const savedPinnedThreadTimes = JSON.parse(localStorage.getItem(PINNED_THREAD_TIMES_STORAGE_KEY) || "null");
     if (savedPinnedThreadTimes && typeof savedPinnedThreadTimes === "object" && !Array.isArray(savedPinnedThreadTimes)) {
@@ -340,6 +354,8 @@
     return Boolean(folder) && [
       `在 ${folder} 中开始新聊天`,
       `Start new chat in ${folder}`,
+      `在 ${folder} 中新建本地聊天`,
+      `New local chat in ${folder}`,
     ].some((candidate) => normalizedNativeLabel(candidate) === actual);
   }
 
@@ -694,6 +710,7 @@
       }
       #${SHORTCUT_GRID_ID} {
         display: grid !important;
+        flex: 0 0 auto;
         width: 100%;
         min-width: 0;
         grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -805,6 +822,77 @@
         width: 12px !important;
         height: 12px !important;
       }
+      [data-aiyoucodex-icon-rail="true"]:not([data-app-navigation-rail]) {
+        display: flex !important;
+        flex-direction: column !important;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      [data-aiyoucodex-icon-rail="true"]:not([data-app-navigation-rail]) > :not(#${SHORTCUT_GRID_ID}) { flex-shrink: 0; }
+      #${SHORTCUT_GRID_ID}[data-codex-shortcut-layout="rail"] {
+        display: flex !important;
+        flex: 1 1 0;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        width: 100%;
+        min-height: 52px;
+        padding: 4px 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        scrollbar-width: none;
+        -webkit-app-region: no-drag;
+      }
+      #${SHORTCUT_GRID_ID}[data-codex-shortcut-layout="rail"]::-webkit-scrollbar { display: none; }
+      #${SHORTCUT_GRID_ID}[data-codex-shortcut-rail-scroll="native"] {
+        flex: 0 0 auto;
+        overflow: visible;
+        min-height: 0;
+        width: 36px;
+        max-width: 100%;
+        gap: 8px;
+      }
+      #${SHORTCUT_GRID_ID}[data-codex-shortcut-rail-scroll="native"]::before {
+        content: "";
+        width: 24px;
+        border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+        margin-bottom: 4px;
+      }
+      #${SHORTCUT_GRID_ID}[data-codex-shortcut-layout="rail"] > [data-codex-sidebar-shortcut-card-wrap] {
+        flex: 0 0 36px;
+        width: 36px;
+        height: 36px;
+      }
+      #${SHORTCUT_GRID_ID}[data-codex-shortcut-layout="rail"] .${SHORTCUT_CARD_CLASS} {
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border: 0;
+        border-radius: 12px;
+        background: transparent;
+        box-shadow: none;
+      }
+      #${SHORTCUT_GRID_ID}[data-codex-shortcut-layout="rail"] .${SHORTCUT_ICON_CLASS} {
+        flex: 0 0 24px;
+        width: 24px;
+        height: 24px;
+        background: transparent;
+      }
+      #${SHORTCUT_GRID_ID}[data-codex-shortcut-layout="rail"] .${SHORTCUT_LABEL_CLASS} {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+      #${SHORTCUT_GRID_ID}[data-codex-shortcut-layout="rail"] .${SHORTCUT_CARD_CLASS}:hover,
+      #${SHORTCUT_GRID_ID}[data-codex-shortcut-layout="rail"] .${SHORTCUT_CARD_CLASS}[data-active="true"] {
+        background: color-mix(in srgb, currentColor 9%, transparent);
+        box-shadow: none;
+        transform: none;
+      }
+      #${SHORTCUT_GRID_ID}[data-codex-shortcut-layout="rail"] [data-codex-sidebar-shortcut-quick="true"] { display: none; }
       #${SHORTCUT_SETTINGS_BUTTON_ID} {
         display: inline-flex !important;
         flex: 0 0 28px !important;
@@ -1038,12 +1126,12 @@
       }
       #${EFFICIENCY_PANEL_ID}[hidden] { display: none !important; }
       #${EFFICIENCY_PANEL_ID} [hidden] { display: none !important; }
-      #${TASK_CONTEXT_BUTTON_ID} { flex: 0 0 auto; pointer-events: auto; -webkit-app-region: no-drag; cursor: pointer; height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: inherit; font-size: 12px; white-space: nowrap; }
+      #${TASK_CONTEXT_BUTTON_ID}, #${WORKSPACE_FOLDER_BUTTON_ID} { box-sizing: border-box; flex: 0 0 32px; display: inline-flex; align-items: center; justify-content: center; width: 32px; min-width: 32px; height: 32px; padding: 0; pointer-events: auto; -webkit-app-region: no-drag; cursor: pointer; border: 1px solid transparent; border-radius: 8px; background: transparent; color: inherit; }
+      #${TASK_CONTEXT_BUTTON_ID} svg, #${WORKSPACE_FOLDER_BUTTON_ID} svg { width: 18px; height: 18px; flex: none; pointer-events: none; }
       #${TASK_CONTEXT_BUTTON_ID}:hover { background: #80808018; }
       #${TASK_CONTEXT_BUTTON_ID}:focus-visible { outline: 2px solid #328bfa; outline-offset: -2px; }
       #${TASK_CONTEXT_BUTTON_ID}:disabled { opacity: .4; cursor: default; }
       #${TASK_CONTEXT_BUTTON_ID}[hidden] { display: none !important; }
-      #${WORKSPACE_FOLDER_BUTTON_ID} { flex: 0 0 auto; display: inline-flex; gap: 4px; align-items: center; pointer-events: auto; -webkit-app-region: no-drag; cursor: pointer; height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; white-space: nowrap; }
       #${WORKSPACE_FOLDER_BUTTON_ID}:hover { background: #80808018; }
       #${WORKSPACE_FOLDER_BUTTON_ID}:focus-visible { outline: 2px solid #328bfa; outline-offset: -2px; }
       #${WORKSPACE_FOLDER_BUTTON_ID}[hidden], #${WORKSPACE_FOLDER_MENU_ID}[hidden] { display: none !important; }
@@ -1286,6 +1374,8 @@
         align-items: center;
         justify-content: flex-end;
         gap: 2px;
+        flex-shrink: 0;
+        -webkit-app-region: no-drag;
       }
       #${SECTION_TABS_ID} [data-codex-sidebar-project-actions][hidden] {
         display: none !important;
@@ -1301,12 +1391,19 @@
         opacity: 1 !important;
       }
       #${SECTION_TABS_ID} [data-codex-sidebar-project-actions] button {
+        flex: 0 0 26px !important;
         width: 26px !important;
         height: 26px !important;
         min-width: 26px !important;
         min-height: 26px !important;
         padding: 3px !important;
         border-radius: 8px !important;
+        pointer-events: auto !important;
+        -webkit-app-region: no-drag !important;
+      }
+      #${SECTION_TABS_ID} [data-codex-sidebar-project-actions] button:disabled {
+        opacity: .45 !important;
+        cursor: not-allowed;
       }
       #${SECTION_TABS_ID} [data-codex-sidebar-current-folder-new-chat] {
         display: inline-flex;
@@ -1349,9 +1446,12 @@
       #${FOLDER_SWITCHER_ID} .codex-sidebar-folder-search-row {
         display: grid;
         min-width: 0;
-        grid-template-columns: minmax(0, 1fr) 58px;
+        grid-template-columns: minmax(0, 1fr) auto;
         align-items: center;
         gap: 6px;
+      }
+      #${FOLDER_SWITCHER_ID} .codex-sidebar-folder-search-row:has([data-codex-sidebar-folder-actions][hidden]) {
+        grid-template-columns: minmax(0, 1fr);
       }
       #${FOLDER_SWITCHER_ID} .codex-sidebar-folder-search-shell {
         position: relative;
@@ -1415,11 +1515,15 @@
       }
       #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-actions] {
         display: flex;
-        width: 58px;
+        position: relative;
+        width: auto;
+        min-width: 58px;
         height: 32px;
         align-items: center;
         justify-content: flex-end;
         gap: 2px;
+        pointer-events: auto !important;
+        -webkit-app-region: no-drag !important;
       }
       #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-actions][hidden] {
         display: none !important;
@@ -1451,6 +1555,34 @@
         min-height: 26px !important;
         padding: 3px !important;
         border-radius: 8px !important;
+        pointer-events: auto !important;
+        -webkit-app-region: no-drag !important;
+      }
+      #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-sort-menu] {
+        position: absolute;
+        z-index: 20;
+        top: 36px;
+        right: 0;
+        width: 170px;
+        box-sizing: border-box;
+        padding: 5px;
+        border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+        border-radius: 10px;
+        background: var(--color-token-main-surface-primary, Canvas);
+        box-shadow: 0 8px 22px color-mix(in srgb, black 15%, transparent);
+      }
+      #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-sort-menu][hidden] {
+        display: none !important;
+      }
+      #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-sort-menu] button {
+        display: block;
+        width: 100% !important;
+        height: 30px !important;
+        padding: 3px 8px !important;
+        text-align: left;
+      }
+      #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-sort-menu] button[aria-checked="true"] {
+        background: color-mix(in srgb, var(--color-token-accent-foreground, Highlight) 12%, transparent);
       }
       #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-actions] svg {
         width: 17px !important;
@@ -1590,30 +1722,88 @@
         opacity: 0.68;
       }
       #${RESET_NOTICE_ID} {
-        display: flex !important; flex: 0 1 114px; flex-direction: column; justify-content: center;
-        width: 114px; min-width: 48px; height: 30px; padding: 2px 6px; margin: 0;
-        border: 1px solid color-mix(in srgb, currentColor 15%, transparent); border-radius: 8px;
+        display: grid !important; flex: 0 1 122px; grid-template-columns: 6px minmax(0, 1fr); gap: 5px;
+        align-items: center; width: 122px; min-width: 48px; height: 32px; padding: 3px 7px; margin: 0;
+        border: 1px solid color-mix(in srgb, currentColor 16%, transparent); border-radius: 10px;
         background: color-mix(in srgb, currentColor 6%, Canvas); color: #586273;
         cursor: pointer; -webkit-app-region: no-drag; font-variant-numeric: tabular-nums;
+        text-align: left; transition: border-color 120ms ease, background 120ms ease;
       }
+      #${RESET_NOTICE_ID}::before {
+        display: block; grid-column: 1; grid-row: 1 / span 2; align-self: center; width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+        box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent); content: "";
+      }
+      #${RESET_NOTICE_ID}[data-alert-level="yellow"] { border-color: #c17b12; }
+      #${RESET_NOTICE_ID}[data-alert-level="red"] { border-color: #c0392b; }
       #${RESET_NOTICE_ID} span, #${RESET_NOTICE_ID} strong {
+        grid-column: 2;
         display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        font-size: 9px; line-height: 12px; text-align: center;
+        font-size: 9px; line-height: 12px; text-align: left;
       }
-      #${RESET_NOTICE_ID} strong { font-size: 11px; font-weight: 650; }
+      #${RESET_NOTICE_ID} span { grid-row: 1; }
+      #${RESET_NOTICE_ID} strong { grid-row: 2; }
+      #${RESET_NOTICE_ID} strong { font-size: 11px; font-weight: 700; line-height: 13px; }
+      #${RESET_NOTICE_ID}:hover { background: color-mix(in srgb, currentColor 10%, Canvas); }
       #${RESET_NOTICE_ID}:focus-visible { outline: 2px solid #3878ef; outline-offset: 2px; }
       #${RESET_DIALOG_ID} {
-        width: min(430px, calc(100vw - 40px)); max-height: calc(100vh - 80px); box-sizing: border-box;
-        border: 1px solid color-mix(in srgb, currentColor 14%, transparent); border-radius: 16px;
-        padding: 20px; background: Canvas; color: CanvasText; overflow: auto; -webkit-app-region: no-drag;
-        box-shadow: 0 16px 60px #0003; font-size: 13px;
+        width: min(520px, calc(100vw - 32px)); max-height: min(760px, calc(100vh - 48px)); box-sizing: border-box;
+        border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius: 22px;
+        padding: 0; background: Canvas; color: CanvasText; overflow: auto; -webkit-app-region: no-drag;
+        box-shadow: 0 24px 80px #0003; font-size: 13px;
       }
-      #${RESET_DIALOG_ID}::backdrop { background: #0004; }
-      #${RESET_DIALOG_ID} header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-      #${RESET_DIALOG_ID} h2 { font-size: 17px; margin: 0; }
-      #${RESET_DIALOG_ID} p { margin: 12px 0; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
-      #${RESET_DIALOG_ID} button { width: 32px; height: 32px; border-radius: 8px; cursor: pointer; }
-      #${RESET_DIALOG_ID} a { color: #2968d8; text-decoration: underline; }
+      #${RESET_DIALOG_ID}::backdrop { background: #0006; }
+      #${RESET_DIALOG_ID} [data-reset-shell] { display: grid; gap: 14px; padding: 22px; }
+      #${RESET_DIALOG_ID} header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+      #${RESET_DIALOG_ID} [data-reset-eyebrow] { margin: 0 0 5px; color: color-mix(in srgb, CanvasText 56%, transparent); font-size: 10px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+      #${RESET_DIALOG_ID} h2 { margin: 0; font-size: 23px; letter-spacing: -.02em; }
+      #${RESET_DIALOG_ID} [data-reset-close] { display: inline-grid; place-items: center; flex: 0 0 auto; width: 38px; height: 38px; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 11px; background: color-mix(in srgb, CanvasText 5%, Canvas); color: inherit; font-size: 21px; line-height: 1; cursor: pointer; }
+      #${RESET_DIALOG_ID} [data-reset-close]:hover { background: color-mix(in srgb, CanvasText 10%, Canvas); }
+      #${RESET_DIALOG_ID} [data-reset-hero] { display: grid; gap: 7px; padding: 18px; border: 1px solid color-mix(in srgb, CanvasText 12%, transparent); border-radius: 16px; background: color-mix(in srgb, CanvasText 5%, Canvas); }
+      #${RESET_DIALOG_ID} [data-reset-hero-question] { color: CanvasText; font-size: 14px; font-weight: 760; letter-spacing: -.01em; }
+      #${RESET_DIALOG_ID} [data-reset-hero-status] { color: color-mix(in srgb, CanvasText 62%, transparent); font-size: 12px; }
+      #${RESET_DIALOG_ID} [data-reset-hero-value] { color: CanvasText; font-size: 29px; font-weight: 780; line-height: 1.1; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+      #${RESET_DIALOG_ID} [data-reset-hero-summary] { color: color-mix(in srgb, CanvasText 70%, transparent); line-height: 1.5; overflow-wrap: anywhere; }
+      #${RESET_DIALOG_ID} [data-reset-hero-delivery] { color: color-mix(in srgb, CanvasText 70%, transparent); font-size: 12px; font-weight: 700; line-height: 1.45; }
+      #${RESET_DIALOG_ID} [data-reset-hero-confidence] { color: color-mix(in srgb, CanvasText 56%, transparent); font-size: 11px; }
+      #${RESET_DIALOG_ID} [data-reset-meta] { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+      #${RESET_DIALOG_ID} [data-reset-meta-card] { min-width: 0; padding: 11px; border: 1px solid color-mix(in srgb, CanvasText 11%, transparent); border-radius: 12px; background: color-mix(in srgb, CanvasText 3%, Canvas); }
+      #${RESET_DIALOG_ID} [data-reset-meta-card] small { display: block; margin-bottom: 5px; color: color-mix(in srgb, CanvasText 55%, transparent); font-size: 10px; }
+      #${RESET_DIALOG_ID} [data-reset-meta-card] strong { display: block; overflow: hidden; color: CanvasText; font-size: 12px; line-height: 1.35; text-overflow: ellipsis; overflow-wrap: anywhere; }
+      #${RESET_DIALOG_ID} [data-reset-feed] { display: grid; gap: 8px; }
+      #${RESET_DIALOG_ID} [data-reset-section-title] { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 750; }
+      #${RESET_DIALOG_ID} [data-reset-section-title] span { color: color-mix(in srgb, CanvasText 52%, transparent); font-size: 11px; font-weight: 500; }
+      #${RESET_DIALOG_ID} [data-reset-history-summary] { color: color-mix(in srgb, CanvasText 58%, transparent); font-size: 11px; line-height: 1.5; }
+      #${RESET_DIALOG_ID} [data-reset-history] { display: grid; gap: 8px; padding: 12px; border: 1px solid color-mix(in srgb, CanvasText 10%, transparent); border-radius: 14px; }
+      #${RESET_DIALOG_ID} [data-reset-history-caption] { color: color-mix(in srgb, CanvasText 54%, transparent); font-size: 10px; }
+      #${RESET_DIALOG_ID} [data-reset-history-grid] { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: 9px; gap: 4px; }
+      #${RESET_DIALOG_ID} [data-reset-history-cell], #${RESET_DIALOG_ID} [data-reset-history-legend] [data-level] { display: block; min-width: 0; min-height: 9px; border-radius: 3px; background: color-mix(in srgb, CanvasText 8%, Canvas); }
+      #${RESET_DIALOG_ID} [data-reset-history-cell][data-level="1"], #${RESET_DIALOG_ID} [data-reset-history-legend] [data-level="1"] { background: #b9e4c7; }
+      #${RESET_DIALOG_ID} [data-reset-history-cell][data-level="2"], #${RESET_DIALOG_ID} [data-reset-history-legend] [data-level="2"] { background: #71c891; }
+      #${RESET_DIALOG_ID} [data-reset-history-cell][data-level="3"], #${RESET_DIALOG_ID} [data-reset-history-legend] [data-level="3"] { background: #3b9a65; }
+      #${RESET_DIALOG_ID} [data-reset-history-cell][data-level="4"], #${RESET_DIALOG_ID} [data-reset-history-legend] [data-level="4"] { background: #1e6940; }
+      #${RESET_DIALOG_ID} [data-reset-history-legend] { display: flex; align-items: center; gap: 4px; color: color-mix(in srgb, CanvasText 52%, transparent); font-size: 10px; }
+      #${RESET_DIALOG_ID} [data-reset-history-legend] [data-level] { width: 9px; min-width: 9px; min-height: 9px; }
+      #${RESET_DIALOG_ID} [data-reset-time-switch] { display: inline-flex; align-items: center; justify-self: end; gap: 2px; margin: 0 0 2px auto; padding: 2px; border: 1px solid color-mix(in srgb, CanvasText 12%, transparent); border-radius: 999px; }
+      #${RESET_DIALOG_ID} [data-reset-time-mode] { border: 0; border-radius: 999px; padding: 3px 8px; background: transparent; color: color-mix(in srgb, CanvasText 54%, transparent); font-size: 10px; cursor: pointer; }
+      #${RESET_DIALOG_ID} [data-reset-time-mode][data-active="true"] { background: color-mix(in srgb, CanvasText 12%, Canvas); color: CanvasText; font-weight: 700; }
+      #${RESET_DIALOG_ID} [data-reset-signal-confidence] { margin-left: auto; color: #c17b12; font-size: 10px; font-weight: 700; }
+      #${RESET_DIALOG_ID} [data-reset-signal-confidence][data-alert-level="red"] { color: #c0392b; }
+      #${RESET_DIALOG_ID} [data-reset-signal-confidence][data-alert-level="none"] { color: #667085; }
+      #${RESET_DIALOG_ID} [data-reset-signal] { display: grid; gap: 5px; padding: 11px 12px; border: 1px solid color-mix(in srgb, CanvasText 10%, transparent); border-radius: 12px; }
+      #${RESET_DIALOG_ID} [data-reset-signal-head] { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      #${RESET_DIALOG_ID} [data-reset-signal-badge] { padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, currentColor 12%, transparent); color: currentColor; font-size: 10px; font-weight: 700; }
+      #${RESET_DIALOG_ID} [data-reset-signal-date], #${RESET_DIALOG_ID} [data-reset-signal-source] { color: color-mix(in srgb, CanvasText 52%, transparent); font-size: 10px; }
+      #${RESET_DIALOG_ID} [data-reset-signal-summary] { color: color-mix(in srgb, CanvasText 78%, transparent); line-height: 1.45; overflow-wrap: anywhere; }
+      #${RESET_DIALOG_ID} [data-reset-signal-evidence] { color: color-mix(in srgb, CanvasText 54%, transparent); font-size: 11px; line-height: 1.4; }
+      #${RESET_DIALOG_ID} details { border-top: 1px solid color-mix(in srgb, CanvasText 10%, transparent); padding-top: 10px; }
+      #${RESET_DIALOG_ID} summary { color: color-mix(in srgb, CanvasText 66%, transparent); cursor: pointer; font-size: 11px; }
+      #${RESET_DIALOG_ID} [data-reset-details] { margin-top: 9px; color: color-mix(in srgb, CanvasText 60%, transparent); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+      #${RESET_DIALOG_ID} [data-reset-footer] { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 2px; }
+      #${RESET_DIALOG_ID} [data-reset-footer] a { color: #2968d8; text-decoration: underline; }
+      #${RESET_DIALOG_ID} [data-reset-footer] span { color: color-mix(in srgb, CanvasText 48%, transparent); font-size: 10px; line-height: 1.35; text-align: right; }
+      @media (max-width: 520px) { #${RESET_DIALOG_ID} [data-reset-meta] { grid-template-columns: repeat(2, minmax(0, 1fr)); } #${RESET_DIALOG_ID} [data-reset-shell] { padding: 18px; } #${RESET_DIALOG_ID} [data-reset-hero-value] { font-size: 25px; } }
+      @media (max-width: 360px) { #${RESET_DIALOG_ID} [data-reset-meta] { grid-template-columns: 1fr; } }
+      @media (prefers-reduced-motion: reduce) { #${RESET_NOTICE_ID} { transition: none; } }
       #${USAGE_ID} .${USAGE_TEXT_CLASS} {
         min-width: 0;
         overflow: hidden;
@@ -2501,13 +2691,48 @@
   }
 
   function nativeShortcutThreadId() {
-    const nodes = Array.from(document.querySelectorAll('[data-app-action-sidebar-thread-id]'))
-      .filter((node) => node.getAttribute("data-app-action-sidebar-thread-active") === "true"
-        || node.getAttribute("data-app-action-sidebar-thread-selected") === "true"
-        || node.getAttribute("aria-current") === "page");
-    const ids = new Set(nodes.map((node) => normalizedThreadId(node.getAttribute("data-app-action-sidebar-thread-id"))));
+    const rows = Array.from(document.querySelectorAll('[data-app-action-sidebar-thread-id]'));
+    // Selection may include other cards; only an active row owns the browser panel.
+    const active = rows.filter((node) => node.getAttribute("data-app-action-sidebar-thread-active") === "true"
+      || node.getAttribute("aria-current") === "page");
+    const ids = new Set(active.map((node) => normalizedThreadId(node.getAttribute("data-app-action-sidebar-thread-id"))));
     const id = ids.size === 1 ? Array.from(ids)[0] : "";
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? id : "";
+    const threadIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    return threadIdPattern.test(id) ? id : "";
+  }
+
+  function nativeShortcutContext() {
+    const conversationId = nativeShortcutThreadId();
+    if (conversationId) return { conversationId, scopeKey: `thread:${conversationId}` };
+    // initialRoute is only the window's launch route and can be stale. When
+    // there is no active row, let Codex resolve its current route itself.
+    try {
+      const location = new URL(window.location.href);
+      const targetId = String(window[RENDERER_TARGET_ID_GLOBAL] || "");
+      const entry = window.navigation?.currentEntry;
+      if (location.protocol !== "app:" || location.hostname !== "-" || location.pathname !== "/index.html"
+        || !targetId || typeof entry?.key !== "string" || !entry.key) return null;
+      return { conversationId: "", scopeKey: `host-route:${targetId}:${entry.key}:${entry.url || ""}` };
+    } catch {
+      return null;
+    }
+  }
+
+  function nativeShortcutIsCurrent(record) {
+    return nativeShortcutContext()?.scopeKey === record.scopeKey;
+  }
+
+  function nativeShortcutStatus(shortcutId) {
+    const item = normalizedManagedShortcuts().find((candidate) => candidate.id === String(shortcutId || ""));
+    if (!item) return { available: false, reason: "shortcut-not-found" };
+    if (item.openMode !== "in-app") return { available: true, mode: item.openMode };
+    const context = nativeShortcutContext();
+    const record = context && [...nativeShortcutRecords.values()].find((candidate) =>
+      candidate.scopeKey === context.scopeKey && candidate.url === item.url && candidate.name === item.name);
+    return { available: Boolean(context && window.electronBridge?.sendMessageFromView), mode: "in-app",
+      status: record?.status || "idle", reason: !context ? "current-route-unavailable"
+        : !window.electronBridge?.sendMessageFromView ? "native-browser-unavailable" : null,
+      hasHostReceipt: Boolean(record?.hostConversationId), hasNavigated: Boolean(record?.hasNavigated) };
   }
 
   function showNativeShortcutNotice(text, record = null) {
@@ -2532,37 +2757,41 @@
 
   function openNativeBrowserShortcut(item, { toggle = false } = {}) {
     const url = validShortcutUrl(item?.url);
-    const conversationId = nativeShortcutThreadId();
-    if (!url || !conversationId) {
-      showNativeShortcutNotice("请先打开一个明确的对话，再打开此网页；没有创建新标签。");
-      return { ok: false, reason: "current-thread-unavailable" };
+    const context = nativeShortcutContext();
+    if (!url || !context) {
+      showNativeShortcutNotice("当前窗口无法确认浏览器归属。请打开一个对话后重试；没有创建新标签。");
+      return { ok: false, reason: "current-route-unavailable" };
     }
     if (typeof window.electronBridge?.sendMessageFromView !== "function") {
       showNativeShortcutNotice("当前宿主没有可用的 Codex 浏览器接口；未重新加载网页。");
       return { ok: false, reason: "native-browser-unavailable" };
     }
-    const key = JSON.stringify([conversationId, shortcutItemKey(item), url]);
+    const key = JSON.stringify([context.scopeKey, shortcutItemKey(item), url]);
     let record = nativeShortcutRecords.get(key);
     closeOtherWorkspacePanels("native-browser");
     if (record) {
       // No URL on reveal/toggle: preserve the current canvas, history and draft.
-      window.postMessage({ type: "toggle-browser-panel", conversationId,
-        browserTabId: record.browserTabId, ...(toggle ? {} : { open: true }),
+      record.recoverBlankOnShow = !record.hasNavigated && record.status !== "loaded";
+      window.postMessage({ type: "toggle-browser-panel", ...(record.hostConversationId || context.conversationId
+        ? { conversationId: record.hostConversationId || context.conversationId } : {}),
+        browserTabId: record.browserTabId, ...(toggle && record.status === "loaded" ? {} : { open: true }),
         source: "manual", initiator: "side_panel_menu" }, window.location.origin);
       if (record.status === "unconfirmed") showNativeShortcutNotice("Codex 尚未确认网页加载。请检查右侧浏览器标签；为保护画布，没有自动刷新或重复创建。", record);
       return { ok: true, status: record.status, browserTabId: record.browserTabId, created: false };
     }
-    record = { conversationId, browserTabId: crypto.randomUUID(), url, name: item.name, status: "requested" };
+    record = { conversationId: context.conversationId, scopeKey: context.scopeKey,
+      browserTabId: crypto.randomUUID(), url, name: item.name, status: "requested", recoverBlankOnShow: true };
     nativeShortcutRecords.set(key, record);
     showNativeShortcutNotice(`正在请求 Codex 浏览器打开 ${item.name}…`, record);
-    window.postMessage({ type: "open-browser-tab", conversationId,
-      browserTabId: record.browserTabId, initialUrl: url,
+    // Use the host's URL-open contract; a bare tab toggle cannot carry navigation.
+    window.postMessage({ type: "toggle-browser-panel", ...(context.conversationId ? { conversationId: context.conversationId } : {}), open: true,
+      browserTabId: record.browserTabId, url,
       source: "manual", initiator: "side_panel_menu" }, window.location.origin);
     const timer = setTimeout(() => {
       nativeShortcutTimers.delete(timer);
       if (destroyed || record.status !== "requested") return;
       record.status = "unconfirmed";
-      if (nativeShortcutThreadId() === conversationId) {
+      if (nativeShortcutIsCurrent(record)) {
         showNativeShortcutNotice("Codex 浏览器未确认加载完成，可能尚未启用或当前任务未显示。请检查右侧浏览器标签；没有自动刷新，也没有创建第二个页面。", record);
       }
     }, 10000);
@@ -2575,15 +2804,46 @@
     if (event.origin !== window.location.origin && !(event.source === null && event.origin === "")) return;
     const data = event.data;
     if (data?.type !== "browser-sidebar-state" || !data.snapshot) return;
-    const record = Array.from(nativeShortcutRecords.values()).find((value) =>
-      value.conversationId === data.conversationId && value.browserTabId === data.browserTabId);
-    if (!record) return;
+    const matches = Array.from(nativeShortcutRecords.values()).filter((value) => value.browserTabId === data.browserTabId);
+    if (matches.length !== 1) return;
+    const record = matches[0];
+    // Bind a host-resolved route only from a same-window snapshot for the
+    // unique tab we requested. Never accept another route after binding.
+    if (!record.conversationId) {
+      // The host may change routes while opening the tab; the unique tab ID in
+      // a trusted reply is enough to bind its owner, but never rebind it later.
+      if (!/^[a-z0-9:_-]{3,160}$/i.test(data.conversationId || "")
+        || (record.hostConversationId && record.hostConversationId !== data.conversationId)) return;
+    } else if (record.conversationId !== data.conversationId && record.hostConversationId !== data.conversationId) {
+      if (!nativeShortcutIsCurrent(record) || (record.hostConversationId && record.hostConversationId !== record.conversationId)
+        || !/^client-new-thread:[0-9a-f-]{36}$/i.test(data.conversationId || "")) return;
+    }
+    if (!record.hostConversationId || data.conversationId !== record.conversationId) record.hostConversationId = data.conversationId;
     const snapshot = data.snapshot;
     if (snapshot.loadError) {
       if (record.status === "failed") return;
       record.status = "failed";
-      if (nativeShortcutThreadId() === record.conversationId) showNativeShortcutNotice(`${record.name} 加载失败，请在 Codex 浏览器中查看具体错误；没有自动重试。`, record);
+      if (nativeShortcutIsCurrent(record)) showNativeShortcutNotice(`${record.name} 加载失败，请在 Codex 浏览器中查看具体错误；没有自动重试。`, record);
       return;
+    }
+    const addresses = [snapshot.url, snapshot.committedUrl].filter((value) => typeof value === "string");
+    const blankAddress = (value) => !value.trim() || value === "about:blank" || /^chrome:\/\/newtab\/?$/.test(value);
+    if (addresses.some((value) => !blankAddress(value))) {
+      // Includes login redirects and user navigation: never replace these pages.
+      record.hasNavigated = true;
+      record.recoverBlankOnShow = false;
+    }
+    const confirmedBlank = (addresses.length > 0 || snapshot.tabType === "new-tab-page")
+      && addresses.every(blankAddress) && snapshot.isLoading === false
+      && snapshot.isWaitingForResponse === false;
+    if (confirmedBlank && record.recoverBlankOnShow && !record.hasNavigated
+      && !record.blankRecoverySent && nativeShortcutIsCurrent(record)) {
+      // One bounded repair of an observed empty tab, not a timer-based retry.
+      record.blankRecoverySent = true;
+      record.status = "requested";
+      window.postMessage({ type: "toggle-browser-panel", conversationId: record.hostConversationId,
+        browserTabId: record.browserTabId, open: true, url: record.url,
+        source: "manual", initiator: "side_panel_menu" }, window.location.origin);
     }
     const committedUrl = validShortcutUrl(snapshot.committedUrl);
     if (committedUrl && new URL(committedUrl).origin === new URL(record.url).origin
@@ -3262,10 +3522,18 @@
   }
 
   function currentComposer() {
-    return Array.from(document.querySelectorAll('[contenteditable="true"]')).find((node) => {
+    const usable = (node) => {
+      if (!node || node.closest(`#${ASSET_CONSOLE_PAGE_ID}, #${SKILL_ORGANIZER_ID}, #aiyoucodex-skill-details`)) return false;
       const rect = node.getBoundingClientRect();
-      return rect.width > 80 && rect.height > 20 && !node.closest(`#${ASSET_CONSOLE_PAGE_ID}`);
-    }) || null;
+      return rect.width > 80 && rect.height > 20 && node.getClientRects().length > 0
+        && (node.isContentEditable || node.getAttribute("contenteditable") === "true");
+    };
+    const candidates = [
+      ...document.querySelectorAll('[data-codex-composer="true"][contenteditable="true"]'),
+      ...document.querySelectorAll('form [contenteditable="true"]'),
+      ...document.querySelectorAll('[contenteditable="true"]'),
+    ].filter(usable);
+    return candidates[0] || null;
   }
 
   function addAssetReferencesToComposer(assetPaths) {
@@ -3600,20 +3868,112 @@
     return true;
   }
 
+  function validSkillName(value) {
+    return typeof value === "string" && /^[a-z0-9][a-z0-9-]{0,79}$/i.test(value.trim()) ? value.trim() : "";
+  }
+
+  function skillNameForHost(entry) {
+    const direct = validSkillName(entry?.name);
+    if (direct) return direct;
+    const basename = String(entry?.path || "").split(/[\\/]/u).filter(Boolean).pop() || entry?.title || "skill";
+    const normalized = basename.normalize("NFKD").replace(/[^a-zA-Z0-9-]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 80);
+    return validSkillName(normalized) || "skill";
+  }
+
+  function selectionAtComposerEnd(composer) {
+    composer?.focus();
+    const selection = window.getSelection();
+    const range = document.createRange();
+    if (!composer || !selection) return false;
+    range.selectNodeContents(composer); range.collapse(false);
+    selection.removeAllRanges(); selection.addRange(range);
+    return true;
+  }
+
+  function visibleSkillOverlay() {
+    return Array.from(document.querySelectorAll('[data-composer-overlay-floating-ui="true"]'))
+      .find((node) => node.getClientRects().length > 0 && node.getBoundingClientRect().width > 0) || null;
+  }
+
+  async function addNativeSkillMention(entry) {
+    const composer = currentComposer();
+    const skillPath = typeof entry?.path === "string" ? entry.path.trim() : "";
+    const displayName = String(entry?.title || entry?.name || "").trim();
+    if (!composer || !skillPath || !displayName || !selectionAtComposerEnd(composer)) return false;
+    const beforeHTML = composer.innerHTML;
+    const existing = Array.from(composer.querySelectorAll("[skill-mention-path]"))
+      .find((node) => node.getAttribute("skill-mention-path") === skillPath);
+    if (existing) return true;
+    let inserted = false;
+    try { inserted = document.execCommand("insertText", false, "$"); } catch {}
+    if (!inserted) {
+      const selection = window.getSelection(), range = selection && document.createRange();
+      if (!range || !selection) return false;
+      range.insertNode(document.createTextNode("$")); range.collapse(false);
+      selection.removeAllRanges(); selection.addRange(range);
+    }
+    composer.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "$" }));
+    let selected = false;
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      const overlay = visibleSkillOverlay();
+      if (overlay) {
+        const button = Array.from(overlay.querySelectorAll('button[data-list-navigation-item="true"]'))
+          .find((candidate) => Array.from(candidate.querySelectorAll("span")).some((label) => label.textContent?.trim() === displayName)
+            || candidate.textContent?.trim() === displayName);
+        if (button) { button.click(); selected = true; break; }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    if (!selected) {
+      // A test page, a non-Codex composer, or a stale route may not expose the
+      // picker. Remove only the marker we inserted so the host fallback sees
+      // the original draft unchanged.
+      if (composer.isConnected && !composer.querySelector("[skill-mention-path]")) {
+        composer.innerHTML = beforeHTML;
+        composer.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward", data: null }));
+      }
+      return false;
+    }
+    const mentionDeadline = Date.now() + 4_000;
+    while (Date.now() < mentionDeadline) {
+      const mention = Array.from(composer.querySelectorAll("[skill-mention-path]"))
+        .find((node) => node.getAttribute("skill-mention-path") === skillPath);
+      if (mention) return true;
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    return false;
+  }
+
   async function addSkillToConversation(entry) {
     closeSkillContextMenu();
     let added = false;
+    // Use the launcher first: it can switch back to the active Codex route and
+    // asks the native picker to create the exact path-bound mention.
     try {
       added = await window.__codexTaskboardInjection__?.addSkillToComposer?.({
         skillDisplayName: entry.title,
-        skillName: entry.name || entry.title,
+        skillName: skillNameForHost(entry),
         skillPath: entry.path || "",
       }) === true;
     } catch {}
-    if (!added) added = insertPlainTextIntoComposer(`${currentComposer()?.textContent?.trim() ? " " : ""}$${entry.name || entry.title} `);
+    // If the optional launcher is not installed, or its request is rejected by
+    // a stale route/name, use the live Codex picker in the current composer.
+    if (!added) {
+      try { added = await addNativeSkillMention(entry); } catch {}
+    }
+    if (!added) {
+      // Last resort: leave an explicit, editable reference instead of silently
+      // doing nothing. The host bridge remains preferred whenever available.
+      added = insertPlainTextIntoComposer(`${currentComposer()?.textContent?.trim() ? " " : ""}$${skillNameForHost(entry)} `);
+    }
     const useButton = Array.from(document.querySelectorAll(`#${SKILL_ORGANIZER_ID} .codex-skill-use`))
       .find((button) => button.getAttribute("aria-label") === `添加到对话：${entry.title}`);
     if (useButton) useButton.textContent = added ? "✓" : "!";
+    if (!added) {
+      skillOrganizationMessage = "未找到可用的 Codex 对话输入框，请先打开一个对话后重试。";
+      renderSkillOrganizationStatus();
+    }
     return added;
   }
 
@@ -3634,7 +3994,8 @@
   }
 
   function requestSkillOrganization(action, fields = {}) {
-    if (skillOrganizationRequests.size || destroyed) return Promise.resolve(null);
+    const readOnlyAction = ["refresh", "revealSkill", "describeSkill", "traceSkill"].includes(action);
+    if ((!readOnlyAction && skillOrganizationRequests.size) || destroyed) return Promise.resolve(null);
     const binding = window.__AIYOUCODEX_SKILLS_REQUEST__;
     if (typeof binding !== "function") {
       skillOrganizationMessage = "本地分类服务尚未连接，请等待 AIYOUcodex 增强服务就绪。";
@@ -3739,7 +4100,15 @@
         if (event.target === dialog && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) closeSkillDetails();
       };
       dialog.querySelector("[data-skill-detail-use]").onclick = () => {
-        const selected = skillDetailsEntry; closeSkillDetails(false); if (selected) void addSkillToConversation(selected);
+        const selected = skillDetailsEntry;
+        if (!selected) return;
+        const button = dialog.querySelector("[data-skill-detail-use]");
+        button.disabled = true; button.textContent = "添加中…";
+        // A modal dialog makes the underlying composer inert. Close it before
+        // focusing the native editor, then let the card/status indicator report
+        // the result without ever submitting the message.
+        closeSkillDetails(false);
+        void addSkillToConversation(selected);
       };
       dialog.querySelector("[data-skill-detail-retry]").onclick = () => {
         if (skillDetailsEntry) openSkillDetails(skillDetailsEntry, skillDetailsReturnFocus);
@@ -3748,7 +4117,7 @@
         const selected = skillDetailsEntry, revision = skillDetailsGeneration;
         if (!selected) return;
         const result = await requestSkillOrganization("revealSkill", { skillId: selected.id });
-        if (revision === skillDetailsGeneration) dialog.querySelector("[data-skill-detail-status]").textContent = result?.revealResult?.message || skillOrganizationMessage;
+        if (revision === skillDetailsGeneration) dialog.querySelector("[data-skill-detail-status]").textContent = result?.revealResult?.message || skillOrganizationMessage || "定位未确认，请刷新目录后重试。";
       };
       document.body.appendChild(dialog); skillDetailsDialog = dialog;
     }
@@ -3756,7 +4125,8 @@
     dialog.querySelector("h2").textContent = entry.title;
     const overview = document.createElement("p"); overview.className = "skill-document-text"; overview.textContent = entry.description || "";
     body.replaceChildren(overview);
-    const available = Boolean(entry.skillFile && typeof window.__AIYOUCODEX_SKILLS_REQUEST__ === "function");
+    const available = Boolean(/^skill:[a-f0-9]{64}$/u.test(String(entry.id || ""))
+      && typeof window.__AIYOUCODEX_SKILLS_REQUEST__ === "function");
     dialog.querySelector("[data-skill-detail-reveal]").disabled = !available;
     const status = dialog.querySelector("[data-skill-detail-status]");
     status.textContent = available ? "正在读取此 Skill 的说明…" : "尚无准确的本地文件来源，请刷新目录后重试。";
@@ -3805,7 +4175,8 @@
     const menu = document.createElement("div");
     menu.className = "codex-skill-context-menu";
     menu.setAttribute("role", "menu"); menu.setAttribute("aria-label", `Skill 操作：${entry.title}`);
-    const actionable = Boolean(entry.skillFile && typeof window.__AIYOUCODEX_SKILLS_REQUEST__ === "function");
+    const actionable = Boolean(/^skill:[a-f0-9]{64}$/u.test(String(entry.id || ""))
+      && typeof window.__AIYOUCODEX_SKILLS_REQUEST__ === "function");
     const button = (label, action, disabled = false) => {
       const node = document.createElement("button"); node.type = "button"; node.textContent = label;
       node.setAttribute("role", "menuitem"); node.disabled = disabled; node.onclick = action; menu.appendChild(node); return node;
@@ -3924,6 +4295,10 @@
     renderSkillOrganizer();
     updateSkillsGroupingShortcutState();
     if (skillOrganizerQuery) requestAnimationFrame(() => input.focus());
+    if (typeof window.__AIYOUCODEX_SKILLS_REQUEST__ === "function"
+      && !hostSkillCatalog.some((entry) => /^skill:[a-f0-9]{64}$/u.test(String(entry.id || "")))) {
+      void requestSkillOrganization("refresh");
+    }
     return true;
   }
 
@@ -4518,34 +4893,121 @@
     }
   }
 
+  function findConversationToolbar() {
+    const isVisible = (node) => {
+      if (node.closest('[hidden], [aria-hidden="true"]')) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden";
+    };
+    const isNativeControl = (node) => !node.closest(
+      `#${TASK_CONTEXT_BUTTON_ID}, #${WORKSPACE_FOLDER_BUTTON_ID}, [role="tablist"], [role="tab"], [role="menu"]`,
+    ) && isVisible(node);
+    const candidates = new Map();
+    for (const surface of document.querySelectorAll('[data-testid="app-shell-header-context-menu-surface"]')) {
+      if (!isVisible(surface)) continue;
+      let root = surface;
+      // The new shell keeps the title surface and right actions as siblings.
+      // Expand only within a shallow, top-of-window header, never into the chat.
+      for (let depth = 0; depth < 5; depth += 1) {
+        const parent = root.parentElement;
+        if (!parent || parent.matches("body, main, [role=main]")) break;
+        const rect = parent.getBoundingClientRect();
+        if (rect.height <= 0 || rect.height > 128 || rect.top < -1 || rect.bottom > 160) break;
+        root = parent;
+        if (root.matches("header, [role=banner]")) break;
+      }
+      const controls = [...root.querySelectorAll('button, [role="button"]')].filter(isNativeControl);
+      for (const control of controls) {
+        for (let host = control.parentElement; host && root.contains(host); host = host.parentElement) {
+          if (candidates.has(host)) break;
+          const buttons = controls.filter((button) => host.contains(button));
+          if (!buttons.length) continue;
+          const explicit = host.matches('[data-app-shell-header-obstacle="true"], [role="toolbar"]');
+          if (buttons.length < 2 && !explicit) continue;
+          const rect = host.getBoundingClientRect();
+          const boxes = buttons.map((button) => button.getBoundingClientRect());
+          const left = Math.min(...boxes.map((box) => box.left));
+          const right = Math.max(...boxes.map((box) => box.right));
+          const top = Math.min(...boxes.map((box) => box.top));
+          const bottom = Math.max(...boxes.map((box) => box.bottom));
+          // Ignore title/tab rows and large layout containers. A credible action
+          // cluster is compact, visible, and its controls share a single row.
+          if (rect.width <= 0 || rect.height > 64 || bottom - top > 48
+            || rect.width > right - left + 96 || right < root.getBoundingClientRect().right - 96) continue;
+          let before = buttons[0];
+          while (before.parentElement !== host) before = before.parentElement;
+          candidates.set(host, { host, before, right, width: rect.width });
+          break;
+        }
+      }
+    }
+    const grouped = [...candidates.values()].sort((a, b) => b.right - a.right || a.width - b.width)[0];
+    if (grouped) return grouped;
+
+    // Newer shells no longer put a test id on the title, and may wrap each
+    // right-hand action separately. Anchor to the visible, compact native
+    // controls of the top header; never use a tab, sidebar, or message action.
+    const roots = new Set(document.querySelectorAll('header, [role="banner"], [data-app-shell-header]'));
+    for (const control of document.querySelectorAll('button[aria-label], button[title]')) {
+      if (!isNativeControl(control) || !/(?:更多|more|布局|layout|添加面板|add panel)/iu.test(
+        `${control.getAttribute("aria-label") || ""} ${control.getAttribute("title") || ""}`)) continue;
+      for (let ancestor = control.parentElement, depth = 0; ancestor && ancestor !== document.body && depth < 7; ancestor = ancestor.parentElement, depth += 1) {
+        const rect = ancestor.getBoundingClientRect();
+        if (rect.width >= 220 && rect.height > 0 && rect.height <= 64 && rect.top >= -1
+          && rect.bottom <= 96 && rect.right >= window.innerWidth - 80) roots.add(ancestor);
+      }
+    }
+    for (const root of roots) {
+      if (!isVisible(root) || root.matches('body, main, [role="main"]')) continue;
+      const rect = root.getBoundingClientRect();
+      if (rect.height > 64 || rect.top < -1 || rect.bottom > 96 || rect.right < window.innerWidth - 80
+        || !getComputedStyle(root).display.includes("flex")) continue;
+      const buttons = [...root.querySelectorAll('button, [role="button"]')]
+        .filter((button) => isNativeControl(button) && button.getBoundingClientRect().right > rect.right - 200)
+        .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+      if (buttons.length < 2) continue;
+      const boxes = buttons.map((button) => button.getBoundingClientRect());
+      if (Math.max(...boxes.map((box) => box.bottom)) - Math.min(...boxes.map((box) => box.top)) > 48) continue;
+      let before = buttons[0];
+      while (before.parentElement !== root) before = before.parentElement;
+      if (before.closest('[role="tablist"], [role="tab"]')) continue;
+      return { host: root, before, right: rect.right, width: rect.width };
+    }
+    return null;
+  }
+
   function ensureTaskContextButton() {
-    let button = document.getElementById(TASK_CONTEXT_BUTTON_ID);
+    // Keep the event-owning elements if React replaces or clones its toolbar.
+    for (const [id, owned] of [[TASK_CONTEXT_BUTTON_ID, taskContextButton], [WORKSPACE_FOLDER_BUTTON_ID, workspaceFolderButton]]) {
+      document.querySelectorAll(`#${id}`).forEach((node) => { if (node !== owned) node.remove(); });
+    }
     const available = efficiencySnapshot?.scopeAvailable?.thread === true && Boolean(efficiencyTargetKey());
-    const surface = document.querySelector('[data-testid="app-shell-header-context-menu-surface"][aria-hidden="false"]')
-      || document.querySelector('[data-testid="app-shell-header-context-menu-surface"]:not([aria-hidden="true"])');
-    const obstacle = surface?.querySelector('[data-app-shell-header-obstacle="true"]');
-    // Restrict mounting to the native conversation toolbar: never a message's Share button.
-    if (!obstacle || !available) {
-      if (button) button.hidden = true;
+    const toolbar = available ? findConversationToolbar() : null;
+    if (!toolbar) {
+      if (taskContextButton) taskContextButton.hidden = true;
       if (workspaceFolderButton) workspaceFolderButton.hidden = true;
       closeWorkspaceFolderMenu(false);
       return;
     }
-    if (!button) {
-      button = document.createElement("button"); button.id = TASK_CONTEXT_BUTTON_ID; button.type = "button";
-      button.textContent = "任务上下文"; button.title = "查看、整理和确认当前对话的任务上下文";
+    if (!taskContextButton) {
+      const button = document.createElement("button"); button.id = TASK_CONTEXT_BUTTON_ID; button.type = "button";
+      button.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>';
+      button.setAttribute("aria-label", "任务上下文");
+      button.title = "任务上下文：查看、整理和确认当前对话的任务上下文";
       button.setAttribute("aria-controls", EFFICIENCY_PANEL_ID);
       button.onclick = (event) => {
         event.stopPropagation();
         if (efficiencyView === "context" && efficiencyPanel && !efficiencyPanel.hidden) closeEfficiencyPanel();
         else openTaskContextPanel();
       };
+      taskContextButton = button;
     }
-    if (button.parentElement !== obstacle) obstacle.prepend(button);
+    const button = taskContextButton;
+    if (button.parentElement !== toolbar.host || button.nextElementSibling !== toolbar.before) toolbar.host.insertBefore(button, toolbar.before);
     button.hidden = false;
     button.disabled = typeof window[EFFICIENCY_BINDING] !== "function";
     button.setAttribute("aria-expanded", String(efficiencyView === "context" && Boolean(efficiencyPanel && !efficiencyPanel.hidden)));
-    ensureWorkspaceFolderButton(obstacle, button);
+    ensureWorkspaceFolderButton(toolbar.host, button);
   }
 
   function ensureWorkspaceFolderButton(obstacle, contextButton) {
@@ -4554,8 +5016,9 @@
       workspaceFolderButton = document.createElement("button");
       workspaceFolderButton.id = WORKSPACE_FOLDER_BUTTON_ID;
       workspaceFolderButton.type = "button";
-      workspaceFolderButton.textContent = "打开文件";
-      workspaceFolderButton.title = "打开当前对话所在文件夹，或在上级目录中选中它";
+      workspaceFolderButton.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 8V5a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v2M3 8h5l2 3h11l-3 9H5a2 2 0 0 1-2-2Z"/></svg>';
+      workspaceFolderButton.setAttribute("aria-label", "打开文件");
+      workspaceFolderButton.title = "打开文件：打开当前对话所在文件夹，或在上级目录中选中它";
       workspaceFolderButton.setAttribute("aria-haspopup", "menu");
       workspaceFolderButton.setAttribute("aria-controls", WORKSPACE_FOLDER_MENU_ID);
       workspaceFolderButton.onclick = (event) => {
@@ -4824,13 +5287,16 @@
           <button type="button" data-codex-shortcut-settings-close aria-label="关闭设置">×</button>
         </header>
         <div class="codex-shortcut-settings-body">
+          <h3>展示方式</h3>
+          <button id="${TOGGLE_ID}" type="button" role="switch" aria-checked="false" aria-label="切换卡片视图"></button>
+          <p>在卡片视图与列表视图之间切换。</p>
           <button type="button" data-aiyou-efficiency-open><span>输出偏好与默认 Skills</span><span aria-hidden="true">→</span></button>
           <p data-efficiency-open-error role="alert"></p>
           <form data-reset-monitor-form>
             <h3>重置公告监控</h3>
             <label class="codex-shortcut-settings-row"><input type="checkbox" name="enabled">启用定时监控</label>
-            <label class="codex-shortcut-field">监控间隔（小时）<input type="number" name="intervalHours" min="1" max="168" step="1" value="3" required></label>
-            <p>默认每 3 小时，可输入 1–168 的整数。保存后更新实际定时计划；电脑休眠或任务忙碌时可能顺延。</p>
+            <label class="codex-shortcut-field">RSS 更新间隔（分钟）<input type="number" name="intervalMinutes" min="1" max="10080" step="1" value="15" required></label>
+            <p>默认每 15 分钟增量读取 RSS，不扫描 X 页面、不唤醒对话。内容未变不重复分析；转发延迟可接受，失败退避重试。</p>
             <p data-reset-monitor-summary></p>
             <div><button type="submit">保存监控设置</button> <button type="button" data-reset-monitor-refresh>刷新状态</button></div>
             <p data-reset-monitor-message role="status" aria-live="polite"></p>
@@ -4852,11 +5318,12 @@
         </div>
       </div>`;
     const monitorForm = dialog.querySelector("[data-reset-monitor-form]");
+    dialog.querySelector(`#${TOGGLE_ID}`).onclick = handleViewToggle;
     monitorForm.addEventListener("input", () => { resetMonitorDirty = true; });
     monitorForm.onsubmit = (event) => {
       event.preventDefault(); event.stopPropagation();
       if (!monitorForm.reportValidity() || resetMonitorPending) return;
-      requestResetMonitor("save", { intervalHours: Number(monitorForm.elements.intervalHours.value),
+      requestResetMonitor("save", { intervalMinutes: Number(monitorForm.elements.intervalMinutes.value),
         enabled: monitorForm.elements.enabled.checked, id: resetMonitorSnapshot?.id, revision: resetMonitorSnapshot?.revision });
     };
     monitorForm.querySelector("[data-reset-monitor-refresh]").onclick = () => requestResetMonitor("snapshot");
@@ -4918,6 +5385,7 @@
     let dialog = document.getElementById(SHORTCUT_SETTINGS_ID);
     if (!dialog) dialog = createShortcutSettingsDialog();
     renderShortcutVisibilityList(dialog);
+    updateViewState();
     if (!dialog.open) {
       resetMonitorDirty = false;
       dialog.showModal();
@@ -4931,17 +5399,17 @@
     if (!form) return;
     const monitor = resetMonitorSnapshot;
     if (populate && !resetMonitorDirty) {
-      form.elements.intervalHours.value = monitor?.intervalHours ?? 3;
+      form.elements.intervalMinutes.value = monitor?.intervalMinutes ?? (monitor?.intervalHours ? Math.round(monitor.intervalHours * 60) : 15);
       form.elements.enabled.checked = monitor?.enabled === true;
     }
     const date = Number.isFinite(monitor?.nextRunAt) ? new Date(monitor.nextRunAt).toLocaleString("zh-CN") : "等待调度";
     form.querySelector("[data-reset-monitor-summary]").textContent = monitor?.available && monitor.configured
-      ? `${monitor.enabled ? "已启用" : "已暂停"} · ${monitor.intervalHours ? `每 ${monitor.intervalHours} 小时` : "自定义计划（保存将改为小时间隔）"}\n下次监控：${monitor.enabled ? date : "暂停期间不执行"}`
+      ? `${monitor.enabled ? monitor.running ? "内置监控运行中" : "已启用 · 等待后台连接" : "已暂停"} · ${resetMonitorIntervalLabel(monitor)}\n下次监控：${monitor.enabled ? monitor.running ? date : "后台连接后核对" : "暂停期间不执行"}`
       : monitor?.message || "正在读取监控计划…";
     form.querySelector('button[type="submit"]').disabled = Boolean(resetMonitorPending) || !monitor?.available || !monitor.configured;
     form.querySelector("[data-reset-monitor-refresh]").disabled = Boolean(resetMonitorPending);
     form.elements.enabled.disabled = Boolean(resetMonitorPending);
-    form.elements.intervalHours.disabled = Boolean(resetMonitorPending);
+    form.elements.intervalMinutes.disabled = Boolean(resetMonitorPending);
   }
 
   function requestResetMonitor(action, fields = {}) {
@@ -4970,14 +5438,17 @@
     if (response.ok) resetMonitorSnapshot = response.data;
     if (valid && pending.action === "save") resetMonitorDirty = false;
     if (valid) {
-      usage.resetNotice = { ...usage.resetNotice, monitor: response.data, intervalHours: response.data.intervalHours ?? 3 };
+      usage.resetNotice = { ...usage.resetNotice, monitor: response.data, intervalMinutes: response.data.intervalMinutes,
+        intervalHours: response.data.intervalHours ?? 0.25 };
       updateResetNotice();
     }
     const message = document.querySelector("[data-reset-monitor-message]");
     if (message) {
       message.dataset.error = String(!valid);
       message.textContent = !valid ? response.error || response.data?.message || "未确认生效，请刷新。"
-        : pending.action === "save" ? "已保存，实际定时计划已核对生效。" : "状态已刷新；未保存的输入保持不变。";
+        : pending.action === "save" ? response.data.enabled && !response.data.running
+          ? "设置已保存，等待 AIYOUcodex 后台连接；尚未开始采集。"
+          : "已保存本地计划，后台状态已核对。" : "状态已刷新；未保存的输入保持不变。";
     }
     renderResetMonitorSettings(true);
     return true;
@@ -4994,16 +5465,64 @@
   function findNativeShortcutButton(name) {
     const canonicalName = canonicalShortcutLabel(name);
     const sidebar = sidebarRoot();
-    return Array.from(sidebar?.querySelectorAll("button") || []).find((button) =>
-      !button.closest(`#${SHORTCUT_GRID_ID}`) && shortcutLabel(button) === canonicalName,
+    // The footer and our project tabs can also offer "New chat". Only native
+    // navigation owns shortcut actions; never use a same-named footer control.
+    const navigation = sidebar?.querySelector('[data-app-action-sidebar-scroll]')
+      ?.closest('nav, [role="navigation"]') || sidebar;
+    return Array.from(navigation?.querySelectorAll("button") || []).find((button) =>
+      !button.closest(`#${SHORTCUT_GRID_ID}, #${SECTION_TABS_ID}, #${FOLDER_SWITCHER_ID}, [data-app-action-sidebar-thread-id], footer, [role="contentinfo"]`)
+      && shortcutLabel(button) === canonicalName,
     );
   }
 
   function sidebarRoot() {
-    return document.getElementById("app-shell-sidebar")
+    // New host pages are retained in the DOM. Never bind controls from an
+    // inactive page merely because its duplicate id appears first.
+    return Array.from(document.querySelectorAll('[id="app-shell-sidebar"]'))
+      .find((node) => !node.closest('[data-app-shell-active-page="false"]'))
       || document.querySelector('[data-app-action-sidebar-scroll]')?.closest('nav, [role="navigation"]')
       || document.querySelector(ROW_SELECTOR)?.closest('nav, [role="navigation"]')
       || null;
+  }
+
+  // The current host declares its rail explicitly. Its destination buttons use
+  // sr-only text, not aria-label, and host zoom scales their geometry. Neither
+  // a minimum labelled-button count nor fixed pixel bounds is a valid gate.
+  function nativeIconRail() {
+    const declared = Array.from(document.querySelectorAll('nav[data-app-navigation-rail]'))
+      .find((node) => {
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden";
+      });
+    if (declared) return declared;
+    // Compatibility for older hosts without the semantic landmark.
+    const own = `#${SHORTCUT_GRID_ID}, #${SHORTCUT_SETTINGS_ID}`;
+    const actions = Array.from(document.querySelectorAll("button[aria-label], a[aria-label]"))
+      .filter((node) => !node.closest(own) && node.getBoundingClientRect().left < 105);
+    const candidates = new Set();
+    for (const action of actions) {
+      for (let node = action.parentElement; node && node !== document.body; node = node.parentElement) {
+        const rect = node.getBoundingClientRect();
+        if (rect.left > 30 || rect.width < 42 || rect.width > 105) continue;
+        if (rect.height < Math.min(250, window.innerHeight * .35)) continue;
+        const visibleActions = Array.from(node.querySelectorAll("button[aria-label], a[aria-label]"))
+          .filter((button) => !button.closest(own) && button.getBoundingClientRect().height > 0);
+        if (visibleActions.length >= 4) candidates.add(node);
+      }
+    }
+    return Array.from(candidates).sort((a, b) => b.getBoundingClientRect().height - a.getBoundingClientRect().height
+      || a.getBoundingClientRect().width - b.getBoundingClientRect().width)[0] || null;
+  }
+
+  function nativeIconRailMount(rail) {
+    // Put tools in the native destination scroller, not after the profile/help
+    // footer. Do not change native flex sizing or create a nested scroll area.
+    if (rail.hasAttribute("data-app-navigation-rail")) {
+      const scroller = Array.from(rail.children).find((node) =>
+        node.id !== SHORTCUT_GRID_ID && /^(auto|scroll)$/u.test(getComputedStyle(node).overflowY));
+      if (scroller) return scroller;
+    }
+    return rail;
   }
 
   function shortcutGroupButtons(group) {
@@ -5021,8 +5540,63 @@
     return null;
   }
 
+  function newConversationShortcutMount(button) {
+    if (!button) return null;
+    const boundary = 'nav, [role="navigation"], #app-shell-sidebar, [data-app-action-sidebar-scroll]';
+    const isQuickChat = (candidate) => /(?:quick chat|instant chat|快速聊天|即时聊天|即时对话)/iu.test(
+      candidate.getAttribute("aria-label") || candidate.getAttribute("title") || "",
+    );
+    let row = button;
+    let quickButton = null;
+    // Optional quick chat must not decide where the header ends. Ascend only
+    // through wrappers dedicated to these actions, not the next multi-button
+    // ancestor (which can be the entire product/search toolbar or navigation).
+    for (let candidate = button.parentElement; candidate && !candidate.matches(boundary); candidate = candidate.parentElement) {
+      if (candidate.querySelector('[data-app-action-sidebar-scroll], [data-app-action-sidebar-section], [data-app-action-sidebar-section-heading], [data-app-action-sidebar-thread-id]')) break;
+      const buttons = Array.from(candidate.querySelectorAll("button"))
+        .filter((node) => !node.closest(`#${SHORTCUT_GRID_ID}`));
+      if (!buttons.includes(button) || buttons.some((node) => node !== button && !isQuickChat(node))) break;
+      row = candidate;
+      quickButton = buttons.find((node) => node !== button) || null;
+    }
+    const header = row.parentElement;
+    if (!header || header.matches(boundary) || !sidebarRoot()?.contains(header)) return null;
+    return { header, newConversationRow: row, quickButton };
+  }
+
   function nativeShortcutSources() {
     const newConversation = findNativeShortcutButton("新对话");
+    const rail = nativeIconRail();
+    const managedItems = normalizedManagedShortcuts();
+    const enhancementItems = [
+      { id: "skills-grouping", name: "Skills 分组", kind: "enhancement", icon: "skills", activate: openSkillsGrouping },
+      { id: "asset-console", name: "资产控制台", kind: "enhancement", icon: "assets", activate: openAssetConsolePanel },
+      { id: "model-arena", name: "模型竞技场", kind: "enhancement", icon: "arena", activate: () => openAssetConsolePanel({ kind: "arena" }) },
+      { id: "project-management", name: "项目管理", kind: "enhancement", icon: "project",
+        activate: () => {
+          if (typeof window.__codexTaskboardInjection__?.open === "function") window.__codexTaskboardInjection__.open();
+          else if (document.getElementById("codex-taskboard-entry")) document.getElementById("codex-taskboard-entry").click();
+          else showNativeShortcutNotice("项目管理尚未连接，请等待 AIYOUcodex 后台加载完成。");
+        } },
+    ];
+    const settingsItem = { id: "settings", name: "设置", kind: "settings" };
+    if (rail) {
+      const catalogItems = [
+        { name: "新对话", kind: "native", icon: "newChat", button: newConversation },
+        ...managedItems,
+        ...enhancementItems,
+        ...normalizedCustomShortcuts(),
+        settingsItem,
+      ];
+      const items = catalogItems.filter((item) => item.kind === "settings"
+        || !shortcutSettings.hidden.includes(shortcutItemKey(item)));
+      return { mode: "rail", rail, mountHost: nativeIconRailMount(rail),
+        newConversationRow: newConversationShortcutMount(newConversation)?.newConversationRow,
+        sourceItems: [], catalogItems, items };
+    }
+    const mount = newConversationShortcutMount(newConversation);
+    if (!mount) return null;
+    const { header, newConversationRow, quickButton } = mount;
     const pullRequests = findNativeShortcutButton("拉取请求");
     const overflowButton = findNativeShortcutButton("更多");
     const navigationGroup = shortcutSiblingGroup(pullRequests)
@@ -5031,39 +5605,20 @@
     // Hide only the actual overflow trigger; its parent can include unrelated
     // navigation groups after a host update. Never remove React-owned nodes.
     const overflowGroup = overflowButton || null;
-    let newConversationRow = newConversation?.parentElement;
-    while (newConversationRow && !newConversationRow.matches("nav, [data-app-action-sidebar-scroll]")) {
-      const rowButtons = Array.from(newConversationRow.querySelectorAll("button"));
-      if (rowButtons.includes(newConversation) && rowButtons.length > 1) break;
-      newConversationRow = newConversationRow.parentElement;
-    }
-    if (newConversationRow?.matches("nav, [data-app-action-sidebar-scroll]")) {
-      newConversationRow = newConversation?.parentElement;
-    }
-    const header = newConversationRow?.parentElement;
-    if (!newConversation || !header || !sidebarRoot()?.contains(header)) return null;
-
     const navigationButtons = navigationGroup ? shortcutGroupButtons(navigationGroup)
       : ["拉取请求", "站点", "已安排", "插件", "项目管理"].map(findNativeShortcutButton).filter(Boolean);
-    const quickButton = Array.from(newConversationRow.querySelectorAll("button"))
-      .find((button) => button !== newConversation) || null;
     const sourceItems = [
       { name: "新对话", button: newConversation, quickButton },
       ...navigationButtons.map((button) => ({ name: shortcutLabel(button), button, quickButton: null })),
     ].filter((item, index, values) => item.name && values.findIndex((candidate) => candidate.name === item.name) === index);
-    const builtInItems = sourceItems.filter((item) => !HIDDEN_SHORTCUT_NAMES.has(item.name));
-    const enhancementItems = [
-      { id: "skills-grouping", name: "Skills 分组", kind: "enhancement", icon: "skills", activate: openSkillsGrouping },
-      { id: "asset-console", name: "资产控制台", kind: "enhancement", icon: "assets", activate: openAssetConsolePanel },
-      { id: "model-arena", name: "模型竞技场", kind: "enhancement", icon: "arena", activate: () => openAssetConsolePanel({ kind: "arena" }) },
-    ];
-    const managedItems = normalizedManagedShortcuts();
+    const builtInItems = sourceItems.filter((item) => !HIDDEN_SHORTCUT_NAMES.has(item.name) && item.name !== "项目管理");
     const catalogItems = [
       ...builtInItems.slice(0, 1),
       ...managedItems,
       ...builtInItems.slice(1),
       ...enhancementItems,
       ...normalizedCustomShortcuts(),
+      settingsItem,
     ];
     const items = catalogItems.filter((item) => !shortcutSettings.hidden.includes(shortcutItemKey(item)));
     return { header, newConversationRow, navigationGroup, overflowGroup, sourceItems, catalogItems, items };
@@ -5075,6 +5630,12 @@
     host.setAttribute("aria-hidden", "true");
     if (name === "设置") {
       host.innerHTML = settingsShortcutSvg();
+      return host;
+    }
+    // Project management is our module, not a native icon. Older entries and
+    // new host layouts can contain no SVG at all; keep this artwork standalone.
+    if (name === "项目管理" && !icon) {
+      host.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M9 4v16M14.5 8h2.5M14.5 12h2.5M14.5 16h2.5"/></svg>';
       return host;
     }
     if (icon) {
@@ -5098,7 +5659,7 @@
     if (item.kind === "settings") button.dataset.codexSidebarShortcutSettings = "true";
     if (item.custom) button.dataset.codexSidebarShortcutCustom = item.id;
     if (item.managed) button.dataset.codexSidebarShortcutManaged = item.id;
-    button.setAttribute("aria-label", item.button?.getAttribute("aria-label") || `打开${item.name}`);
+    button.setAttribute("aria-label", item.kind === "settings" ? "打开 AIYOUcodex 设置" : `打开${item.name}`);
     button.title = item.name;
     const label = document.createElement("span");
     label.className = SHORTCUT_LABEL_CLASS;
@@ -5110,6 +5671,7 @@
         if (shortcutPanelIsOpen(item)) {
           if (item.id === "skills-grouping") closeSkillsGrouping();
           else if (item.id === "asset-console" || item.id === "model-arena") closeAssetConsolePanel();
+          else if (item.id === "project-management") window.__codexTaskboardInjection__?.close?.();
         } else item.activate?.();
       }
       else if ((item.custom || item.managed) && item.openMode === "browser") openCustomShortcutInBrowser(item);
@@ -5143,6 +5705,7 @@
 
   // User activation toggles; command/search APIs remain idempotent ensure-open.
   function shortcutPanelIsOpen(item) {
+    if (item.id === "project-management") return document.documentElement.getAttribute("data-codex-taskboard-open") === "true";
     if (item.custom || item.managed) return customShortcutPageIsVisible()
       && customShortcutPage.dataset.codexCustomShortcutItem === shortcutItemKey(item);
     if (item.id === "asset-console" || item.id === "model-arena") return Boolean(assetConsolePage && !assetConsolePage.hidden && assetConsoleKind === (item.id === "model-arena" ? "arena" : "asset"));
@@ -5169,13 +5732,14 @@
       button.setAttribute("aria-expanded", String(active));
       if (item.id === "skills-grouping" && skillOrganizerOpening) button.setAttribute("aria-busy", "true");
       else button.removeAttribute("aria-busy");
-      button.setAttribute("aria-label", item.kind === "settings" ? "管理快捷入口" : `${active ? "收起" : "打开"}${item.name}`);
+      button.setAttribute("aria-label", item.kind === "settings" ? "打开 AIYOUcodex 设置" : `${active ? "收起" : "打开"}${item.name}`);
       button.closest("[data-codex-sidebar-shortcut-card-wrap]")
         ?.querySelector(".codex-sidebar-shortcut-status")?.remove();
       if (item.id === "skills-grouping") updateSkillsGroupingShortcutState();
       return;
     }
-    button.disabled = item.button.disabled;
+    button.disabled = item.button?.disabled === true;
+    if (!item.button) return;
     const state = item.button.getAttribute("data-state");
     const active = item.button.getAttribute("aria-current") === "page"
       || item.button.getAttribute("data-active") === "true"
@@ -5201,6 +5765,7 @@
 
   function clearShortcutEnhancement() {
     document.getElementById(SHORTCUT_GRID_ID)?.remove();
+    document.querySelectorAll('[data-aiyoucodex-icon-rail]').forEach((node) => node.removeAttribute('data-aiyoucodex-icon-rail'));
     document.querySelectorAll("[data-codex-sidebar-shortcut-source-hidden]").forEach((node) => {
       node.removeAttribute("data-codex-sidebar-shortcut-source-hidden");
     });
@@ -5229,9 +5794,15 @@
     }
     shortcutSourcesMissingSince = 0;
     let grid = document.getElementById(SHORTCUT_GRID_ID);
+    const railMode = sources.mode === "rail";
+    const mountHost = railMode ? sources.mountHost : sources.header;
     const needsRebuild = grid?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN
-      || grid?.parentElement !== sources.header
+      || !shortcutRoots.has(grid)
+      || grid?.parentElement !== mountHost
+      || grid?.dataset.codexShortcutLayout !== (railMode ? "rail" : "grid")
       || grid?.children.length !== sources.items.length
+      || grid?.querySelectorAll('[data-codex-sidebar-shortcut-card]').length !== sources.items.length
+      || Boolean(grid?.querySelector('[data-codex-sidebar-shortcut-quick]')) !== sources.items.some((item) => Boolean(item.quickButton))
       || sources.items.some((item) => shortcutSources.get(shortcutItemKey(item)) !== (item.button || item.id || item.url || item.kind));
     if (needsRebuild) {
       clearShortcutEnhancement();
@@ -5240,11 +5811,31 @@
       grid.setAttribute("role", "group");
       grid.setAttribute("aria-label", "快捷入口");
       grid.dataset.codexPreviewRuntime = RUNTIME_TOKEN;
+      grid.dataset.codexShortcutLayout = railMode ? "rail" : "grid";
       grid.replaceChildren(...sources.items.map(createShortcutCard));
-      sources.header.appendChild(grid);
+      shortcutRoots.add(grid);
       shortcutSources = new Map(sources.items.map((item) => [shortcutItemKey(item), item.button || item.id || item.url || item.kind]));
     }
     shortcutCatalog = sources.catalogItems;
+    if (railMode) {
+      // Leave every native rail control in place; only our own tools are added.
+      if (grid.parentElement !== mountHost) mountHost.appendChild(grid);
+      grid.dataset.codexShortcutRailScroll = mountHost !== sources.rail ? "native" : "self";
+      sources.rail.setAttribute("data-aiyoucodex-icon-rail", "true");
+      document.querySelectorAll("[data-codex-sidebar-shortcut-source-hidden], [data-codex-sidebar-shortcut-source-group-hidden]")
+        .forEach((node) => {
+          node.removeAttribute("data-codex-sidebar-shortcut-source-hidden");
+          node.removeAttribute("data-codex-sidebar-shortcut-source-group-hidden");
+        });
+      sources.newConversationRow?.setAttribute("data-codex-sidebar-shortcut-source-hidden", "true");
+      for (const item of sources.items) updateShortcutCard(grid, item);
+      return;
+    }
+    // Replace the action row in normal flow. Appending to an inferred parent
+    // can put the grid after the flexing conversation scroller at the footer.
+    if (grid.parentElement !== sources.header || grid.nextElementSibling !== sources.newConversationRow) {
+      sources.header.insertBefore(grid, sources.newConversationRow);
+    }
     sources.newConversationRow.setAttribute("data-codex-sidebar-shortcut-source-hidden", "true");
     sources.navigationGroup?.setAttribute("data-codex-sidebar-shortcut-source-group-hidden", "true");
     sources.overflowGroup?.setAttribute("data-codex-sidebar-shortcut-source-group-hidden", "true");
@@ -5268,15 +5859,16 @@
 
   function nativeSectionSource(name) {
     const canonicalName = canonicalSectionLabel(name);
-    const nativeSection = Array.from(document.querySelectorAll("section[data-app-action-sidebar-section-heading]"))
+    const root = sidebarRoot() || document;
+    const nativeSection = Array.from(root.querySelectorAll("[data-app-action-sidebar-section-heading]"))
       .find((candidate) => canonicalSectionLabel(
         candidate.getAttribute("data-app-action-sidebar-section-heading"),
       ) === canonicalName);
     const button = nativeSection?.querySelector("button[data-app-action-sidebar-section-toggle]")
-      || Array.from(document.querySelectorAll("button[data-app-action-sidebar-section-toggle]"))
+      || Array.from(root.querySelectorAll("button[data-app-action-sidebar-section-toggle]"))
         .find((candidate) => !candidate.closest(`#${SECTION_TABS_ID}`) && sectionLabel(candidate) === canonicalName);
     if (!button) return null;
-    const section = nativeSection || button.closest("section");
+    const section = nativeSection || button.closest("[data-app-action-sidebar-section], section");
     let heading = button.parentElement;
     while (heading && heading.parentElement !== section
       && !heading.classList.contains("group/nav-section-title")) heading = heading.parentElement;
@@ -5310,6 +5902,73 @@
     return { common, items };
   }
 
+  // Codex has shipped both a direct action row and nested toolbar wrappers for
+  // section headings. Resolve all descendant buttons and exclude only the
+  // section disclosure toggle, so the proxy row does not disappear when the
+  // native wrapper depth changes.
+  function nativeSectionActionButtons(name) {
+    const item = nativeSectionSource(name);
+    if (!item?.heading) return name === "项目" ? nativeGlobalProjectActionButtons() : [];
+    const buttons = Array.from(item.heading.querySelectorAll("button")).filter((button) => button !== item.button && isNativeSidebarActionSource(button));
+    return name === "项目" ? Array.from(new Set([...buttons, ...nativeGlobalProjectActionButtons()])) : buttons;
+  }
+
+  function nativeGlobalProjectActionButtons() {
+    const labels = new Set(["项目侧边栏选项", "项目选项", "project sidebar options", "project options", "添加新项目", "添加项目", "新建项目", "add new project", "new project", "create project"]);
+    const sidebar = sidebarRoot();
+    const candidates = new Set([
+      ...Array.from(sidebar?.querySelectorAll("button") || []),
+      ...Array.from(document.querySelectorAll("button[data-app-action-sidebar-project-create]")),
+    ]);
+    return Array.from(candidates).filter((button) => {
+      if (!isNativeSidebarActionSource(button) || button.closest(ROW_SELECTOR)) return false;
+      const label = normalizedNativeLabel(button.getAttribute("aria-label") || button.title || button.textContent);
+      return (sidebar?.contains(button) && labels.has(label))
+        || button.hasAttribute("data-app-action-sidebar-project-create");
+    });
+  }
+
+  function nativeProjectCreateButton() {
+    return nativeGlobalProjectActionButtons().find((button) => {
+      const label = normalizedNativeLabel(button.getAttribute("aria-label") || button.title || button.textContent);
+      return button.hasAttribute("data-app-action-sidebar-project-create")
+        || ["添加新项目", "添加项目", "新建项目", "add new project", "new project", "create project"].includes(label);
+    }) || null;
+  }
+
+  function startProjectCreation(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const source = nativeProjectCreateButton();
+    if (source?.isConnected && !source.disabled && source.getAttribute("aria-disabled") !== "true") {
+      source.click();
+      return;
+    }
+    // New Codex layouts mount the native create action only on the Projects
+    // page. Navigate there and trigger that exact action if it appears.
+    const attempt = ++projectCreateAttempt;
+    window.postMessage({ type: "navigate-to-route", path: "/projects" }, "*");
+    const deadline = Date.now() + 3_000;
+    const retry = () => {
+      if (destroyed || attempt !== projectCreateAttempt) return;
+      const button = nativeProjectCreateButton();
+      if (button?.isConnected && !button.disabled && button.getAttribute("aria-disabled") !== "true") {
+        button.click();
+      } else if (Date.now() < deadline) {
+        setTimeout(retry, 120);
+      } else {
+        showNativeShortcutNotice("已打开项目页，但没有找到可调用的原生创建按钮；请使用该页的“新建项目”入口。未创建项目。");
+      }
+    };
+    setTimeout(retry, 120);
+  }
+
+  function isNativeSidebarActionSource(button) {
+    return Boolean(button?.isConnected && !button.closest('[data-app-shell-active-page="false"]') && !button.closest(
+      `[data-codex-native-action-proxies], #${SECTION_TABS_ID}, #${FOLDER_SWITCHER_ID}, #${SHORTCUT_GRID_ID}, #${SHORTCUT_SETTINGS_ID}, #${SKILL_ORGANIZER_ID}, [data-codex-workspace-side-panel]`,
+    ));
+  }
+
   function nativePrioritySource() {
     const list = Array.from(sidebarRoot()?.querySelectorAll('[role="list"]') || []).find((candidate) => {
       if (!candidate.querySelector(ROW_SELECTOR)) return false;
@@ -5318,6 +5977,21 @@
       );
     });
     return list?.parentElement ? { common: list.parentElement, list } : null;
+  }
+
+  function nativePriorityProjectActionButtons(source) {
+    const root = source?.common;
+    if (!root) return nativeGlobalProjectActionButtons();
+    const labels = new Set([
+      "项目侧边栏选项", "project sidebar options", "project options",
+      "添加新项目", "add new project", "create project",
+    ]);
+    const buttons = Array.from(root.querySelectorAll("button")).filter((button) => {
+      if (!isNativeSidebarActionSource(button)) return false;
+      const label = normalizedNativeLabel(button.getAttribute("aria-label") || button.title || button.textContent);
+      return labels.has(label) || button.hasAttribute("data-app-action-sidebar-project-create");
+    });
+    return Array.from(new Set([...buttons, ...nativeGlobalProjectActionButtons()]));
   }
 
   function nativeActivityViewOpen() {
@@ -5385,7 +6059,9 @@
       }
     }
     const actions = bar.querySelector("[data-codex-sidebar-project-actions]");
-    if (actions) actions.hidden = activeSectionTab !== "项目";
+    if (actions) actions.hidden = activeSectionTab !== "项目"
+      || (!actions.querySelector("[data-codex-native-action-proxies] button")
+        && !actions.querySelector("[data-codex-sidebar-current-folder-new-chat]:not([hidden])"));
   }
 
   function selectSectionTab(name, { focus = false } = {}) {
@@ -5433,20 +6109,35 @@
       tab.onkeydown = handleSectionTabKeydown;
       tablist.appendChild(tab);
     }
-    const actions = document.createElement("div");
+    bar.appendChild(tablist);
+    sectionTabRoots.add(bar);
+    ensureProjectActionsHost(bar);
+    return bar;
+  }
+
+  function ensureProjectActionsHost(bar) {
+    let actions = bar.querySelector("[data-codex-sidebar-project-actions]");
+    if (!actions) {
+      actions = document.createElement("div");
+      bar.appendChild(actions);
+    }
     actions.dataset.codexSidebarProjectActions = "true";
     actions.setAttribute("aria-label", "项目操作");
-    const currentFolderNewChat = document.createElement("button");
+    let currentFolderNewChat = actions.querySelector("[data-codex-sidebar-current-folder-new-chat]");
+    if (currentFolderNewChat) {
+      currentFolderNewChat.onclick = handleCurrentFolderNewChat;
+      return actions;
+    }
+    currentFolderNewChat = document.createElement("button");
     currentFolderNewChat.type = "button";
-    currentFolderNewChat.hidden = true;
+    currentFolderNewChat.disabled = true;
     currentFolderNewChat.dataset.codexSidebarCurrentFolderNewChat = "";
     currentFolderNewChat.setAttribute("aria-label", "在当前文件夹中新建对话");
-    currentFolderNewChat.title = "在当前文件夹中新建对话";
+    currentFolderNewChat.title = "请先选择有本地关联的文件夹，再新建对话";
     currentFolderNewChat.innerHTML = '<svg aria-hidden="true" width="17" height="17" viewBox="0 0 16 16" fill="none"><path d="M6.33 1.81H4.67A2.86 2.86 0 0 0 1.81 4.67v6.66a2.86 2.86 0 0 0 2.86 2.86h6.66a2.86 2.86 0 0 0 2.86-2.86V9.67" stroke="currentColor" stroke-width="1.15" stroke-linecap="round"/><path d="m7.05 9.96.52-2.09 4.38-4.38a1.42 1.42 0 0 1 2 2L9.57 9.87l-2.52.09Z" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round"/></svg>';
     currentFolderNewChat.onclick = handleCurrentFolderNewChat;
-    actions.appendChild(currentFolderNewChat);
-    bar.append(tablist, actions);
-    return bar;
+    actions.prepend(currentFolderNewChat);
+    return actions;
   }
 
   function restoreProjectActions() {
@@ -5489,6 +6180,8 @@
   function ensurePriorityOnlySectionTabs(source) {
     let bar = document.getElementById(SECTION_TABS_ID);
     const needsRebuild = bar?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN
+      || !sectionTabRoots.has(bar)
+      || bar?.querySelectorAll('[role="tab"]').length !== SECTION_NAMES.length
       || bar?.dataset.codexSidebarSectionMode !== "priority"
       || bar?.parentElement !== source.common
       || bar?.dataset.codexSidebarPriorityList !== (source.list.dataset.codexSidebarPriorityList ||= RUNTIME_TOKEN)
@@ -5521,6 +6214,11 @@
     }
     source.list.hidden = true;
     source.list.dataset.codexSidebarPriorityNativeHidden = "true";
+    syncNativeActionProxies(
+      ensureProjectActionsHost(bar),
+      () => nativePriorityProjectActionButtons(source),
+      "project",
+    );
     updateSectionTabState(SECTION_NAMES.map((name) => sectionSources.get(name)).filter(Boolean), { syncNative: false });
   }
 
@@ -5553,11 +6251,11 @@
       activeSectionTab = sources.items.find((item) => item.button.getAttribute("aria-expanded") === "true")?.name || "项目";
     }
     let bar = document.getElementById(SECTION_TABS_ID);
-    const projectActions = sources.items.find((item) => item.name === "项目")?.actions;
     const needsRebuild = bar?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN
+      || !sectionTabRoots.has(bar)
+      || bar?.querySelectorAll('[role="tab"]').length !== SECTION_NAMES.length
       || bar?.parentElement !== sources.common
       || sources.items.some((item) => sectionSources.get(item.name)?.section !== item.section)
-      || sectionSources.get("项目")?.actions !== projectActions
       || SECTION_NAMES.some((name) => !sectionSources.get(name)?.section?.isConnected);
     if (needsRebuild) {
       clearSectionEnhancement();
@@ -5581,11 +6279,11 @@
         });
       }
     }
-    const project = sources.items.find((item) => item.name === "项目");
-    const actionsHost = bar.querySelector("[data-codex-sidebar-project-actions]");
-    syncNativeActionProxies(actionsHost, () => nativeSectionSource("项目")?.heading
-      ? nativeSectionSources()?.items.find((item) => item.name === "项目")?.actions?.querySelectorAll("button") || []
-      : [], "project");
+    // A native heading can be replaced independently of its section. Refresh
+    // references without tearing down the user's folder search and selection.
+    for (const item of sources.items) sectionSources.set(item.name, item);
+    const actionsHost = ensureProjectActionsHost(bar);
+    syncNativeActionProxies(actionsHost, () => nativeSectionActionButtons("项目"), "project");
     updateSectionTabState(SECTION_NAMES.map((name) => sectionSources.get(name)).filter(Boolean));
   }
 
@@ -5777,7 +6475,7 @@
   }
 
   function nativeFolderSources() {
-    const rows = Array.from(document.querySelectorAll("[data-app-action-sidebar-project-row]"));
+    const rows = Array.from((sidebarRoot() || document).querySelectorAll("[data-app-action-sidebar-project-row]"));
     if (!rows.length) return null;
     const items = rows.flatMap((row, sourceIndex) => {
       const id = row.getAttribute("data-app-action-sidebar-project-id") || "";
@@ -5787,11 +6485,11 @@
       while (listRoot && listRoot.getAttribute("role") !== "list") listRoot = listRoot.parentElement;
       if (!id || !label || !folder || !listRoot) return [];
       const panelHost = topLevelPanelHost(folder, listRoot);
-      const rowActions = Array.from(row.children).find((child) =>
-        Array.from(child.querySelectorAll?.("button") || []).some((button) =>
-          isProjectActionsLabel(button.getAttribute("aria-label"), label),
-        ),
+      const actionButtons = Array.from(row.querySelectorAll("button")).filter((button) =>
+        isNativeSidebarActionSource(button) && (isProjectActionsLabel(button.getAttribute("aria-label"), label)
+          || isFolderCreateLabel(button.getAttribute("aria-label"), label)),
       );
+      const rowActions = commonAncestor(actionButtons);
       const threadTitles = Array.from(folder.querySelectorAll(ROW_SELECTOR))
         .filter((thread) => !pinnedThreadIds.has(normalizedThreadId(
           thread.getAttribute("data-app-action-sidebar-thread-id"),
@@ -5872,7 +6570,11 @@
       .filter((item) => Number.isFinite(item.searchScore))
       .sort((left, right) => needle
         ? left.searchScore - right.searchScore || right.lastUsed - left.lastUsed || left.sourceIndex - right.sourceIndex
-        : right.lastUsed - left.lastUsed || left.sourceIndex - right.sourceIndex);
+        : folderSortMode === "name"
+          ? left.label.localeCompare(right.label, "zh-Hans") || left.sourceIndex - right.sourceIndex
+          : folderSortMode === "native"
+            ? left.sourceIndex - right.sourceIndex
+            : right.lastUsed - left.lastUsed || left.sourceIndex - right.sourceIndex);
   }
 
   function allProjectEntries() {
@@ -5985,41 +6687,80 @@
     document.querySelector(`#${FOLDER_SWITCHER_ID} [data-codex-native-action-proxies]`)?.remove();
   }
 
+  function nativeFolderActionButtons(item) {
+    if (!item?.id || item.virtual) return [];
+    const row = Array.from(sidebarRoot()?.querySelectorAll('[data-app-action-sidebar-project-row]') || [])
+      .find((node) => node.getAttribute('data-app-action-sidebar-project-id') === item.id);
+    return Array.from(row?.querySelectorAll('button') || []).filter((button) =>
+      isNativeSidebarActionSource(button) && (isProjectActionsLabel(button.getAttribute('aria-label'), item.label)
+        || isFolderCreateLabel(button.getAttribute('aria-label'), item.label)));
+  }
+
   function syncNativeActionProxies(host, resolveButtons, kind) {
     if (!host) return;
-    const sources = Array.from(resolveButtons() || []);
+    const sources = Array.from(resolveButtons() || []).filter(isNativeSidebarActionSource);
+    const previous = nativeActionProxyStates.get(host);
     let group = host.querySelector("[data-codex-native-action-proxies]");
-    if (!sources.length) { group?.remove(); return; }
+    const folderLabel = folderSources.get(activeFolderId)?.label || "当前文件夹";
+    const actionKey = (button) => {
+      const label = button.getAttribute("aria-label") || button.title || button.textContent.trim();
+      const key = normalizedNativeLabel(label);
+      if (kind === "folder" && isProjectActionsLabel(label, folderLabel)) return "folder-options";
+      if (kind === "folder" && isFolderCreateLabel(label, folderLabel)) return "folder-create";
+      if (kind === "folder") return "";
+      if (button.hasAttribute("data-app-action-sidebar-project-create")) return "create";
+      if (["项目侧边栏选项", "项目选项", "project sidebar options", "project options"].includes(key)) return "options";
+      if (["添加新项目", "添加项目", "新建项目", "add new project", "new project", "create project"].includes(key)) return "create";
+      return "";
+    };
+    // A proxy is shown only while its matching native action exists. Reusing a
+    // generic Projects route here made every distinct icon do the same thing.
+    const descriptors = Array.from(new Map(sources.map((button) => {
+      const key = actionKey(button);
+      if (!key) return null;
+      const label = button.getAttribute("aria-label") || button.title
+        || (key === "create" ? "添加新项目" : "项目操作");
+      return [key, {
+        key, label, title: button.title || label,
+        disabled: button.disabled || button.getAttribute("aria-disabled") === "true",
+        icon: button.querySelector("svg")?.outerHTML || "",
+        text: button.querySelector("svg") ? "" : button.textContent || "…",
+      }];
+    }).filter(Boolean)).values());
+    if (!descriptors.length) {
+      group?.remove();
+      nativeActionProxyStates.delete(host);
+      return;
+    }
     if (!group) {
       group = document.createElement("div");
       group.dataset.codexNativeActionProxies = kind;
       group.setAttribute(`data-codex-sidebar-${kind}-actions-source`, "proxy");
       host.appendChild(group);
     }
-    const signature = JSON.stringify(sources.map((button) => [
-      button.getAttribute("aria-label"), button.getAttribute("title"), button.disabled,
-      button.querySelector("svg")?.outerHTML || button.textContent,
-    ]));
-    if (group.dataset.signature === signature) return;
+    const signature = JSON.stringify(descriptors);
+    // A signature alone cannot detect emptied/cloned DOM or lost handlers.
+    if (previous?.group === group && previous.signature === signature
+      && previous.markup === group.innerHTML && previous.buttons.every((button, index) =>
+        group.children[index] === button && typeof button.onclick === "function")) return;
     group.dataset.signature = signature;
-    group.replaceChildren(...sources.map((source, index) => {
+    group.replaceChildren(...descriptors.map((descriptor) => {
       const button = document.createElement("button");
       button.type = "button";
-      const label = source.getAttribute("aria-label") || source.title || source.textContent.trim() || "项目操作";
+      const { key, label } = descriptor;
       button.setAttribute("aria-label", label);
-      button.title = source.title || label;
-      button.disabled = source.disabled;
+      button.title = descriptor.title || label;
+      button.disabled = descriptor.disabled;
       button.setAttribute(`data-codex-sidebar-${kind}-action-source`, label);
-      const icon = source.querySelector("svg")?.cloneNode(true);
-      if (icon) button.appendChild(icon);
-      else button.textContent = source.textContent || "…";
+      if (descriptor.icon) button.innerHTML = descriptor.icon;
+      else button.textContent = descriptor.text;
       button.onclick = (event) => {
         event.preventDefault();
         event.stopPropagation();
-        const current = Array.from(resolveButtons() || []);
-        const target = current.find((candidate) => (candidate.getAttribute("aria-label") || candidate.title
-          || candidate.textContent.trim() || "项目操作") === label) || current[index];
-        if (!target?.isConnected || target.disabled) { scheduleSync(); return; }
+        const current = Array.from(resolveButtons() || []).filter(isNativeSidebarActionSource);
+        const target = current.find((candidate) => actionKey(candidate) === key);
+        if (!target?.isConnected) { scheduleSync(); return; }
+        if (target.disabled || target.getAttribute("aria-disabled") === "true") { scheduleSync(); return; }
         target.click();
         // Native menu triggers are intentionally still in their hidden React
         // heading. Move only the portal presentation to the visible proxy.
@@ -6036,41 +6777,46 @@
       };
       return button;
     }));
+    nativeActionProxyStates.set(host, { group, signature, descriptors, markup: group.innerHTML, buttons: [...group.children] });
   }
 
   function nativeFolderCreateButton(item) {
-    if (!item?.actions) return null;
-    return Array.from(item.actions.querySelectorAll("button")).find((button) =>
-      isFolderCreateLabel(button.getAttribute("aria-label"), item.label),
-    ) || null;
+    return nativeFolderActionButtons(item).find((button) =>
+      isFolderCreateLabel(button.getAttribute("aria-label"), item.label)) || null;
+  }
+
+  function currentFolderChatSource(item) {
+    if (activeFolderId === ALL_FOLDER_ID) return findNativeShortcutButton("新对话");
+    return nativeFolderCreateButton(item);
   }
 
   function syncCurrentFolderNewChatButton(item) {
     const button = document.querySelector(`#${SECTION_TABS_ID} [data-codex-sidebar-current-folder-new-chat]`);
     if (!button) return;
-    const source = !item?.virtual && item?.id === activeFolderId
-      ? nativeFolderCreateButton(item)
-      : null;
+    const source = currentFolderChatSource(item);
+    button.hidden = !source?.isConnected;
+    button.disabled = !source?.isConnected || source.disabled || source.getAttribute("aria-disabled") === "true";
+    const actions = button.closest("[data-codex-sidebar-project-actions]");
+    if (actions) actions.hidden = activeSectionTab !== "项目"
+      || (button.hidden && !actions.querySelector("[data-codex-native-action-proxies] button"));
     if (!source?.isConnected) {
-      button.hidden = true;
       button.dataset.codexSidebarCurrentFolderNewChat = "";
       button.setAttribute("aria-label", "在当前文件夹中新建对话");
-      button.title = "在当前文件夹中新建对话";
+      button.title = "当前没有可用的原生新建对话入口";
       return;
     }
-    button.hidden = false;
-    button.dataset.codexSidebarCurrentFolderNewChat = item.id;
-    button.setAttribute("aria-label", `在“${item.label}”中新建对话`);
-    button.title = `在“${item.label}”中新建对话`;
+    button.dataset.codexSidebarCurrentFolderNewChat = item?.id || ALL_FOLDER_ID;
+    button.setAttribute("aria-label", item ? `在“${item.label}”中新建对话` : "新建对话");
+    button.title = item ? `在“${item.label}”中新建对话` : "新建对话";
   }
 
   function handleCurrentFolderNewChat(event) {
     event.preventDefault();
     event.stopPropagation();
-    const item = folderSources.get(activeFolderId);
-    const source = nativeFolderCreateButton(item);
-    if (!source?.isConnected) {
-      syncCurrentFolderNewChatButton(null);
+    const item = nativeFolderSources()?.items.find((candidate) => candidate.id === activeFolderId) || folderSources.get(activeFolderId);
+    const source = currentFolderChatSource(item);
+    if (!source?.isConnected || source.disabled || source.getAttribute("aria-disabled") === "true") {
+      syncCurrentFolderNewChatButton(item);
       scheduleSync();
       return;
     }
@@ -6081,13 +6827,14 @@
     const root = document.getElementById(FOLDER_SWITCHER_ID);
     const host = root?.querySelector("[data-codex-sidebar-folder-actions]");
     if (!host) return;
-    if (!item?.actions) {
+    if (!item || item.id === ALL_FOLDER_ID) {
       restoreFolderActions();
-      host.hidden = true;
+      host.hidden = false;
       return;
     }
-    syncNativeActionProxies(host, () => nativeFolderSources()?.items.find((candidate) => candidate.id === activeFolderId)
-      ?.actions?.querySelectorAll("button") || [], "folder");
+    syncNativeActionProxies(host, () => nativeFolderActionButtons(
+      nativeFolderSources()?.items.find((candidate) => candidate.id === activeFolderId),
+    ), "folder");
     host.hidden = false;
     syncCurrentFolderNewChatButton(item);
   }
@@ -6442,7 +7189,71 @@
     searchShell.append(searchIcon, input, clear);
     const actions = document.createElement("div");
     actions.dataset.codexSidebarFolderActions = "true";
-    actions.setAttribute("aria-label", "当前文件夹操作");
+    actions.setAttribute("aria-label", "项目列表操作");
+    const sortButton = document.createElement("button");
+    sortButton.type = "button";
+    sortButton.dataset.codexSidebarFolderSort = "true";
+    sortButton.setAttribute("aria-label", "排序设置");
+    sortButton.setAttribute("aria-haspopup", "menu");
+    sortButton.setAttribute("aria-expanded", "false");
+    sortButton.title = "排序设置（仅此项目列表）";
+    sortButton.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 4h7M2.5 8h10M2.5 12h5M12 3v3m0 0-1.5-1.5M12 6l1.5-1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    const sortMenu = document.createElement("div");
+    sortMenu.dataset.codexSidebarFolderSortMenu = "true";
+    sortMenu.setAttribute("role", "menu");
+    sortMenu.setAttribute("aria-label", "项目列表排序，仅影响此列表");
+    sortMenu.hidden = true;
+    for (const [mode, label] of [["recent", "最近使用优先"], ["name", "名称顺序"], ["native", "Codex 原始顺序"]]) {
+      const choice = document.createElement("button");
+      choice.type = "button";
+      choice.dataset.codexSidebarFolderSortMode = mode;
+      choice.setAttribute("role", "menuitemradio");
+      choice.setAttribute("aria-checked", String(folderSortMode === mode));
+      choice.textContent = label;
+      choice.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        folderSortMode = mode;
+        try { localStorage.setItem(FOLDER_SORT_STORAGE_KEY, mode); } catch {}
+        for (const option of sortMenu.querySelectorAll("[data-codex-sidebar-folder-sort-mode]")) {
+          option.setAttribute("aria-checked", String(option.dataset.codexSidebarFolderSortMode === mode));
+        }
+        sortMenu.hidden = true;
+        sortButton.setAttribute("aria-expanded", "false");
+        sortButton.focus();
+        updateFolderSwitcherState(Array.from(folderSources.values()));
+      };
+      sortMenu.appendChild(choice);
+    }
+    sortButton.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      sortMenu.hidden = !sortMenu.hidden;
+      sortButton.setAttribute("aria-expanded", String(!sortMenu.hidden));
+      if (!sortMenu.hidden) {
+        document.addEventListener("pointerdown", (nextEvent) => {
+          if (!actions.contains(nextEvent.target)) {
+            sortMenu.hidden = true;
+            sortButton.setAttribute("aria-expanded", "false");
+          }
+        }, { once: true, capture: true });
+      }
+    };
+    sortMenu.onkeydown = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      sortMenu.hidden = true;
+      sortButton.setAttribute("aria-expanded", "false");
+      sortButton.focus();
+    };
+    const createButton = document.createElement("button");
+    createButton.type = "button";
+    createButton.dataset.codexSidebarProjectCreate = "true";
+    createButton.setAttribute("aria-label", "创建项目");
+    createButton.title = "创建项目";
+    createButton.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+    createButton.onclick = startProjectCreation;
+    actions.append(sortButton, createButton, sortMenu);
     searchRow.append(searchShell, actions);
 
     const tags = document.createElement("div");
@@ -6548,7 +7359,7 @@
       ? "没有匹配的项目"
       : searching
         ? `找到 ${ranked.length} 个项目 · ${matchingConversationCount} 个对话`
-        : `${ranked.length} 个文件夹 · 最近使用优先`);
+        : `${ranked.length} 个文件夹 · ${folderSortMode === "name" ? "名称顺序" : folderSortMode === "native" ? "Codex 原始顺序" : "最近使用优先"}`);
     const expand = root.querySelector("[data-codex-sidebar-folder-expand]");
     expand.hidden = tagItems.length <= 6;
     expand.setAttribute("aria-expanded", String(folderTagsExpanded));
@@ -6660,37 +7471,56 @@
     updateResetNotice();
   }
 
+  function resetMonitorIntervalLabel(monitor = {}) {
+    const minutes = monitor.intervalMinutes ?? Math.round((monitor.intervalHours || 0.25) * 60);
+    return minutes >= 60 && minutes % 60 === 0 ? `每 ${minutes / 60} 小时` : `每 ${minutes} 分钟`;
+  }
+
   function resetNoticePresentation() {
     const notice = usage.resetNotice || {};
-    const event = notice.active;
+    const event = ["scheduled", "tentative"].includes(notice.active?.status)
+      && notice.active?.deliveryStatus !== "delivered" ? notice.active : null;
     const now = Date.now();
-    const stale = notice.checkStatus !== "ok" || !notice.lastSuccessAt || now - Date.parse(notice.lastSuccessAt) > Math.max(2, (notice.intervalHours || 3) * 2) * 3600000;
-    let label = "重置公告", value = "暂无明确预告", color = "#586273";
+    const interval = notice.monitor?.intervalMinutes ?? notice.intervalMinutes ?? (notice.intervalHours || 0.25) * 60;
+    const stale = notice.checkStatus !== "ok" || !notice.lastSuccessAt || now - Date.parse(notice.lastSuccessAt) > Math.max(5, interval * 2) * 60000;
+    const confidence = notice.confidence || {};
+    const score = event ? Number(confidence.value) : NaN;
+    const alertLevel = event ? confidence.alertLevel || (score >= 90 ? "red" : score >= 70 ? "yellow" : "none") : "none";
+    let label = "下次重置", value = "暂无可信预告", color = "#586273";
     if (notice.checkStatus === "never" || !notice.checkStatus) value = "等待首次检查";
     else if (notice.checkStatus === "error" || notice.checkStatus === "partial") value = "信息待核验";
     else if (stale) value = "公告待更新";
     if (event) {
       if (!["original", "rss"].includes(event.verification)) value = "线索待核验";
-      else if (event.status === "tentative") value = "时间待确认";
-      else if (event.status === "completed") value = "公告称已重置";
-      else if (event.status === "cancelled") value = "本次已取消";
+      else if (event.status === "tentative") {
+        value = score >= 70 ? "有预告 · 时间待确认" : "暂无可信预告";
+        color = alertLevel === "red" ? "#c0392b" : alertLevel === "yellow" ? "#c17b12" : "#586273";
+      }
       else if (event.status === "scheduled" && Number.isFinite(Date.parse(event.targetAt))) {
-        const remaining = Date.parse(event.targetAt) - now;
-        label = event.precision === "window" ? "预计窗口截止" : event.precision === "deadline" ? "预计最晚重置" : "预计重置倒计时";
-        if (remaining <= 0) {
-          value = "已到时 · 待核验";
-          color = "#b93832";
+        if (score < 70) {
+          label = "下次重置";
+          value = "暂无可信预告";
+          color = "#667085";
         } else {
-          const minutes = Math.ceil(remaining / 60000);
-          const days = Math.floor(minutes / 1440), hours = Math.floor(minutes % 1440 / 60);
-          value = `${days ? `${days}天 ` : ""}${String(hours).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
-          const hue = Math.round(45 * Math.min(1, remaining / 86400000));
-          color = remaining > 86400000 ? "#3568ae" : `hsl(${hue} 78% 36%)`;
+          const remaining = Date.parse(event.targetAt) - now;
+          label = event.precision === "window" ? "预计窗口截止" : event.precision === "deadline" ? "预计最晚重置" : "预计重置倒计时";
+          if (remaining <= 0) {
+            value = "已到时 · 待核验";
+            color = "#b93832";
+          } else {
+            const minutes = Math.ceil(remaining / 60000);
+            const days = Math.floor(minutes / 1440), hours = Math.floor(minutes % 1440 / 60);
+            value = `${days ? `${days}天 ` : ""}${String(hours).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+            color = alertLevel === "red" ? "#c0392b" : "#c17b12";
+          }
         }
         if (stale) label += " · 待复核";
       }
     }
-    return { label, value, color, stale };
+    if (notice.monitor?.enabled === false) label = "下次重置 · 监控暂停";
+    else if (notice.monitor?.running === false) label = "下次重置 · 后台未连接";
+    else if (stale && !label.includes("待复核")) label += " · 待更新";
+    return { label, value, color, stale, score, alertLevel };
   }
 
   function updateResetNotice() {
@@ -6701,28 +7531,215 @@
     setTextIfChanged(button.querySelector("strong"), view.value);
     button.style.color = view.color;
     button.dataset.stale = String(view.stale);
-    const title = `${view.label}：${view.value}。${usage.resetNotice?.active?.summary || "检查 @thsottiaux，点击查看来源和监控计划。"}`;
+    button.dataset.alertLevel = view.alertLevel;
+    button.dataset.state = ["scheduled", "tentative"].includes(usage.resetNotice?.active?.status)
+      && usage.resetNotice.active?.deliveryStatus !== "delivered"
+      ? usage.resetNotice.active.status : "empty";
+    const notice = usage.resetNotice || {};
+    const active = ["scheduled", "tentative"].includes(notice.active?.status)
+      && notice.active?.deliveryStatus !== "delivered" ? notice.active : null;
+    const title = `${view.label}：${view.value}。${active?.summary || "点击查看最近信号和监控计划。"}\n预告发布：${resetLocalTime(active?.publishedAt)}\n最近检查：${resetLocalTime(notice.lastCheckAt)} · ${resetMonitorIntervalLabel(notice.monitor || notice)}（RSS 转发可能延迟）`;
     button.title = title;
     button.setAttribute("aria-label", title);
     const dialog = document.getElementById(RESET_DIALOG_ID);
     if (dialog?.open) renderResetNoticeDetails(dialog);
   }
 
+  function resetEventLabel(event) {
+    if (!event) return "暂无新公告";
+    if (event.deliveryStatus === "delivered") return event.resetType === "banked" ? "重置次数已到账" : "直接重置已到账";
+    if (event.status === "completed") return "已完成";
+    if (event.status === "cancelled") return "已取消";
+    if (event.status === "tentative") return "时间待确认";
+    if (event.status === "signal") return "历史信号";
+    if (event.precision === "window") return "预计窗口";
+    if (event.precision === "deadline") return "最晚时间";
+    return "预计重置";
+  }
+
+  function resetVerificationLabel(event) {
+    if (event?.verification === "original") return "X 原帖";
+    if (event?.verification === "rss") return "RSS 转发原帖";
+    return "待核验";
+  }
+
+  function resetDeliveryTypeLabel(event) {
+    return event?.resetType === "banked" ? "重置次数" : "直接重置";
+  }
+
+  function resetDeliveryPresentation(event, notice = usage.resetNotice || {}) {
+    const type = resetDeliveryTypeLabel(event);
+    if (!event) return { status: "unknown", text: "到账状态：暂无当前公告" };
+    const account = notice.accountReset || null;
+    if (event.deliveryStatus === "delivered") {
+      const count = event.resetType === "banked" ? account?.bankedCount : account?.directCount;
+      return { status: "delivered", text: `到账状态：已到账 · ${type}${count != null ? `（当前 ${count} 次）` : ""}` };
+    }
+    if (event.deliveryStatus === "not-applicable" || event.status === "cancelled") {
+      return { status: "not-applicable", text: `到账状态：不适用 · ${type}` };
+    }
+    if (event.resetType === "banked") {
+      const count = account?.bankedCount;
+      return { status: "pending", text: `到账状态：待核验 · ${type}${count != null ? `（当前 ${count} 次，尚未关联本次增量）` : "（需读取当前账号次数）"}` };
+    }
+    return { status: event.status === "completed" ? "pending" : "unknown", text: `到账状态：${event.status === "completed" ? "待核验" : "未确认"} · ${type}` };
+  }
+
+  function resetEventColor(event) {
+    if (event?.deliveryStatus === "delivered") return "#2b9a61";
+    if (event?.confidence?.alertLevel === "red") return "#c0392b";
+    if (event?.confidence?.alertLevel === "yellow") return "#c17b12";
+    if (event?.status === "completed") return "#2b9a61";
+    if (event?.status === "cancelled") return "#7b8491";
+    if (event?.status === "scheduled") return "#d08a13";
+    return "#667085";
+  }
+
+  function resetLocalTime(value) {
+    if (!Number.isFinite(Date.parse(value))) return "暂无";
+    return new Date(value).toLocaleString("zh-CN", { hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+
+  function resetTimeZoneLabel() {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "本机时区"; } catch { return "本机时区"; }
+  }
+
+  function resetRelativeTime(value, now = Date.now()) {
+    const timestamp = Date.parse(value);
+    if (!Number.isFinite(timestamp)) return "暂无";
+    const delta = now - timestamp;
+    if (Math.abs(delta) < 60_000) return delta >= 0 ? "刚刚" : "即将发生";
+    const minutes = Math.round(Math.abs(delta) / 60_000);
+    const days = Math.floor(minutes / 1440), hours = Math.floor(minutes % 1440 / 60), rest = minutes % 60;
+    const parts = [];
+    if (days) parts.push(String(days) + "天");
+    if (hours) parts.push(String(hours) + "小时");
+    if (rest && !days) parts.push(String(rest) + "分钟");
+    return delta >= 0 ? parts.join("") + "前" : parts.join("") + "后";
+  }
+
+  function resetSignalTime(value, mode) {
+    return mode === "relative" ? resetRelativeTime(value) : resetLocalTime(value);
+  }
+
+  function renderResetHistoryHeatmap(dialog, analysis) {
+    const grid = dialog.querySelector("[data-reset-history-grid]");
+    if (!grid) return;
+    const history = Array.isArray(analysis?.history) ? analysis.history : [];
+    const counts = new Map();
+    const keyFor = (date) => String(date.getFullYear()) + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" + String(date.getDate()).padStart(2, "0");
+    history.forEach((event) => {
+      const timestamp = Date.parse(event?.publishedAt);
+      if (!Number.isFinite(timestamp)) return;
+      const key = keyFor(new Date(timestamp));
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    const end = new Date(); end.setHours(0, 0, 0, 0);
+    const start = new Date(end); start.setDate(start.getDate() - 83);
+    grid.replaceChildren();
+    for (let index = 0; index < 84; index += 1) {
+      const date = new Date(start); date.setDate(start.getDate() + index);
+      const count = counts.get(keyFor(date)) || 0;
+      const cell = document.createElement("span");
+      cell.setAttribute("data-reset-history-cell", "");
+      cell.dataset.level = String(Math.min(4, count));
+      cell.title = date.toLocaleDateString("zh-CN") + "：" + count + " 条信号";
+      cell.setAttribute("aria-label", cell.title);
+      grid.appendChild(cell);
+    }
+    const caption = dialog.querySelector("[data-reset-history-caption]");
+    if (caption) caption.textContent = "最近 12 周 · " + resetTimeZoneLabel() + " · " + history.length + " 条本地记录";
+  }
+
   function renderResetNoticeDetails(dialog) {
-    const notice = usage.resetNotice || {}, event = notice.active;
+    const notice = usage.resetNotice || {}, event = ["scheduled", "tentative"].includes(notice.active?.status)
+      && notice.active?.deliveryStatus !== "delivered" ? notice.active : null;
     const view = resetNoticePresentation();
-    const localTime = (stamp) => Number.isFinite(Date.parse(stamp)) ? new Date(stamp).toLocaleString("zh-CN", { timeZoneName: "short" }) : "尚无";
-    const lines = [event?.summary || "暂无已核验的重置时间。", event ? `适用范围：${event.scope}（不代表当前账号一定适用）` : "",
-      `${view.label}：${view.value}`, event?.targetAt ? `公告预计时间：${event.windowStartAt ? localTime(event.windowStartAt) + " — " : ""}${localTime(event.targetAt)}` : "",
-      event?.timeBasis ? `时间依据：${event.timeBasis}` : "", event?.evidence ? `原文摘要：${event.evidence}` : "",
-      event ? `来源核验：${event.verification === "original" ? "X 原帖已核验" : event.verification === "rss" ? "FxEmbed RSS 转发原帖（非 X 直连）" : "仅线索，尚未核验原帖"}` : "",
-      `最近检查：${localTime(notice.lastCheckAt)}\n最近成功采集：${localTime(notice.lastSuccessAt)}\n检查频率：${notice.monitor?.available === false ? "计划暂不可读" : notice.monitor?.configured === false ? "尚未配置" : notice.monitor?.enabled === false ? "已暂停" : `每 ${notice.intervalHours || 3} 小时`}（可在设置中修改）`,
-      notice.checkMessage || "等待自动检查。", "这是公开公告的预计时间，不是账号常规重置时间；到时不代表额度已到账，也不会消耗你的重置券。"];
-    setTextIfChanged(dialog.querySelector("[data-reset-details]"), lines.filter(Boolean).join("\n\n"));
+    const delivery = resetDeliveryPresentation(event, notice);
+    const set = (selector, value) => setTextIfChanged(dialog.querySelector(selector), value == null ? "" : String(value));
+    const history = Array.isArray(notice.recent) ? notice.recent.slice(0, 5) : [];
+    const completed = history.find((candidate) => candidate?.status === "completed");
+    const analysis = notice.analysis || {};
+    const confidence = event ? notice.confidence || event.confidence : null;
+    const timeMode = dialog.dataset.resetTimeMode || "absolute";
+    const monitorLabel = notice.monitor?.available === false ? "计划暂不可读"
+      : notice.monitor?.configured === false ? "尚未配置"
+        : notice.monitor?.enabled === false ? "已暂停" : `${resetMonitorIntervalLabel(notice.monitor || notice)} · ${notice.monitor?.running === false ? "后台未连接" : "内置后台"}`;
+    const heroStatus = event ? `${resetEventLabel(event)} · ${resetVerificationLabel(event)}` : notice.checkStatus === "error" ? "检查失败 · 保留上次记录" : "下次重置";
+    const scoreValue = Number(confidence?.value);
+    const alertLevel = confidence?.alertLevel || (scoreValue >= 90 ? "red" : scoreValue >= 70 ? "yellow" : "none");
+    const heroValue = event?.status === "scheduled" && event.verification !== "unverified"
+      ? (alertLevel === "none" ? "未达到 70% 预警阈值" : view.value)
+      : event?.status === "tentative" ? "有预告 · 时间待确认" : "暂无可信的下次重置预告";
+    const heroSummary = event?.summary || (notice.checkStatus === "error" ? "本次采集未完成，保留历史记录；无法确认是否有新预告。" : "最近检查没有发现可信的下一次重置预告；已完成公告保留在历史信号中。");
+    set("[data-reset-hero-status]", heroStatus);
+    set("[data-reset-hero-value]", heroValue);
+    set("[data-reset-hero-summary]", heroSummary);
+    set("[data-reset-hero-delivery]", delivery.text);
+    set("[data-reset-hero-confidence]", confidence?.value != null ? `证据置信度 ${confidence.value}% · ${alertLevel === "red" ? "红色预警" : alertLevel === "yellow" ? "黄色预警" : "低于 70% 不预警"}（非账号重置概率）` : "下一次预告：暂无可预警证据；历史信号不代表重置概率");
+    const confidenceNode = dialog.querySelector("[data-reset-hero-confidence]");
+    if (confidenceNode) confidenceNode.style.color = alertLevel === "red" ? "#c0392b" : alertLevel === "yellow" ? "#c17b12" : "#667085";
+    set("[data-reset-meta-card='completed'] strong", analysis.latestCompletedAt ? resetLocalTime(analysis.latestCompletedAt) : completed ? resetLocalTime(completed.publishedAt) : "暂无记录");
+    set("[data-reset-meta-card='checked'] strong", resetLocalTime(notice.lastCheckAt));
+    set("[data-reset-meta-card='schedule'] strong", monitorLabel);
+    const historyCount = analysis?.history?.length ?? analysis?.counts?.historyTotal ?? analysis?.counts?.total;
+    set("[data-reset-meta-card='history'] strong", historyCount != null ? `${historyCount} 条信号` : "暂无");
+    const range = event?.targetAt && alertLevel !== "none" ? `${event.windowStartAt ? `${resetLocalTime(event.windowStartAt)} — ` : ""}${resetLocalTime(event.targetAt)}`
+      : event?.publishedAt ? "公告时间：" + resetLocalTime(event.publishedAt) : "未提供明确时间";
+    set("[data-reset-time]", range);
+    set("[data-reset-scope]", event ? `适用范围：${event.scope || "未说明"}` : "适用范围：未说明");
+    set("[data-reset-local-time]", resetLocalTime(new Date().toISOString()) + " · " + resetTimeZoneLabel());
+    renderResetHistoryHeatmap(dialog, analysis);
+    dialog.querySelectorAll("[data-reset-time-mode]").forEach((button) => {
+      const active = button.dataset.resetTimeMode === timeMode;
+      button.setAttribute("aria-pressed", String(active));
+      button.dataset.active = String(active);
+    });
+    const feed = dialog.querySelector("[data-reset-feed-list]");
+    set("[data-reset-history-summary]", analysis.summary || "暂无历史重置信号可供分析。");
+    feed?.replaceChildren();
+    if (!history.length) {
+      const empty = document.createElement("div"); empty.setAttribute("data-reset-signal", ""); empty.textContent = "暂无已记录的重置信号。"; feed?.appendChild(empty);
+    } else history.forEach((candidate) => {
+      const card = document.createElement("article"); card.setAttribute("data-reset-signal", "");
+      const head = document.createElement("div"); head.setAttribute("data-reset-signal-head", "");
+      const badge = document.createElement("strong"); badge.setAttribute("data-reset-signal-badge", ""); badge.style.color = resetEventColor(candidate); badge.textContent = resetEventLabel(candidate);
+      const date = document.createElement("span"); date.setAttribute("data-reset-signal-date", ""); date.textContent = resetSignalTime(candidate.publishedAt, timeMode);
+      head.append(badge, date);
+      if (candidate.confidence?.value != null) {
+        const score = document.createElement("span"); score.setAttribute("data-reset-signal-confidence", "");
+        score.textContent = `证据 ${candidate.confidence.value}%`;
+        score.dataset.band = candidate.confidence.band || "";
+        score.dataset.alertLevel = candidate.confidence.alertLevel || "none";
+        head.appendChild(score);
+      }
+      const summary = document.createElement("div"); summary.setAttribute("data-reset-signal-summary", ""); summary.textContent = candidate.summary || "未提供摘要";
+      const source = document.createElement("div"); source.setAttribute("data-reset-signal-source", ""); source.textContent = `${resetVerificationLabel(candidate)} · ${resetDeliveryTypeLabel(candidate)} · ${resetDeliveryPresentation(candidate, notice).text.replace(/^到账状态：/u, "")}`;
+      const evidence = document.createElement("div"); evidence.setAttribute("data-reset-signal-evidence", ""); evidence.textContent = candidate.evidence ? `原文依据：${candidate.evidence}` : "原文依据：未提供";
+      card.append(head, summary, source, evidence); feed?.appendChild(card);
+    });
+    const diagnostics = [
+      `检查状态：${notice.checkStatus || "never"}`,
+      `最近成功采集：${resetLocalTime(notice.lastSuccessAt)}`,
+      `采集来源：FxEmbed RSS 转发原帖（第三方转发，非 X 官方 API）`,
+      `检查频率：${resetMonitorIntervalLabel(notice.monitor || notice)}；时间展示：${timeMode === "relative" ? "相对时间" : "本机绝对时间"}。RSS 转发可能有缓存延迟，非 X 实时推送。`,
+      confidence ? `证据置信度：${confidence.value}%（${confidence.alertLevel === "red" ? "红色预警" : confidence.alertLevel === "yellow" ? "黄色预警" : "低于70%不预警"}）\n评分依据：${confidence.reasons.join("、")}` : "证据置信度：暂无足够记录",
+      analysis.summary ? `历史通盘分析：${analysis.summary}` : "",
+      notice.checkMessage || "等待自动检查。",
+      event?.timeBasis ? `时间依据：${event.timeBasis}` : "",
+      event?.evidence ? `当前公告原文摘要：${event.evidence}` : "",
+      `重置类型：${resetDeliveryTypeLabel(event)}；${delivery.text}`,
+      notice.accountReset
+        ? `当前账号重置次数：直接 ${notice.accountReset.directCount ?? "--"} · 重置次数 ${notice.accountReset.bankedCount ?? "--"} · 来源 ${notice.accountReset.source || "本地读取"}`
+        : "当前账号重置次数：当前 Codex 数据未提供，无法确认本次增量是否到账",
+      "这是公开公告的预计时间；“已到账”仅在账号次数增加或明确到账证据支持时显示。",
+    ].filter(Boolean).join("\n");
+    set("[data-reset-details]", diagnostics);
     const link = dialog.querySelector("a");
     const source = /^https:\/\/x\.com\/thsottiaux\/status\/\d{16,22}$/.test(event?.sourceUrl || "") ? event.sourceUrl : "https://x.com/thsottiaux";
     if (link.href !== source) link.href = source;
     setTextIfChanged(link, event ? "查看原始公告 ↗" : "查看 @thsottiaux 主页 ↗");
+    set("[data-reset-footer] span", event?.targetAt && alertLevel !== "none" ? `公告时间：${range}` : event?.publishedAt ? `已记录：${resetLocalTime(event.publishedAt)}` : "达到 70% 且有明确时间后才展示倒计时");
   }
 
   function openResetNotice() {
@@ -6730,8 +7747,15 @@
     if (!dialog) {
       dialog = document.createElement("dialog"); dialog.id = RESET_DIALOG_ID;
       dialog.setAttribute("aria-labelledby", "aiyoucodex-reset-dialog-title");
-      dialog.innerHTML = '<header><h2 id="aiyoucodex-reset-dialog-title">重置公告</h2><button type="button" aria-label="关闭重置公告">×</button></header><p data-reset-details></p><a target="_blank" rel="noopener noreferrer"></a>';
-      dialog.querySelector("button").onclick = () => dialog.close();
+      dialog.innerHTML = '<div data-reset-shell><header><div><p data-reset-eyebrow>CODEX RESET MONITOR</p><h2 id="aiyoucodex-reset-dialog-title">重置公告</h2></div><button type="button" data-reset-close aria-label="关闭重置公告">×</button></header><section data-reset-hero><div data-reset-hero-status></div><strong data-reset-hero-value></strong><div data-reset-hero-summary></div><div data-reset-hero-delivery></div><div data-reset-hero-confidence></div><div data-reset-scope></div><div data-reset-time></div></section><section data-reset-meta><div data-reset-meta-card="history"><small>历史信号</small><strong></strong></div><div data-reset-meta-card="completed"><small>最近完成</small><strong></strong></div><div data-reset-meta-card="checked"><small>最近检查</small><strong></strong></div><div data-reset-meta-card="schedule"><small>监控频率</small><strong></strong></div></section><section data-reset-feed><div data-reset-section-title>最近信号<span>按发布时间倒序</span></div><div data-reset-history-summary></div><div data-reset-feed-list></div></section><details><summary>查看采集状态与口径</summary><div data-reset-details></div></details><footer data-reset-footer><a target="_blank" rel="noopener noreferrer"></a><span></span></footer></div>';
+      dialog.querySelector("[data-reset-hero]")?.insertAdjacentHTML("afterbegin", '<div data-reset-hero-question>接下来会有 Codex 重置吗？</div>');
+      dialog.querySelector("[data-reset-meta]")?.insertAdjacentHTML("beforeend", '<div data-reset-meta-card="local"><small>当前本机时间</small><strong data-reset-local-time></strong></div>');
+      dialog.querySelector("[data-reset-meta]")?.insertAdjacentHTML("afterend", '<section data-reset-history><div data-reset-section-title><span>历史信号热力</span><span>完整记录概览</span></div><div data-reset-history-caption></div><div data-reset-history-grid role="img" aria-label="最近十二周重置信号热力图"></div><div data-reset-history-legend><span data-level="0">少</span><span data-level="1"></span><span data-level="2"></span><span data-level="3"></span><span data-level="4">多</span></div></section>');
+      dialog.querySelector("[data-reset-feed] [data-reset-section-title]")?.insertAdjacentHTML("afterend", '<div data-reset-time-switch role="group" aria-label="信号时间显示"><button type="button" data-reset-time-mode="absolute" aria-pressed="true">精确</button><button type="button" data-reset-time-mode="relative" aria-pressed="false">相对</button></div>');
+      dialog.querySelectorAll("[data-reset-time-mode]").forEach((button) => {
+        button.onclick = () => { dialog.dataset.resetTimeMode = button.dataset.resetTimeMode || "absolute"; renderResetNoticeDetails(dialog); };
+      });
+      dialog.querySelector("[data-reset-close]").onclick = () => dialog.close();
       document.body.appendChild(dialog);
     }
     if (dialog.open) { dialog.close(); return; }
@@ -6796,25 +7820,10 @@
     const host = searchSlot?.parentElement;
     if (!host) return;
     protectHeaderControlsFromDrag(host);
-    let button = document.getElementById(TOGGLE_ID);
-    if (button?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN) {
-      button?.remove();
-      button = null;
-    }
-    if (!button) {
-      button = document.createElement("button");
-      button.id = TOGGLE_ID;
-      button.type = "button";
-      button.className = `${search.className} codex-conversation-view-switch`;
-      button.setAttribute("role", "switch");
-      button.dataset.codexPreviewRuntime = RUNTIME_TOKEN;
-    }
-    button.onpointerdown = handleViewTogglePointerDown;
-    button.onclick = handleViewToggleClick;
-    const settingsButton = document.getElementById(SHORTCUT_SETTINGS_BUTTON_ID);
-    const before = settingsButton?.parentElement === host ? settingsButton : searchSlot;
-    if (button.parentElement !== host || button.nextElementSibling !== before) host.insertBefore(button, before);
-    ensureUsageStatus(host, button);
+    const headerToggle = document.getElementById(TOGGLE_ID);
+    if (headerToggle && !headerToggle.closest(`#${SHORTCUT_SETTINGS_ID}`)) headerToggle.remove();
+    document.getElementById(SHORTCUT_SETTINGS_BUTTON_ID)?.remove();
+    ensureUsageStatus(host, searchSlot);
     updateViewState();
   }
 
@@ -6995,7 +8004,7 @@
     syncFeature("panels", () => { restoreAssetConsoleOpenIntent(); restoreDetachedAssetConsolePanel(); restoreEfficiencyPanelMount(); });
     syncFeature("shortcuts", ensureShortcutGrid);
     syncFeature("skills", () => { ensureSkillOrganizer(); resumeSkillsGroupingOpenRequest(); });
-    syncFeature("header", () => { ensureViewToggle(); ensureShortcutSettingsButton(); ensureTaskContextButton(); });
+    syncFeature("header", () => { ensureViewToggle(); ensureTaskContextButton(); });
     if (nativeActivityViewOpen()) {
       if (sectionEnhancementMounted()) clearSectionEnhancement();
       syncFeature("history", ensureRecoveredConversationHistory);
@@ -7148,7 +8157,7 @@
       lastSyncAt, syncCount, errors: { ...componentErrors },
       components: {
         sidebar: state("sidebar", sidebarRoot()),
-        header: state("header", document.getElementById(TOGGLE_ID)),
+        header: state("header", document.getElementById(USAGE_ID)),
         shortcuts: state("shortcuts", document.getElementById(SHORTCUT_GRID_ID)),
         sections: state("sections", document.getElementById(SECTION_TABS_ID), nativeActivityViewOpen()),
         folders: state("folders", document.getElementById(FOLDER_SWITCHER_ID), activeSectionTab !== "项目" || emptyFolders),
@@ -7264,7 +8273,7 @@
   function observeHost() {
     if (!destroyed && observer) observer.observe(document.documentElement, {
       childList: true, subtree: true, attributes: true,
-      attributeFilter: ["data-state", "aria-expanded", "data-app-action-sidebar-thread-id", "data-app-action-sidebar-thread-title"],
+      attributeFilter: ["data-state", "aria-expanded", "aria-label", "aria-disabled", "disabled", "title", "data-app-action-sidebar-project-id", "data-app-action-sidebar-project-label", "data-app-action-sidebar-thread-id", "data-app-action-sidebar-thread-title"],
     });
   }
 
@@ -7273,6 +8282,10 @@
     const owned = `#aiyoucodex-skill-details, #${WORKSPACE_FOLDER_BUTTON_ID}, #${WORKSPACE_FOLDER_MENU_ID}, .codex-skill-context-menu, #aiyoucodex-native-shortcut-notice, #${SHORTCUT_GRID_ID}, #${SECTION_TABS_ID}, #${FOLDER_SWITCHER_ID}, #${SHORTCUT_SETTINGS_ID}, #${SKILL_ORGANIZER_ID}, #${CUSTOM_SHORTCUT_PAGE_ID}, #${ASSET_CONSOLE_PAGE_ID}, #${EFFICIENCY_PANEL_ID}, #${TASK_CONTEXT_BUTTON_ID}, #${USAGE_ID}, #${TOGGLE_ID}, #${FALLBACK_TOOLTIP_ID}, .${CARD_CONTENT_CLASS}, .${SUMMARY_CLASS}, .${STATUS_BUTTON_CLASS}`;
     if (records.some((record) => {
       const target = record.target?.nodeType === 1 ? record.target : record.target?.parentElement;
+      // Our synchronous renderer is disconnected from this observer. Removed
+      // descendants here therefore need repair even inside an enhanced root.
+      if (record.type === "childList" && record.removedNodes.length
+        && target?.closest?.(`#${SECTION_TABS_ID}, #${FOLDER_SWITCHER_ID}, #${SHORTCUT_GRID_ID}`)) return true;
       if (target?.closest?.(owned)) return false;
       if (record.type === "childList") {
         const changed = [...record.addedNodes, ...record.removedNodes];
@@ -7383,7 +8396,8 @@
     for (const request of skillOrganizationRequests.values()) { clearTimeout(request.timer); request.resolve(null); }
     skillOrganizationRequests.clear(); closeSkillContextMenu();
     closeSkillDetails(false); skillDetailsDialog?.remove(); skillDetailsDialog = null;
-    efficiencyExecutionPreview = null; document.getElementById(TASK_CONTEXT_BUTTON_ID)?.remove();
+    efficiencyExecutionPreview = null; taskContextButton?.remove(); taskContextButton = null;
+    document.querySelectorAll(`#${TASK_CONTEXT_BUTTON_ID}, #${WORKSPACE_FOLDER_BUTTON_ID}`).forEach((node) => node.remove());
     document.getElementById(SHORTCUT_SETTINGS_ID)?.remove();
     clearSectionEnhancement();
     closeCustomShortcutPanel(false);
@@ -7439,6 +8453,8 @@
     setSkillOrganization,
     resolveSkillOrganizationRequest,
     ensureManagedShortcut,
+    nativeShortcutStatus,
+    openShortcutSettings,
     openSkillsGrouping,
     openAssetConsolePanel,
     openEfficiencyPanel,

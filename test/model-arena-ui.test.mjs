@@ -8,7 +8,7 @@ import os from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { createArenaHandler } from "../lib/model-arena/http.mjs";
 import { ArenaService } from "../lib/model-arena/service.mjs";
-import { inspectMedia, runMediaTool, composeVideos } from "../lib/model-arena/media.mjs";
+import { inspectMedia, runMediaTool, composeVideos, composeImages } from "../lib/model-arena/media.mjs";
 import { streamAssetFile } from "../vendor/codex-workspace-enhancer/asset-browser/media-file-response.js";
 import { connectFixtureBrowser, waitForBrowserState } from "./helpers/browser-state.mjs";
 
@@ -26,7 +26,9 @@ test("isolated Model Arena browser: H3 configuration, references, preview gate, 
     provider: { credentials: { setSession() {} }, preflight: async () => {}, liveCheck: async () => {}, upload: async () => "https://fixture.example/reference.png",
       submit: async model => { calls.push(model.id); return { id: `fixture-task-${model.id}` }; }, poll: async () => ({ state: "succeeded", url: "https://fixture.example/result.mp4" }) },
     download: async (_, destination) => { await copyFile(video, destination); return inspectMedia(destination, "result.mp4"); },
+    downloadImage: async (_, destination) => { await copyFile(img, destination); return inspectMedia(destination, "result.png"); },
     compose: async (...args) => { try { return await composeVideos(...args); } catch (error) { assert.fail(error.cause?.message || error.message); } },
+    composeImages: async (...args) => { try { return await composeImages(...args); } catch (error) { assert.fail(error.cause?.message || error.message); } },
   }); await arena.ready;
   const json = (res, body, status = 200) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
   const readBody = async req => { let data = ""; for await (const chunk of req) { data += chunk; if (data.length > 600000) throw new Error("too large"); } return JSON.parse(data || "{}"); };
@@ -96,6 +98,23 @@ test("isolated Model Arena browser: H3 configuration, references, preview gate, 
   await client.send("Page.reload"); await wait("document.querySelectorAll('[data-pick]').length===6", "Reload restores configured panel");
   assert.match(await evalJS("document.getElementById('prompt').value"), /@图片1/);
   assert.equal(calls.length, 6); await evalJS("document.querySelector('[data-view=results]').click()"); await wait("document.querySelector('.composite video')!==null", "Result and composite survive reload");
+  await evalJS("document.querySelector('[data-view=generate]').click();document.querySelector('[data-mode=image]').click()");
+  await wait("document.querySelectorAll('[data-pick]').length===0", "Unconfigured image models stay out of the generation page");
+  assert.equal(await evalJS("document.getElementById('model-empty').hidden"), false);
+  assert.equal(await evalJS("document.getElementById('empty-config').textContent"), "去配置模型");
+  await evalJS("document.getElementById('empty-config').click()"); await wait("document.querySelectorAll('[data-image-model]').length>=20", "Empty state opens the complete image model directory");
+  await evalJS("(()=>{for(const id of ['gpt-image-2.5-sunburst','gpt-image-2.5-flare'])Array.from(document.querySelectorAll('[data-image-model]')).find(node=>node.dataset.imageModel===id).querySelector('[data-image-model-field=enabled]').checked=true;document.getElementById('save-config').click()})()");
+  await wait("!document.getElementById('generate-view').hidden", "Image configuration saves through the shared top-right settings panel");
+  await evalJS("document.querySelector('[data-mode=image]').click()");
+  await wait("document.querySelectorAll('[data-pick]').length===2", "Only configured image models are shown and selectable");
+  assert.equal(await evalJS("document.querySelectorAll('.model-pick.unavailable').length"), 0);
+  assert.equal(await evalJS("document.getElementById('model-empty').hidden"), true);
+  await evalJS("document.getElementById('prompt').value='@图片1 保持人物，改为雨夜电影海报';document.getElementById('prompt').dispatchEvent(new Event('input'));document.getElementById('preview').click()");
+  await wait("document.getElementById('preview-dialog').open", "Image requests retain the preview confirmation gate"); assert.equal(calls.length, 6);
+  await evalJS("document.getElementById('confirm').click()");
+  await wait("document.querySelectorAll('.run:first-child .result-card img').length===2", "Two image providers render horizontal results", 20000); assert.equal(calls.length, 8);
+  await evalJS("document.querySelectorAll('.run:first-child [data-select-job]').forEach(input=>input.checked=true);document.querySelector('.run:first-child [data-compose=grid]').click()");
+  await wait("document.querySelector('.run:first-child .composite img')!==null", "Image results produce a contact sheet", 20000);
   await client.send("Emulation.setDeviceMetricsOverride", { width: 440, height: 900, deviceScaleFactor: 1, mobile: false });
   assert.equal(await evalJS("document.documentElement.scrollWidth<=innerWidth+1"), true, "Narrow side panel has no page-level horizontal overflow");
 });

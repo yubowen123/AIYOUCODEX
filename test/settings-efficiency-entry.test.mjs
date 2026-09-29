@@ -22,8 +22,8 @@ test("settings output-preferences entry opens by actual mouse and keyboard inter
 }, async (t) => {
   assert.ok(executable, "Required Chrome/Chromium browser is present");
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), "aiyoucodex-settings-entry-"));
-  const fixture = `<style>*{box-sizing:border-box}body{margin:0;display:flex;height:100vh;overflow:hidden}aside{width:240px}main{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;position:relative;isolation:isolate;overflow:hidden}#native-layout{position:relative;isolation:isolate;display:flex;flex:1;min-height:0;overflow:hidden}#native-chat{display:flex;flex-direction:column;flex:1;position:relative;min-width:0;min-height:0}#native-frame{display:flex;flex-direction:column;flex:1;min-height:0;min-width:100%;position:relative}button{min-height:28px}</style>
-    <aside><div><span><button aria-label="搜索">搜索</button></span></div></aside>
+  const fixture = `<style>*{box-sizing:border-box}body{margin:0;display:flex;height:100vh;overflow:hidden}nav[data-app-navigation-rail]{width:64px;height:100vh;flex:none;display:flex;flex-direction:column}aside{width:240px}main{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;position:relative;isolation:isolate;overflow:hidden}#native-layout{position:relative;isolation:isolate;display:flex;flex:1;min-height:0;overflow:hidden}#native-chat{display:flex;flex-direction:column;flex:1;position:relative;min-width:0;min-height:0}#native-frame{display:flex;flex-direction:column;flex:1;min-height:0;min-width:100%;position:relative}button{min-height:28px}</style>
+    <nav data-app-navigation-rail><button aria-label="首页">首页</button></nav><aside><div><span><button aria-label="搜索">搜索</button></span></div></aside>
     <main data-app-shell-main-surface="default"><div id="native-layout"><div id="native-chat" data-app-shell-main-content-layout><div id="native-frame"><div id="composer" contenteditable="true">Preserve the conversation draft</div></div></div></div></main>`;
   const server = createServer((_request, response) => { response.setHeader("content-type", "text/html;charset=utf-8"); response.end(fixture); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -47,22 +47,24 @@ test("settings output-preferences entry opens by actual mouse and keyboard inter
     await client.send("Input.dispatchMouseEvent", { type: "mousePressed", ...rect, button: "left", clickCount: 1 });
     await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...rect, button: "left", clickCount: 1 });
   };
-  await click("#codex-sidebar-shortcut-settings-button");
-  await waitForBrowserState(client, "document.getElementById('codex-sidebar-shortcut-settings-dialog').open", "Settings opens through the real header button");
+  const settings = '[data-codex-sidebar-shortcut-name="设置"]';
+  await waitForBrowserState(client, `!!document.querySelector(${JSON.stringify(settings)})`, "Settings lives in the native icon rail");
+  await click(settings);
+  await waitForBrowserState(client, "document.getElementById('codex-sidebar-shortcut-settings-dialog').open", "Settings opens through the real icon-rail button");
   await click("[data-aiyou-efficiency-open]");
   await waitForBrowserState(client, `${api}.getEfficiencyState().open&&!document.getElementById('codex-sidebar-shortcut-settings-dialog').open`, "Output preferences remains open after the settings-dialog transition");
   const reachable = `(()=>{const p=document.getElementById('aiyoucodex-efficiency-panel'),c=p?.querySelector('[data-efficiency-close]');if(!p||p.hidden||!c)return false;const r=c.getBoundingClientRect();return r.width>0&&r.height>0&&r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight&&document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)===c})()`;
   await waitForBrowserState(client, reachable, "The output-preferences panel is visible and its close button receives mouse input");
   await click("[data-efficiency-close]");
   assert.equal(await client.evaluate(`${api}.getEfficiencyState().open`), false);
-  await click("#codex-sidebar-shortcut-settings-button");
+  await click(settings);
   await client.evaluate("document.querySelector('[data-aiyou-efficiency-open]').focus()");
   await client.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
   await client.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
   await waitForBrowserState(client, reachable, "Keyboard activation opens the same reachable output-preferences panel");
   await click("[data-efficiency-close]");
   await client.evaluate(`(()=>{const main=document.querySelector('main'),replacement=document.createElement('div');replacement.id='future-native-surface';replacement.style.cssText='flex:1;height:100%;min-width:0';const composer=document.getElementById('composer');replacement.appendChild(composer);main.replaceWith(replacement);window.__originalSurface={node:replacement,html:replacement.innerHTML,style:replacement.getAttribute('style')}})()`);
-  await click("#codex-sidebar-shortcut-settings-button");
+  await click(settings);
   await click("[data-aiyou-efficiency-open]");
   await waitForBrowserState(client, reachable, "Global preferences remains accessible when native main-content selectors are absent");
   assert.equal(await client.evaluate("document.getElementById('aiyoucodex-efficiency-panel').parentElement===document.body"), true);
@@ -75,7 +77,7 @@ test("settings output-preferences entry opens by actual mouse and keyboard inter
   await click("[data-efficiency-close]");
   assert.equal(await client.evaluate(`${api}.getEfficiencyState().open`), false);
   await client.evaluate(`(()=>{document.getElementById('aiyoucodex-efficiency-panel').remove();window.__nativeAppend=document.body.appendChild;document.body.appendChild=function(node){if(node.id==='aiyoucodex-efficiency-panel')throw new Error('Synthetic unavailable mount');return window.__nativeAppend.call(this,node)}})()`);
-  await click("#codex-sidebar-shortcut-settings-button");
+  await click(settings);
   await click("[data-aiyou-efficiency-open]");
   assert.equal(await client.evaluate("document.getElementById('codex-sidebar-shortcut-settings-dialog').open"), true,
     "An unexpected mount failure must not dismiss the existing settings dialog");
