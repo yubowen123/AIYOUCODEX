@@ -1,77 +1,122 @@
-import assert from "node:assert/strict";
-import test from "node:test";
-import { createResetMonitorController, resetIntervalHours } from "../lib/reset-monitor.mjs";
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { createResetMonitorController, resetIntervalHours } from '../lib/reset-monitor.mjs';
+import { acquireMonitorLock, readResetMonitorStatus, resetIntervalMinutes } from '../lib/reset-monitor-store.mjs';
+import { tickResetMonitor } from '../lib/reset-monitor-worker.mjs';
+import { readResetAnnouncements } from '../lib/reset-announcements.mjs';
+import { classifyResetPost, extractResetTime } from '../lib/reset-classifier.mjs';
+import { createResetMonitorServicePlan, installResetMonitorService } from '../lib/reset-monitor-service.mjs';
 
-const original = () => ({ id: "fixture-reset", name: "重置公告", kind: "heartbeat", status: "ACTIVE",
-  prompt: "按已保存计划检查 @thsottiaux，运行 scripts/reset-announcements.mjs collect，无变化保持安静。",
-  targetThreadId: "fixture-thread", notificationPolicy: "failed_runs_only", rrule: "FREQ=HOURLY;INTERVAL=3",
-  nextRunAt: 100000, lastRunAt: 1000, createdAt: 100, updatedAt: 1000 });
-
-test("monitor changes the native schedule, reads it back, preserves private fields and survives controller restart", async () => {
-  let item = original(), writes = 0;
-  const request = async (method, payload) => {
-    if (method === "list-automations") return { items: [item, { ...original(), id: "unrelated", prompt: "unrelated" }] };
-    writes++; item = { ...item, ...payload, updatedAt: item.updatedAt + 1, nextRunAt: payload.status === "PAUSED" ? null : 999000 };
-    return { item };
-  };
-  const controller = createResetMonitorController({ nativeRequest: request });
-  const before = await controller.snapshot();
-  const saved = await controller.request({ action: "save", ...before, intervalHours: 6, enabled: true });
-  assert.equal(item.rrule, "FREQ=HOURLY;INTERVAL=6");
-  assert.equal(saved.intervalHours, 6); assert.equal(saved.nextRunAt, 999000);
-  for (const key of ["id", "name", "prompt", "targetThreadId", "notificationPolicy"]) assert.equal(item[key], original()[key]);
-  assert.equal(writes, 1);
-  assert.deepEqual(await createResetMonitorController({ nativeRequest: request }).snapshot(), saved);
-  await controller.request({ action: "save", ...saved, intervalHours: 6, enabled: true });
-  assert.equal(writes, 1, "Unchanged saves do not reset the next run");
-  const paused = await controller.request({ action: "save", ...saved, intervalHours: 6, enabled: false });
-  assert.equal(paused.enabled, false); assert.equal(paused.nextRunAt, null);
-  const resumed = await controller.request({ action: "save", ...paused, intervalHours: 3, enabled: true });
-  assert.equal(resumed.enabled, true); assert.equal(resumed.intervalHours, 3);
+const NOW = Date.parse('2026-09-27T12:00:00Z');
+const POST = { sourceUrl: 'https://x.com/thsottiaux/status/2100000000000000001', publishedAt: new Date(NOW).toISOString() };
+async function fixture(t) {
+  const root = await mkdtemp(path.join(tmpdir(), 'aiyou-internal-reset-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  return { root, filePath: path.join(root, 'monitor.json'), announcementPath: path.join(root, 'announcements.json') };
+}
+test('monitor persists settings, rejects stale windows, and never depends on native automations', async t => {
+  const f = await fixture(t);
+  const control = createResetMonitorController({filePath:f.filePath,now:()=>NOW});
+  const initial = await control.snapshot();
+  assert.equal(initial.enabled, true); assert.equal(initial.intervalMinutes, 15); assert.equal(initial.running, false);
+  const saved = await control.request({...initial,action:'save',intervalMinutes:6});
+  assert.equal(saved.intervalMinutes, 6);
+  assert.deepEqual(await createResetMonitorController({filePath:f.filePath,now:()=>NOW}).snapshot(), saved);
+  assert.deepEqual(await control.request({...saved,action:'save'}), saved);
+  await assert.rejects(control.request({...initial,action:'save',intervalHours:4}), /已变化/);
+  const paused = await control.request({...saved,action:'save',enabled:false});
+  assert.equal(paused.enabled,false); assert.equal(paused.nextRunAt,null);
+  for (const value of [0, -1, 1.5, 169, NaN, Infinity, '3', null]) assert.throws(()=>resetIntervalHours(value));
+  for (const value of [0, -1, 1.5, 10081, NaN, Infinity, '1', null]) assert.throws(()=>resetIntervalMinutes(value));
+  await writeFile(f.filePath, 'broken');
+  await assert.rejects(control.snapshot());
+  assert.equal(await readFile(f.filePath,'utf8'),'broken');
 });
-
-test("invalid hours, stale window, missing and duplicate plans never write", async () => {
-  for (const value of [0, -1, 1.5, 169, NaN, Infinity, "3", null]) assert.throws(() => resetIntervalHours(value));
-  for (const value of [1, 3, 168]) assert.equal(resetIntervalHours(value), value);
-  let items = [original()], writes = 0;
-  const controller = createResetMonitorController({ nativeRequest: async method => {
-    if (method !== "list-automations") writes++;
-    return { items };
-  } });
-  const before = await controller.snapshot();
-  items[0] = { ...items[0], prompt: items[0].prompt + "新要求" };
-  await assert.rejects(controller.request({ action: "save", ...before, enabled: true, intervalHours: 5 }), /已变化/);
-  items = []; assert.equal((await controller.snapshot({ refresh: true })).configured, false);
-  await assert.rejects(controller.request({ action: "save", ...before, enabled: true, intervalHours: 5 }), /不存在/);
-  items = [original(), { ...original(), id: "duplicate" }];
-  const duplicate = await controller.snapshot({ refresh: true });
-  assert.equal(duplicate.available, false); assert.match(duplicate.message, /多个/);
-  assert.equal(writes, 0);
+test('worker lock allows a single live owner and can reclaim dead owners', async t => {
+  const f=await fixture(t), lock=path.join(f.root,'lock');
+  const release=await acquireMonitorLock(lock);
+  assert.equal(await acquireMonitorLock(lock),null);
+  await release();
+  await writeFile(lock,JSON.stringify({pid:2147483647,token:'dead'}));
+  const recovered=await acquireMonitorLock(lock); assert.ok(recovered); await recovered();
 });
-
-test("read failure retains cached interval; failed or unverified save is never reported as success or retried", async () => {
-  let broken = false, writes = 0;
-  const controller = createResetMonitorController({ nativeRequest: async method => {
-    if (method === "list-automations") { if (broken) throw Error("offline"); return { items: [original()] }; }
-    writes++; return { item: original() };
-  } });
-  const before = await controller.snapshot(); broken = true;
-  const failed = await controller.snapshot({ refresh: true });
-  assert.equal(failed.available, false); assert.equal(failed.intervalHours, 3);
-  broken = false;
-  await assert.rejects(controller.request({ action: "save", ...before, intervalHours: 6, enabled: true }), /未确认计划/);
-  assert.equal(writes, 1);
+test('rules recognize explicit reset types/times, not speculation, quotes or API feature announcements', () => {
+  const classify=text=>classifyResetPost({...POST,text},[],NOW);
+  const planned=classify('We will reset Codex usage for Pro users in two hours.');
+  assert.equal(planned?.status,'scheduled'); assert.equal(planned.targetAt,'2026-09-27T14:00:00.000Z');
+  assert.equal(planned.scope,'Pro'); assert.equal(planned.verification,'rss');
+  assert.notEqual(planned.deliveryStatus,'delivered');
+  const banked=classify('We are adding a banked reset for Plus and Pro users.');
+  assert.equal(banked?.status,'tentative'); assert.equal(banked.resetType,'banked'); assert.equal(banked.targetAt,null);
+  assert.equal(classify('We have granted a banked reset to Plus users.')?.status,'completed');
+  assert.equal(classify('Resets all propagated. That will be all. Have a fantastic weekend.')?.status,'completed');
+  assert.equal(classify('Reset all propagated. Sweet dreams.')?.status,'completed');
+  for(const text of ['I hope Codex will reset in two hours.', 'Will Codex reset in two hours?', 'RT @other: We will reset Codex in two hours.', 'We will not reset Codex.', 'Someone said "Codex reset is coming".', 'We will discuss Codex reset support in two hours.', 'We added a reset button for Codex.', 'We will add a reset feature to Codex.']) assert.equal(classify(text),null,text);
+  const completed=classifyResetPost({...POST,text:'Codex reset fully propagated.',references:['2100000000000000000']},[{id:'2100000000000000000'}],NOW);
+  assert.equal(completed.status,'completed'); assert.deepEqual(completed.supersedes,['2100000000000000000']);
+  assert.ok(completed.evidence.split(/\s+/).length<=25);
 });
-
-test("concurrent windows cannot submit two schedule changes", async () => {
-  let item = original(), release, writes = 0;
-  const held = new Promise(resolve => { release = resolve; });
-  const controller = createResetMonitorController({ nativeRequest: async (method, payload) => {
-    if (method === "list-automations") return { items: [item] };
-    writes++; await held; item = { ...item, ...payload, updatedAt: 2000 }; return { item };
-  } });
-  const before = await controller.snapshot();
-  const first = controller.request({ action: "save", ...before, intervalHours: 4, enabled: true });
-  await assert.rejects(controller.request({ action: "save", ...before, intervalHours: 5, enabled: true }), /另一窗口/);
-  release(); assert.equal((await first).intervalHours, 4); assert.equal(writes, 1);
+test('time parser distinguishes deadline/window and does not guess ambiguous dates or zones', () => {
+  const time=text=>extractResetTime(text,POST.publishedAt);
+  assert.equal(time('within 3 hours').precision,'deadline');
+  assert.equal(time('in 2-5 hours').precision,'window');
+  assert.equal(time('in 2-5 hours').windowStartAt,'2026-09-27T14:00:00.000Z');
+  assert.equal(time('2026-09-28 09:00 PST').targetAt,'2026-09-28T17:00:00.000Z');
+  assert.equal(time('2026-09-28 09:00 PDT').targetAt,'2026-09-28T16:00:00.000Z');
+  assert.equal(time('by 2026-09-28T09:00:00+08:00').precision,'deadline');
+  for(const text of ['tomorrow morning','midnight','soon','2026-09-28 09:00','about in 2 hours','after 2 hours','in 2-40 hours','2026-02-30 09:00 UTC','2026-02-30T09:00:00Z']) assert.equal(time(text),null,text);
+});
+test('standalone worker collects and deduplicates without a renderer, skips early/paused checks, preserves state on failure', async t => {
+  const f=await fixture(t); let calls=0;
+  const fetchImpl=async()=>{calls++;return new Response(`<rss><channel><link>https://x.com/thsottiaux</link><item><link>${POST.sourceUrl}</link><pubDate>${new Date(NOW).toUTCString()}</pubDate><description>We will reset Codex usage for Pro users in two hours.</description></item></channel></rss>`);};
+  const first=await tickResetMonitor({...f,now:NOW,fetchImpl});
+  assert.equal(first.lastStatus,'ok'); assert.equal(first.lastEventCount,1);
+  let state=await readResetAnnouncements(f.announcementPath);
+  assert.equal(state.events.length,1); assert.equal(state.reviewedPosts.length,1);
+  assert.equal((await tickResetMonitor({...f,now:NOW+1000,fetchImpl})).checked,false); assert.equal(calls,1);
+  const control=createResetMonitorController({filePath:f.filePath,now:()=>NOW});
+  let snapshot=await control.snapshot(); assert.equal(snapshot.running,true);
+  snapshot=await control.request({...snapshot,action:'save',enabled:false});
+  assert.equal((await tickResetMonitor({...f,now:NOW+8*3600000,fetchImpl,force:true})).checked,false); assert.equal(calls,1);
+  await control.request({...snapshot,action:'save',enabled:true,intervalMinutes:360});
+  const second=await tickResetMonitor({...f,now:NOW+12*3600000,fetchImpl});
+  assert.equal(second.lastEventCount,0); assert.equal(calls,2,'one overdue check, not every missed interval');
+  const failed=await tickResetMonitor({...f,now:NOW+18*3600000,fetchImpl:async()=>{throw Error('offline')}});
+  assert.equal(failed.lastStatus,'error');
+  state=await readResetAnnouncements(f.announcementPath);
+  assert.equal(state.events.length,1); assert.equal(state.reviewedPosts.length,1);
+  assert.equal((await readResetMonitorStatus(f.filePath)).nextRunAt,NOW+24*3600000);
+});
+test('minute polling, failure backoff, recovery and legacy hour configuration use the actual schedule', async t => {
+  const f=await fixture(t), control=createResetMonitorController({filePath:f.filePath,now:()=>NOW});
+  await control.request({...await control.snapshot(),action:'save',intervalMinutes:1});
+  let calls=0;
+  const fetchImpl=async()=>{calls++;return new Response(`<rss><channel><link>https://x.com/thsottiaux</link><item><link>${POST.sourceUrl}</link><pubDate>${new Date(NOW).toUTCString()}</pubDate><description>Resets all propagated. That will be all.</description></item></channel></rss>`)};
+  const initial=await tickResetMonitor({...f,now:NOW,fetchImpl});
+  assert.equal(initial.lastStatus,'ok'); assert.equal(initial.lastEventCount,1);
+  assert.equal(initial.nextRunAt,NOW+60_000);
+  assert.equal((await tickResetMonitor({...f,now:NOW+59_999,fetchImpl})).checked,false);
+  assert.equal((await tickResetMonitor({...f,now:NOW+60_000,fetchImpl})).checked,true);
+  assert.equal(calls,2);
+  const failure=await tickResetMonitor({...f,now:NOW+120_000,fetchImpl:async()=>{throw Error('offline')}});
+  assert.equal(failure.nextRunAt,NOW+240_000);
+  assert.equal((await control.snapshot()).nextRunAt,failure.nextRunAt);
+  assert.equal((await tickResetMonitor({...f,now:NOW+180_000,fetchImpl})).checked,false);
+  assert.equal((await tickResetMonitor({...f,now:NOW+240_000,fetchImpl})).nextRunAt,NOW+300_000);
+  await writeFile(f.filePath,JSON.stringify({schemaVersion:1,revision:'legacy',enabled:true,intervalHours:6,updatedAt:NOW}));
+  assert.equal((await control.snapshot()).intervalMinutes,360);
+  const fast=await control.request({...await control.snapshot(),action:'save',intervalMinutes:1});
+  assert.equal(fast.intervalMinutes,1);
+});
+test('macOS monitor installs an independent login service, never launching Codex', async t => {
+  const f=await fixture(t), home=path.join(f.root,'user & test');
+  const plan=createResetMonitorServicePlan({home,installDir:process.cwd()});
+  assert.match(plan.plist,/KeepAlive/); assert.match(plan.plist,/reset-monitor-worker/);
+  assert.doesNotMatch(plan.plist,/injector|heartbeat|\/usr\/bin\/open/);
+  assert.match(plan.plist,/user &amp; test/);
+  const result=await installResetMonitorService({home,installDir:process.cwd(),skipLaunchctl:true});
+  assert.equal(await readFile(result.plistPath,'utf8'),plan.plist);
 });

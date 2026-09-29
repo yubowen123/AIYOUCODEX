@@ -4,8 +4,23 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { createInstallPlan } from "../lib/install-config.mjs";
 
 const macOnly = { skip: process.platform !== "darwin" };
+
+test("launcher passes the existing profile as one literal shell argument", macOnly, () => {
+  const testHome = "/tmp/AIYOU profile 'quotes' $AIYOU_TEST_VALUE";
+  const { launcherScript } = createInstallPlan({ home: testHome });
+  const assignment = launcherScript.split("\n").find(line => line.startsWith("AIYOU_CODEX_USER_DATA_DIR="));
+  const launch = launcherScript.slice(launcherScript.lastIndexOf('/usr/bin/open -na'));
+  // Only parse arguments in an isolated shell; never launch, quit or connect
+  // to the user's app from this regression test.
+  const result = spawnSync("/bin/zsh", ["-c", `PORT=9231\nAPP_PATH=/unused/ChatGPT.app\n${assignment}\n${launch.replace('/usr/bin/open', '/usr/bin/printf "%s\\n"')}`], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  const args = result.stdout.trim().split("\n");
+  assert.ok(args.includes(`--user-data-dir=${path.join(testHome, "Library", "Application Support", "Codex")}`));
+  assert.ok(args.includes("--remote-debugging-port=9231"));
+});
 
 test("installer dry-run renders portable user paths and XML-safe launch configuration", macOnly, async () => {
   const testHome = await mkdtemp(path.join(os.tmpdir(), "codex-sidebar-home-"));
@@ -73,6 +88,10 @@ test("installer activation writes a loadable user LaunchAgent without invoking l
     const launcherSource = await readFile(launcherExecutable, "utf8");
     assert.match(launcherSource, /PORT=9231/);
     assert.match(launcherSource, /--remote-debugging-port=\$\{PORT\}/);
+    assert.match(launcherSource, /--user-data-dir=\$\{AIYOU_CODEX_USER_DATA_DIR\}/,
+      "The user launcher must use the same explicit Codex profile as desktop-runtime");
+    assert.ok(launcherSource.includes(path.join(testHome, "Library", "Application Support", "Codex")),
+      "Reuse the existing Codex profile, not a new or empty browser profile");
     assert.match(
       launcherSource,
       /--enable-features=LocalNetworkAccessForSubframeNavigationsWarningOnly/,

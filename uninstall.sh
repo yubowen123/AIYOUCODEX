@@ -6,6 +6,7 @@ LAUNCHER_PATH="${HOME}/Applications/AIYOUcodex.app"
 LEGACY_LAUNCHER_PATH="${HOME}/Applications/Codex Sidebar Enhancer.app"
 LOGS_DIR="${HOME}/Library/Logs/CodexSidebarEnhancer"
 PLIST_PATH="${HOME}/Library/LaunchAgents/com.yubowen.codex-sidebar-enhancer.plist"
+RESET_PLIST_PATH="${HOME}/Library/LaunchAgents/com.yubowen.aiyoucodex-reset-monitor.plist"
 LEGACY_PLIST_PATH="${HOME}/Library/LaunchAgents/com.yubowen.codex-conversation-preview.plist"
 LEGACY_TASKBOARD_MARKER="${INSTALL_DIR}/.legacy-taskboard-disabled"
 
@@ -17,6 +18,7 @@ esac
 if [[ "${CODEX_SIDEBAR_SKIP_LAUNCHCTL:-0}" != "1" ]]; then
   DOMAIN="gui/$(id -u)"
   launchctl bootout "${DOMAIN}" "${PLIST_PATH}" >/dev/null 2>&1 || true
+  launchctl bootout "${DOMAIN}" "${RESET_PLIST_PATH}" >/dev/null 2>&1 || true
   launchctl bootout "${DOMAIN}" "${LEGACY_PLIST_PATH}" >/dev/null 2>&1 || true
   if [[ -f "${LEGACY_TASKBOARD_MARKER}" ]]; then
     while IFS= read -r LEGACY_LABEL; do
@@ -40,6 +42,7 @@ fi
 
 for TARGET in \
   "${PLIST_PATH}" \
+  "${RESET_PLIST_PATH}" \
   "${LEGACY_PLIST_PATH}" \
   "${LAUNCHER_PATH}" \
   "${LEGACY_LAUNCHER_PATH}" \

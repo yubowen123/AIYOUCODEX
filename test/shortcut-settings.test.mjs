@@ -42,11 +42,10 @@ test("managed local shortcuts use the same panel without becoming deletable cust
   assert.match(source, /if \(item\.custom\) \{\s*const remove/s);
 });
 
-test("settings opens on pointerdown and header controls converge on one stable order", () => {
-  assert.match(source, /button\.onpointerdown = handleShortcutSettingsPointerDown/);
-  assert.match(source, /function handleShortcutSettingsPointerDown\(event\)/);
-  assert.match(source, /const before = settingsButton\?\.parentElement === host \? settingsButton : searchSlot/);
-  assert.match(source, /button\.nextElementSibling !== searchSlot\) host\.insertBefore\(button, searchSlot\)/);
+test("settings lives in shortcuts and view toggle lives in settings", () => {
+  assert.match(source, /item\.kind === "settings"\) openShortcutSettings\(\)/);
+  assert.match(source, /<h3>展示方式<\/h3>\s*<button id="\$\{TOGGLE_ID\}"/);
+  assert.match(source, /document\.getElementById\(SHORTCUT_SETTINGS_BUTTON_ID\)\?\.remove\(\)/);
 });
 
 test("settings exposes the AIYOUcodex brand without changing its accessibility contract", () => {

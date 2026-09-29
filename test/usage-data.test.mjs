@@ -47,6 +47,26 @@ test("latest Codex rate-limit event determines the truthful remaining percentage
   });
 });
 
+test("explicit reset counters are exposed without treating credits balance as a reset count", async () => {
+  const { parseRateLimitLines, presentRateLimit } = await usageModule();
+  const lines = [JSON.stringify({
+    timestamp: "2026-09-23T10:00:00Z",
+    type: "event_msg",
+    payload: {
+      type: "token_count",
+      rate_limits: {
+        limit_id: "codex",
+        primary: { used_percent: 20, window_minutes: 10080, resets_at: 1786825820 },
+        reset_counts: { direct: 1, banked: 2, total: 3 },
+        credits: { balance: "999" },
+      },
+    },
+  })];
+  const usage = parseRateLimitLines(lines);
+  assert.deepEqual(usage.resetAccount, { source: "codex-rate-limits", directCount: 1, bankedCount: 2, totalCount: 3 });
+  assert.deepEqual(presentRateLimit(usage).resetAccount, usage.resetAccount);
+});
+
 function tokenEvent(info, timestamp = "2026-09-06T10:00:00Z") {
   return JSON.stringify({ type: "event_msg", timestamp, payload: { type: "token_count", info } });
 }

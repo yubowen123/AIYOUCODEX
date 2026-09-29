@@ -4,6 +4,7 @@ import { createInstallPlan, LEGACY_TASKBOARD_LABELS } from "../lib/install-confi
 import { access, mkdir, rm, unlink, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { installResetMonitorService } from "../lib/reset-monitor-service.mjs";
 
 function parseArgs(argv) {
   const options = { dryRun: false, activate: false, skipLaunchctl: false, launchctlPath: "launchctl" };
@@ -36,6 +37,7 @@ if (options.dryRun) {
   await writeFile(plan.plistPath, plan.plist, { mode: 0o644 });
   await writeFile(path.join(plan.launcherContentsDir, "Info.plist"), plan.launcherInfoPlist, { mode: 0o644 });
   await writeFile(plan.launcherExecutablePath, plan.launcherScript, { mode: 0o755 });
+  const resetMonitor = await installResetMonitorService({ ...options, home: plan.home, installDir: plan.installDir, nodePath: plan.nodePath });
   const legacyPlistPath = path.join(plan.launchAgentsDir, "com.yubowen.codex-conversation-preview.plist");
   if (!options.skipLaunchctl) {
     const domain = `gui/${process.getuid()}`;
@@ -69,6 +71,7 @@ if (options.dryRun) {
   }
   process.stdout.write(`${JSON.stringify({
     activated: true,
+    resetMonitor,
     launchctlSkipped: options.skipLaunchctl,
     label: plan.label,
     plistPath: plan.plistPath,

@@ -49,6 +49,9 @@ test("Windows Taskboard data remains outside the replaceable installation direct
   });
 
   const dataDir = plan.children[1].env.CODEX_TASKBOARD_DATA_DIR;
+  assert.equal(plan.children.length, 4);
+  assert.equal(plan.children[2].name, 'reset-monitor');
+  assert.equal(plan.children[2].args[0], path.win32.join(root, 'scripts', 'reset-monitor-worker.mjs'));
   assert.equal(dataDir, "C:\\Users\\tester\\AppData\\Local\\CodexSidebarEnhancer\\Data\\Taskboard");
   assert.equal(dataDir.startsWith(root), false);
 });

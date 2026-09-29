@@ -75,6 +75,10 @@ test("task context has a native-header entry, isolated drafts, read-only summari
 
   await update();
   assert.equal(await client.evaluate("document.getElementById('aiyoucodex-task-context-open').parentElement.id"), "native-actions");
+  assert.deepEqual(await client.evaluate(`[...document.querySelectorAll('#aiyoucodex-workspace-folder-open,#aiyoucodex-task-context-open')].map(e=>({label:e.getAttribute('aria-label'),text:e.textContent,icon:!!e.querySelector('svg[aria-hidden=true]'),width:e.getBoundingClientRect().width}))`), [
+    { label: "打开文件", text: "", icon: true, width: 32 },
+    { label: "任务上下文", text: "", icon: true, width: 32 },
+  ], "Both entries are square icons with accessible names, not titlebar text");
   await click("#native-share");
   assert.equal(await client.evaluate("window.__shareClicks"), 1, "Injected entry does not overlap or steal the Share control");
   await client.evaluate(`${api}.openEfficiencyPanel()`);
@@ -207,6 +211,59 @@ test("task context has a native-header entry, isolated drafts, read-only summari
   await waitForBrowserState(client, "document.querySelectorAll('#aiyoucodex-task-context-open').length===1", "The toolbar entry returns after the scheduled DOM-repair pass, even when the snapshot is unchanged");
   await click("[data-efficiency-close]");
   assert.equal(await client.evaluate(`${api}.getEfficiencyState().open`), false);
+
+  // New shell: the first obstacle belongs to the title, while actions are a
+  // sibling group. A hidden old surface must not win over the active header.
+  await client.evaluate(`document.getElementById('native-header').innerHTML = '<div data-testid="app-shell-header-context-menu-surface" aria-hidden="false" style="display:none"><div data-app-shell-header-obstacle="true"><button>Old hidden actions</button></div></div><div data-testid="app-shell-header-context-menu-surface" aria-hidden="false"><div id="title-obstacle" data-app-shell-header-obstacle="true"></div><div role="tablist"><button role="tab">Current conversation</button><button aria-label="新标签页">+</button></div></div><div id="right-actions" style="display:flex;gap:6px;flex-shrink:0;align-items:center"><span style="display:contents"><button id="right-layout" aria-label="布局">☷</button></span><button id="right-collapse" aria-label="折叠">−</button><button id="right-panel" aria-label="添加面板">+</button></div>'; window.__layoutClicks=0; document.getElementById('right-layout').onclick=()=>window.__layoutClicks++`);
+  await update();
+  await waitForBrowserState(client, "document.getElementById('aiyoucodex-task-context-open')?.parentElement.id==='right-actions'", "Actions migrate from the old title obstacle to the new right toolbar");
+  assert.equal(await client.evaluate("document.querySelector('#title-obstacle button')===null"), true);
+  const rightPlacement = `(()=>{const ids=['aiyoucodex-workspace-folder-open','aiyoucodex-task-context-open','right-layout','right-collapse','right-panel'];const boxes=ids.map(id=>document.getElementById(id).getBoundingClientRect());return boxes.every((b,i)=>b.width>0&&b.top>=0&&b.right<=innerWidth&&(!i||b.left>=boxes[i-1].right-1)&&Math.abs(b.top+b.height/2-boxes[0].top-boxes[0].height/2)<2)})()`;
+  assert.equal(await client.evaluate(rightPlacement), true, "Folder, context and native controls share one non-overlapping right-aligned row");
+  await click("#right-layout");
+  assert.equal(await client.evaluate("window.__layoutClicks"), 1);
+  await click("#aiyoucodex-workspace-folder-open");
+  assert.equal(await client.evaluate("document.querySelector('#aiyoucodex-workspace-folder-menu').hidden"), false, "Folder menu remains reachable from the new right-side icon");
+  await client.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
+  assert.equal(await client.evaluate("document.activeElement.id"), "aiyoucodex-workspace-folder-open");
+  await click("#aiyoucodex-task-context-open");
+  assert.equal(await client.evaluate(`${api}.getEfficiencyState().open`), true);
+  await click("#aiyoucodex-task-context-open");
+  assert.equal(await client.evaluate(`${api}.getEfficiencyState().open`), false);
+  await client.evaluate("document.getElementById('right-actions').replaceWith(document.getElementById('right-actions').cloneNode(true))");
+  await update();
+  await waitForBrowserState(client, "document.getElementById('aiyoucodex-task-context-open')?.onclick!==null", "A toolbar clone is repaired with the event-owning context button");
+  await click("#aiyoucodex-task-context-open");
+  assert.equal(await client.evaluate(`${api}.getEfficiencyState().open`), true);
+  await click("#aiyoucodex-task-context-open");
+  assert.equal(await client.evaluate("document.querySelectorAll('#aiyoucodex-task-context-open').length"), 1);
+  assert.equal(await client.evaluate("document.querySelectorAll('#aiyoucodex-workspace-folder-open').length"), 1);
+  await client.send("Emulation.setDeviceMetricsOverride", { width: 540, height: 700, deviceScaleFactor: 1.5, mobile: false });
+  assert.equal(await client.evaluate(rightPlacement), true, "Icon buttons fit the narrow header without hiding native controls");
+  await client.send("Emulation.clearDeviceMetricsOverride");
+  const syncBefore = await client.evaluate(`${api}.getHealth().syncCount`);
+  await delay(350);
+  assert.ok((await client.evaluate(`${api}.getHealth().syncCount`)) - syncBefore < 4, "Right-side remounting does not cause a mutation/render loop");
+  // A subsequent host release can drop the old title test id and split the
+  // right-side controls into separate wrappers. Keep the two actions anchored
+  // before native controls instead of disappearing with the obsolete marker.
+  await client.evaluate(`document.getElementById('native-header').innerHTML = '<div id="new-title" style="flex:1;min-width:0">Current conversation</div><div id="new-menu-wrap"><button id="new-more" aria-label="更多">⋯</button></div><div id="new-layout-wrap"><button id="new-layout" aria-label="布局">☷</button></div><div id="new-panel-wrap"><button id="new-panel" aria-label="添加面板">+</button></div>';window.__newMenuClicks=0;document.getElementById('new-more').onclick=()=>window.__newMenuClicks++`);
+  await update();
+  await waitForBrowserState(client, "document.getElementById('aiyoucodex-task-context-open')?.getBoundingClientRect().width===32&&document.getElementById('aiyoucodex-workspace-folder-open')?.getBoundingClientRect().width===32", "Both actions survive an unmarked split native header");
+  assert.equal(await client.evaluate(`(()=>{const ids=['aiyoucodex-workspace-folder-open','aiyoucodex-task-context-open','new-more','new-layout','new-panel'];const boxes=ids.map(id=>document.getElementById(id).getBoundingClientRect());return boxes.every((b,i)=>b.width>0&&b.top>=0&&b.right<=innerWidth&&(!i||b.left>=boxes[i-1].right-1))})()`), true);
+  await click("#new-more");
+  assert.equal(await client.evaluate("window.__newMenuClicks"), 1);
+  await click("#aiyoucodex-task-context-open");
+  assert.equal(await client.evaluate(`${api}.getEfficiencyState().open`), true);
+  await click("#aiyoucodex-task-context-open");
+  await click("#aiyoucodex-workspace-folder-open");
+  assert.equal(await client.evaluate("document.querySelector('#aiyoucodex-workspace-folder-menu').hidden"), false);
+  await client.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
+  await client.evaluate("document.getElementById('new-menu-wrap').remove();document.getElementById('new-layout-wrap').remove();document.getElementById('new-panel-wrap').remove()");
+  await update();
+  await waitForBrowserState(client, `!(${visible("#aiyoucodex-task-context-open")})`, "Without a real native action group, entries never fall back to the title or message Share button");
+  assert.equal(await client.evaluate("document.querySelector('#title-obstacle button')===null"), true);
+  assert.equal(await client.evaluate("document.getElementById('composer').textContent"), "绝不能清除或发送的已有输入");
   await update({ ...snapshot, targetKey: "no-local-target", scopeAvailable: { project: false, thread: false }, context: {} });
   assert.deepEqual(await usageTotals(), ["--", "--"], "Unresolved native targets cannot display previously available counters");
   assert.equal(await client.evaluate(visible("#aiyoucodex-task-context-open")), false, "Nonlocal or unavailable targets do not expose an actionable task-context entry");
