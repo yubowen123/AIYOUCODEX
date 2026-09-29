@@ -195,7 +195,8 @@ test("Skills UI: all by default, real single clicks, persistent custom groups, e
     overlay.appendChild(button); document.body.appendChild(overlay);
   })()`);
   await click(`${row} .codex-skill-use`);
-  await waitForBrowserState(client, `!!document.querySelector('#composer [skill-mention-path="${imageSkill.path}"]')`, "Native picker creates a Skill mention without taskboard launcher");
+  const nativeMentionPresent = `Array.from(document.querySelectorAll('#composer [skill-mention-path]')).some(node=>node.getAttribute('skill-mention-path')===${JSON.stringify(imageSkill.path)})`;
+  await waitForBrowserState(client, nativeMentionPresent, "Native picker creates a Skill mention without taskboard launcher");
   await click(row, "right"); await client.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
   assert.equal(await client.evaluate(`!document.querySelector('${menu}')&&!document.querySelector('${panel}').hidden`), true, "Escape closes only the menu");
   await click(row, "right"); await click("#outside"); assert.equal(await client.evaluate(`!document.querySelector('${menu}')`), true);
@@ -218,7 +219,7 @@ test("Skills UI: all by default, real single clicks, persistent custom groups, e
   await click("[data-skill-manager-close]");
   assert.equal(await client.evaluate(`document.querySelector('${panel} [aria-pressed=true]').dataset.codexSkillFilter`), "all", "Deleting selected custom group falls back to all");
   assert.match(await client.evaluate("document.getElementById('composer').textContent"), /保留已有聊天草稿/);
-  assert.equal(await client.evaluate(`!!document.querySelector('#composer [skill-mention-path="${imageSkill.path}"]')`), true);
+  assert.equal(await client.evaluate(nativeMentionPresent), true);
   assert.deepEqual(await client.evaluate("window.__errors"), []);
   const count = await client.evaluate(`${api}.getHealth().syncCount`); await delay(400);
   assert.ok(await client.evaluate(`${api}.getHealth().syncCount`) - count < 4, "No self-triggered mutation loop");
