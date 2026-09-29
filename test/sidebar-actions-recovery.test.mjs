@@ -49,10 +49,14 @@ test("sidebar actions recover after partial redraw, source gaps and host clones 
   const chat = `${host} [data-codex-sidebar-current-folder-new-chat]`;
   const sortControl = '#codex-sidebar-folder-switcher [data-codex-sidebar-folder-sort]';
   const createControl = '#codex-sidebar-folder-switcher [data-codex-sidebar-project-create]';
+  const newChatControl = '#codex-sidebar-folder-switcher [data-codex-sidebar-folder-new-chat]';
   const available = `${JSON.stringify(host)}`;
   await client.evaluate(`(()=>{const folder=document.querySelector('[data-sidebar-project-kind]').cloneNode(true);folder.querySelectorAll('[id]').forEach(e=>e.id+='-b');const row=folder.querySelector('[data-app-action-sidebar-project-row]');row.dataset.appActionSidebarProjectId='p2';row.dataset.appActionSidebarProjectLabel='项目 B';row.querySelector('span').textContent='项目 B';folder.querySelectorAll('[aria-label]').forEach(e=>e.setAttribute('aria-label',e.getAttribute('aria-label').replaceAll('项目 A','项目 B')));document.querySelector('[role=list]').append(folder)})();window.__clicks=[];for(const id of ['options','create','folder-options','folder-new','folder-new-b','unrelated'])document.getElementById(id).onclick=()=>window.__clicks.push(id);window.__routes=[];window.addEventListener('message',e=>{if(e.data.type==='navigate-to-route')window.__routes.push(e.data.path)})`);
   await client.evaluate(source.replace("  window[SENTINEL] = {", "  window[SENTINEL] = { __test: { nativeGlobalProjectActionButtons },"));
   await waitForBrowserState(client, `document.querySelector(${available})?.querySelectorAll('button').length===3`, "Three project action icons mount");
+  await waitForBrowserState(client, `document.querySelector(${JSON.stringify(newChatControl)})?.disabled===false`, "The search row includes an enabled new-chat action for the selected project");
+  assert.deepEqual(await client.evaluate("[...document.querySelectorAll('#codex-sidebar-folder-switcher [data-codex-sidebar-folder-actions] > button')].map(button=>button.getAttribute('aria-label'))"),
+    ["排序设置", "创建项目", "在“项目 A”中新建对话"]);
   // This fails on the old implementation: it scans the whole document,
   // including the proxy buttons and an unrelated tool with the same label.
   assert.deepEqual(await client.evaluate(`${api}.__test.nativeGlobalProjectActionButtons().map(e=>e.id)`), ["options", "create"]);
@@ -66,14 +70,16 @@ test("sidebar actions recover after partial redraw, source gaps and host clones 
   await click(options); await click(`${proxies} button[aria-label="添加新项目"]`); await click(chat);
   await click('#codex-sidebar-folder-switcher [data-codex-sidebar-folder-actions] button[aria-label="项目 A 的项目操作"]');
   await click('#codex-sidebar-folder-switcher [data-codex-sidebar-folder-actions] button[aria-label="在 项目 A 中开始新聊天"]');
-  await click(createControl);
-  assert.deepEqual(await client.evaluate("window.__clicks"), ["options", "create", "folder-new", "folder-options", "folder-new", "create"]);
+  await click(createControl); await click(newChatControl);
+  assert.deepEqual(await client.evaluate("window.__clicks"), ["options", "create", "folder-new", "folder-options", "folder-new", "create", "folder-new"]);
   assert.equal(await client.evaluate(`document.querySelector(${JSON.stringify(sortControl)})?.getAttribute('aria-label')`), '排序设置');
   assert.deepEqual(await client.evaluate("window.__routes"), [], "Distinct actions never silently navigate to Projects");
   await click('[data-codex-sidebar-folder-tag="p2"]');
   await waitForBrowserState(client, `document.querySelector(${JSON.stringify(chat)})?.dataset.codexSidebarCurrentFolderNewChat==='p2'`, "Switching folders binds the new-chat action to the selected project");
   await click(chat);
   assert.equal(await client.evaluate("window.__clicks.at(-1)"), "folder-new-b");
+  await click(newChatControl);
+  assert.equal(await client.evaluate("window.__clicks.at(-1)"), "folder-new-b", "Search-row new chat follows the selected project, not project creation");
   await click('[data-codex-sidebar-folder-tag="p1"]');
   await waitForBrowserState(client, `document.querySelector(${JSON.stringify(chat)})?.dataset.codexSidebarCurrentFolderNewChat==='p1'`, "Returning to the first folder restores its own action");
   await client.evaluate(`const search=document.querySelector('[data-codex-sidebar-folder-search]');search.value='项目';search.dispatchEvent(new Event('input',{bubbles:true}))`);
@@ -119,6 +125,14 @@ test("sidebar actions recover after partial redraw, source gaps and host clones 
   assert.equal(await client.evaluate("window.__clicks.at(-1)"), "folder-new");
   await client.evaluate("document.getElementById('folder-new').remove()");
   await waitForBrowserState(client, `document.querySelector(${JSON.stringify(chat)})?.hidden===true`, "Missing folder create action hides new chat");
+  assert.equal(await client.evaluate(`document.querySelector(${JSON.stringify(newChatControl)})?.disabled`), true, "Search-row new chat remains visible but disabled without a matching native action");
+  await client.evaluate(`${api}.setSearchCatalog([{threadId:'11111111-1111-4111-8111-111111111111',title:'项目 A 的历史对话',projectId:'p1',projectName:'项目 A',projectRootPath:'/Users/test/project-a'}]);window.__bridgeCalls=[];window.electronBridge={sendMessageFromView:async message=>{window.__bridgeCalls.push(message)}}`);
+  await waitForBrowserState(client, `document.querySelector(${JSON.stringify(newChatControl)})?.disabled===false`, "A local project root keeps new chat usable when Codex omits the folder button");
+  await click(newChatControl);
+  await waitForBrowserState(client, "window.__routes.at(-1)==='/'", "Fallback opens the native blank composer");
+  assert.deepEqual(await client.evaluate("window.__bridgeCalls"), [{ type: "electron-set-active-workspace-root", root: "/Users/test/project-a" }]);
+  await client.evaluate(`window.electronBridge=undefined;window.__routes=[];${api}.refresh()`);
+  await waitForBrowserState(client, `document.querySelector(${JSON.stringify(newChatControl)})?.disabled===true`, "No native button or workspace bridge leaves the action honestly disabled");
   const folderOptions = '#codex-sidebar-folder-switcher [data-codex-sidebar-folder-actions] button[aria-label="项目 A 的项目操作"]';
   await waitForBrowserState(client, `!!document.querySelector(${JSON.stringify(folderOptions)})`, "Folder options remain available independently");
   await click(folderOptions);
@@ -134,6 +148,7 @@ test("sidebar actions recover after partial redraw, source gaps and host clones 
   await waitForBrowserState(client, `document.querySelector(${JSON.stringify(chat)})?.hidden===true&&!document.querySelector(${JSON.stringify(proxies)})`, "Modern layout hides unavailable actions rather than showing misleading buttons");
   assert.equal(await client.evaluate(`document.querySelector(${JSON.stringify(sortControl)})?.getBoundingClientRect().width > 0`), true, "Sorting stays visible when Codex removes its project-toolbar actions");
   assert.equal(await client.evaluate(`document.querySelector(${JSON.stringify(createControl)})?.getBoundingClientRect().width > 0`), true, "Create stays visible when Codex removes its project-toolbar actions");
+  assert.equal(await client.evaluate(`document.querySelector(${JSON.stringify(newChatControl)})?.getBoundingClientRect().width > 0`), true, "New chat stays visible when Codex removes its project-toolbar actions");
   assert.deepEqual(await client.evaluate('window.__routes'), []);
   assert.deepEqual(await client.evaluate(`${api}.__test.nativeGlobalProjectActionButtons().map(e=>e.id)`), [], "Never select a matching action from an inactive retained page");
 
@@ -165,6 +180,12 @@ test("sidebar actions recover after partial redraw, source gaps and host clones 
   await click('#codex-sidebar-folder-switcher [data-codex-sidebar-folder-sort-mode="recent"]');
   await click(createControl);
   assert.equal(await client.evaluate("window.__clicks.at(-1)"), "route-create", "Narrow sidebar does not cover the create control");
+  await client.evaluate("document.querySelector('#codex-sidebar-folder-switcher .codex-sidebar-folder-search-row').replaceWith(document.querySelector('#codex-sidebar-folder-switcher .codex-sidebar-folder-search-row').cloneNode(true))");
+  await waitForBrowserState(client, `typeof document.querySelector(${JSON.stringify(newChatControl)})?.onclick==='function'&&typeof document.querySelector(${JSON.stringify(createControl)})?.onclick==='function'&&typeof document.querySelector(${JSON.stringify(sortControl)})?.onclick==='function'`, "Cloned search-row controls regain their distinct click handlers");
+  await client.evaluate("const restored=document.createElement('button');restored.id='restored-folder-new';restored.setAttribute('aria-label','在 项目 A 中开始新聊天');restored.onclick=()=>window.__clicks.push('restored-folder-new');document.getElementById('folder-row').append(restored)");
+  await waitForBrowserState(client, `document.querySelector(${JSON.stringify(newChatControl)})?.disabled===false`, "Restored native chat action re-enables the search-row button");
+  await click(newChatControl);
+  assert.equal(await client.evaluate("window.__clicks.at(-1)"), "restored-folder-new", "Repaired button still opens a new chat rather than a project list");
   const narrowActions = await client.evaluate(`(()=>{const h=document.querySelector(${available}).getBoundingClientRect();return [...document.querySelectorAll(${JSON.stringify(host + " button:not([hidden])")})].map(b=>{const r=b.getBoundingClientRect();return {label:b.getAttribute('aria-label'),left:r.left,right:r.right,width:r.width,height:r.height,hostLeft:h.left,hostRight:h.right}})})()`);
   assert.equal(narrowActions.every(r => r.width >= 26 && r.left >= r.hostLeft && r.right <= r.hostRight && r.height > 0), true, JSON.stringify(narrowActions));
   await delay(250);

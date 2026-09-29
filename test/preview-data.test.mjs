@@ -299,6 +299,7 @@ test("repository search catalog includes every indexed thread assigned to a save
     updatedAt: "2026-06-28T09:29:06.000Z",
     projectId: "project-innovation",
     projectName: "为创新而生",
+    projectRootPath: "/Users/test/Documents/为创新而生",
   }]);
 });
 
@@ -378,7 +379,7 @@ test("repository recent catalog covers assigned and unassigned threads in global
     JSON.stringify({ id: unassignedId, thread_name: "未归类最近对话", updated_at: "2026-08-11T09:00:00Z" }),
   ].join("\n"));
   await writeFile(path.join(codexHome, ".codex-global-state.json"), JSON.stringify({
-    "local-projects": { project: { id: "project", name: "管理优化" } },
+    "local-projects": { project: { id: "project", name: "管理优化", rootPaths: ["/Users/test/Documents/管理优化"] } },
     "thread-project-assignments": { [assignedId]: { projectId: "project" } },
   }));
 
@@ -397,6 +398,7 @@ test("repository recent catalog covers assigned and unassigned threads in global
       updatedAt: "2026-08-12T11:30:00.000Z",
       projectId: "project",
       projectName: "管理优化",
+      projectRootPath: "/Users/test/Documents/管理优化",
     },
   ]);
 });

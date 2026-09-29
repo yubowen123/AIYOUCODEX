@@ -64,7 +64,7 @@ test("isolated Model Arena browser: H3 configuration, references, preview gate, 
   assert.equal(await evalJS("document.querySelector('[data-family=seedance] [data-secret]').value"), "fixture-key-not-a-credential", "Protocol changes preserve unsaved key input");
   await evalJS("document.querySelector('[data-family=seedance] [data-secret]').value=''");
   await evalJS("document.querySelectorAll('[data-field=baseUrl]').forEach(i=>{if(!i.value)i.value='https://fixture.example'});document.getElementById('save-config').click()");
-  await wait("!document.getElementById('generate-view').hidden", "Save opens generation view immediately");
+  await wait("!document.getElementById('generate-view').hidden && document.querySelectorAll('[data-pick]').length===6", "Save completes and exposes the six configured video models");
   assert.equal(await evalJS("document.querySelectorAll('[data-pick]').length"), 6);
   assert.match(await evalJS("document.getElementById('limits').textContent"), /4–15.*9 张图/);
   await evalJS("document.getElementById('library-open').click()"); await wait("document.querySelector('[data-import]')!==null", "Library picker loads persisted project assets");
