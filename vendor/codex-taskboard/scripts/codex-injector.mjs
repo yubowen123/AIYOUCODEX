@@ -1006,7 +1006,8 @@ async function readInjectionStatus(cdp) {
       version: window.__codexTaskboardInjection__?.version || null,
       sourceHash: window.__codexTaskboardInjection__?.sourceHash || null,
       scriptIdentifier: window[${JSON.stringify(injectionScriptIdentifierName)}] || null,
-      entryMounted: Boolean(document.getElementById("codex-taskboard-entry")),
+      entryMounted: Boolean(document.getElementById("codex-taskboard-entry")
+        || document.querySelector('#codex-sidebar-shortcut-grid[data-codex-shortcut-layout="rail"] [data-codex-sidebar-shortcut-name="项目管理"]')),
       pageMounted: Boolean(document.getElementById("codex-taskboard-page")),
       pageVisible: document.getElementById("codex-taskboard-page")?.hidden === false,
       frameUrl: document.getElementById("codex-taskboard-frame")?.src || null

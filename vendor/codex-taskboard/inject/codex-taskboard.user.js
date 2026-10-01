@@ -367,6 +367,16 @@
   function ensureEntry() {
     if (destroyed || !document.body) return;
     installStyles();
+    // AIYOUcodex owns the project shortcut in the new icon rail. Its legacy
+    // cloned row must not also appear above the project list. Keep the row
+    // available only for older hosts without an icon rail.
+    const iconRail = Array.from(document.querySelectorAll("nav[data-app-navigation-rail]"))
+      .some((node) => !node.closest('[data-app-shell-active-page="false"]') && node.getClientRects().length > 0);
+    const enhancedRail = document.querySelector('#codex-sidebar-shortcut-grid[data-codex-shortcut-layout="rail"]');
+    if (iconRail || enhancedRail) {
+      entry?.remove();
+      return;
+    }
     const reference = findReferenceButton();
     if (!reference?.parentElement) return;
     if (!entry) entry = createEntry(reference);

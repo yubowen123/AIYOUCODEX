@@ -66,8 +66,10 @@ test("main Codex target keeps supporting legacy Codex titles", () => {
 });
 
 test("main Codex target accepts an active conversation title on the app page", () => {
-  const main = target({ title: "优化Codex 对话展示交互样式" });
-  assert.equal(selectMainCodexTarget([main]), main);
+  for (const title of ["优化Codex 对话展示交互样式", "超级创作者的复刻之旅", "", "项目 A"]) {
+    const main = target({ title });
+    assert.equal(selectMainCodexTarget([main]), main);
+  }
 });
 
 test("main Codex target rejects routed overlays and unrelated pages", () => {
@@ -75,6 +77,8 @@ test("main Codex target rejects routed overlays and unrelated pages", () => {
     target({ title: "ChatGPT", url: "app://-/index.html?initialRoute=%2Favatar-overlay" }),
     target({ title: "ChatGPT", url: "app://-/index.html?initialRoute=%2Fglobal-dictation" }),
     target({ title: "ChatGPT", url: "https://chatgpt.com/" }),
-    target({ title: "Other" }),
+    target({ title: "Other", url: "app://-/detached-window.html" }),
+    target({ title: "Codex", url: "app://foreign/index.html" }),
+    target({ title: "Codex", type: "iframe" }),
   ]), undefined);
 });

@@ -5,13 +5,10 @@ export async function readTargets(port = 9231, { timeoutMs = 1_500 } = {}) {
 }
 
 export function isMainCodexTarget(target) {
-  const title = typeof target?.title === "string" ? target.title.trim() : "";
   // Codex can use the active conversation title for the app:// page (the
-  // local AIYOUcodex shell also prefixes it with a product label). The app
-  // scheme/path is the authoritative boundary; accept those branded titles
-  // while still rejecting arbitrary pages and detached/overlay routes.
+  // title may be entirely Chinese or temporarily empty. The native app's exact
+  // scheme, host and main-entry path define the boundary, not mutable text.
   if (target?.type !== "page"
-      || (!/^Codex$/u.test(title) && !/^ChatGPT$/u.test(title) && !/Codex/iu.test(title))
       || !target.webSocketDebuggerUrl) return false;
   let url;
   try { url = new URL(target.url); } catch { return false; }

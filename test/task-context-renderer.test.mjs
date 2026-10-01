@@ -267,6 +267,24 @@ test("task context has a native-header entry, isolated drafts, read-only summari
   await update({ ...snapshot, targetKey: "no-local-target", scopeAvailable: { project: false, thread: false }, context: {} });
   assert.deepEqual(await usageTotals(), ["--", "--"], "Unresolved native targets cannot display previously available counters");
   assert.equal(await client.evaluate(visible("#aiyoucodex-task-context-open")), false, "Nonlocal or unavailable targets do not expose an actionable task-context entry");
+  // Automatic drafts may refresh on new history; only actual human edits lock
+  // them. A generated, unsaved card is not a manual edit.
+  const automatic = { ...snapshot, targetKey: "automatic-context", contextSourceRevision: "auto-1", context: { version: 0 } };
+  await update(automatic);
+  await client.evaluate(`${api}.openTaskContextPanel()`);
+  const autoFirst = await lastRequest("summarizeContext");
+  await resolve(autoFirst, { snapshot: automatic, contextDraft: { context: { goal: "自动目标一" }, sourceRevision: "auto-1", hasContent: true } });
+  const autoCount = await client.evaluate("window.__requests.length");
+  automatic.contextSourceRevision = "auto-2";
+  await update(automatic);
+  assert.equal(await client.evaluate("window.__requests.length"), autoCount + 1, "New history automatically refreshes an unedited generated draft");
+  await resolve(await lastRequest("summarizeContext"), { snapshot: automatic, contextDraft: { context: { goal: "自动目标二" }, sourceRevision: "auto-2", hasContent: true } });
+  assert.equal(await client.evaluate("document.querySelector('[data-efficiency-field=goal]').value"), "自动目标二");
+  await input("goal", "人工修改必须保留");
+  automatic.contextSourceRevision = "auto-3";
+  await update(automatic);
+  assert.equal(await client.evaluate("window.__requests.length"), autoCount + 1);
+  assert.equal(await client.evaluate("document.querySelector('[data-efficiency-field=goal]').value"), "人工修改必须保留");
   await client.evaluate(`${api}.destroy()`);
   assert.equal(await client.evaluate("document.getElementById('aiyoucodex-task-context-open')===null"), true);
 });
