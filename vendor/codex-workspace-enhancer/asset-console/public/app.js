@@ -1,11 +1,13 @@
 import { defaultManualSmartGroup, mergeManualTags } from "./asset-metadata-ui.js";
 import { assetMediaRevision, createAssetCardReconciler, createLatestRequestGate, createRevisionPoller } from "./asset-library-state.js";
 import { createMediaPlaybackManager } from "./asset-media-lifecycle.js";
+import { descriptorFromImage, visualSimilarity } from "./character-visual.js";
 
 const libraryRequests = createLatestRequestGate();
 const bootstrapRequests = createLatestRequestGate();
 const textRequests = createLatestRequestGate();
 const mediaRequests = createLatestRequestGate();
+const characterRequests = createLatestRequestGate();
 const mediaPlayback = createMediaPlaybackManager();
 const pendingMediaHover = new WeakMap();
 const ASSET_PAGE_SIZE = 120;
@@ -32,6 +34,11 @@ const state = {
   category: "",
   query: "",
   sort: "newest",
+  view: localStorage.getItem("asset-library:view") || "thumbnail",
+  thumbnailDensity: Math.max(1, Math.min(8, Number(localStorage.getItem("asset-library:thumbnail-density")) || 7)),
+  related: localStorage.getItem("asset-library:related") !== "0",
+  characterId: "",
+  characterContext: null,
   busy: false,
   editingProject: null,
   action: null,
@@ -55,6 +62,8 @@ const els = Object.fromEntries([
   "mediaPreviewDialog", "mediaPreviewTitle", "mediaPreviewFormat", "mediaPreviewLayout", "mediaPreviewStage",
   "mediaPromptPanel", "mediaPromptMeta", "mediaPromptText", "mediaNegativePromptGroup", "mediaNegativePromptText", "mediaPromptReferences",
   "assetPagingControls", "previousAssetWindow", "nextAssetWindow", "assetWindowLabel",
+  "thumbnailViewButton", "detailViewButton", "relatedAssetsToggle", "clearCharacterFilter",
+  "characterDialog", "characterForm", "characterDialogTitle", "characterPreviewImage", "characterName", "characterState", "characterStyle", "characterParent", "characterEvidence", "characterFamilyTitle", "characterFamilyList", "characterCandidateList", "characterError", "saveCharacterButton", "findSimilarCharacters", "viewCharacterFamily", "excludeCharacterImage",
 ].map((id) => [id, document.getElementById(id)]));
 
 function escapeHtml(value) {
@@ -135,11 +144,16 @@ function selectedProject() {
 
 function setColumns(value, persist = false) {
   const columns = Math.max(1, Math.min(8, Number(value) || 4));
-  state.settings.columns = columns;
-  els.assetColumnRange.value = String(columns);
-  els.assetColumnOutput.value = String(columns);
-  document.documentElement.style.setProperty("--asset-columns", String(columns));
-  if (persist) {
+  if (state.view === "thumbnail" && persist) {
+    state.thumbnailDensity = columns;
+    localStorage.setItem("asset-library:thumbnail-density", String(columns));
+  } else if (state.view !== "thumbnail") state.settings.columns = columns;
+  const density = state.view === "thumbnail" ? state.thumbnailDensity : columns;
+  els.assetColumnRange.value = String(density);
+  els.assetColumnOutput.value = String(density);
+  document.documentElement.style.setProperty("--asset-columns", String(state.settings.columns || 4));
+  document.documentElement.style.setProperty("--thumb-size", `${Math.round(420 / state.thumbnailDensity + 36)}px`);
+  if (persist && state.view !== "thumbnail") {
     clearTimeout(setColumns.timer);
     setColumns.timer = setTimeout(() => api("/api/settings", {
       method: "PATCH",
@@ -246,13 +260,102 @@ function renderTextCard(asset) {
   card.className = "asset-card text-card";
   card.dataset.assetId = asset.id;
   card.dataset.smartGroup = asset.smartGroup;
-  card.innerHTML = `${commonCardMarkup(asset, asset.extension || "TEXT")}<div class="text-card-preview" tabindex="0">${escapeHtml(asset.preview || "暂无可预览内容")}</div><div class="card-hint">双击添加到对话 · 卡片内可滚动</div>`;
+  card.innerHTML = `${commonCardMarkup(asset, asset.extension || "TEXT")}<div class="text-card-preview" tabindex="0">${escapeHtml(asset.preview || "暂无可预览内容")}</div><div class="card-hint">双击预览详情 · 卡片内可滚动</div>`;
   card.addEventListener("dblclick", (event) => {
     if (event.target.closest("button, details, .review-actions")) return;
     event.preventDefault();
-    useAssetInCodex(assetById(card.dataset.assetId));
+    previewAsset(assetById(card.dataset.assetId));
   });
   return card;
+}
+
+function syncCharacterCard(card, asset) {
+  let identity = card.querySelector(".character-identity");
+  if (!identity) { identity = document.createElement("div"); identity.className = "character-identity"; card.append(identity); }
+  const c = asset.character || {};
+  card.dataset.characterGroup = c.groupId || "";
+  const label = c.name || (c.excluded ? "不关联" : "关联角色");
+  const detail = [c.state,c.style].filter(Boolean).join(" · ") || (c.parentAssetId ? "衍生图" : c.name ? asset.id===c.baseAssetId?"基准图":"同角色" : "");
+  identity.innerHTML = `<button class="character-badge" data-action="character" type="button" title="${escapeHtml(c.source==="manual"?"人工确认的角色关联":"本地关联线索，点击检查或纠正")}">${escapeHtml(label)}${c.count>1?` · ${c.count}`:""}</button><span class="character-variant">${escapeHtml(detail)}</span>`;
+}
+
+function characterStrip(container, assets, candidate = false) {
+  container.replaceChildren();
+  for (const asset of assets) {
+    const button = document.createElement("button"); button.type="button"; button.className="character-strip-item";
+    const subtitle = candidate ? "选择为关联来源" : asset.id === asset.character?.baseAssetId ? "基准图" : [asset.character?.state,asset.character?.style].filter(Boolean).join(" · ") || "同角色";
+    button.innerHTML = `<img src="${escapeHtml(asset.mediaUrl)}" alt="${escapeHtml(asset.title)}" loading="lazy"><span>${escapeHtml(asset.character?.name||asset.title)}</span><small>${escapeHtml(subtitle)}</small>`;
+    button.title=asset.name;
+    button.onclick=()=>{
+      if (candidate) {
+        if (asset.character?.name) els.characterName.value=asset.character.name;
+        if (![...els.characterParent.options].some(o=>o.value===asset.id)) els.characterParent.add(new Option(asset.name,asset.id));
+        els.characterParent.value=asset.id;
+        els.characterEvidence.textContent="已选择候选，确认角色名称后点击“确认关联”；尚未保存。";
+      } else { previewAsset(asset); }
+    };
+    container.append(button);
+  }
+  if (!assets.length) { const empty=document.createElement("p"); empty.className="field-hint"; empty.textContent=candidate?"暂无来源候选，可从已加载图片中本地找相似。":"尚未建立角色分组。"; container.append(empty); }
+}
+
+async function openCharacterDialog(asset) {
+  if (!asset || asset.kind!=="image") return;
+  const projectId=state.selectedProject, request=characterRequests.begin(`${projectId}:${asset.id}`);
+  state.characterContext=null; els.characterError.textContent=""; els.characterEvidence.textContent="正在读取关联…";
+  els.characterName.value=""; els.characterState.value=""; els.characterStyle.value="";
+  els.characterParent.replaceChildren(new Option("独立基准图",""));
+  els.characterFamilyList.replaceChildren(); els.characterCandidateList.replaceChildren();
+  els.characterPreviewImage.src=asset.mediaUrl; els.characterPreviewImage.alt=asset.title;
+  els.saveCharacterButton.disabled=true; els.excludeCharacterImage.disabled=true; els.viewCharacterFamily.hidden=true;
+  if (!els.characterDialog.open) els.characterDialog.showModal();
+  try {
+    const context=await api(`/api/assets/character?project=${encodeURIComponent(projectId)}&id=${encodeURIComponent(asset.id)}`, {signal:request.signal});
+    if (!request.isCurrent() || !els.characterDialog.open || state.selectedProject!==projectId) return;
+    state.characterContext={...context,projectId};
+    const c=context.asset.character||{};
+    els.characterName.value=c.name||""; els.characterState.value=c.state||""; els.characterStyle.value=c.style||"";
+    const sources=[...new Map([...context.relatives,...context.candidates,...state.assets.filter(a=>a.kind==="image"&&a.character?.name)].filter(a=>a.id!==asset.id).map(a=>[a.id,a])).values()];
+    for (const source of sources) els.characterParent.add(new Option(`${source.character?.name||"未命名"} · ${source.name}`,source.id));
+    els.characterParent.value=c.parentAssetId||"";
+    els.characterEvidence.textContent=c.excluded?"已人工排除，重新确认关联可恢复。":c.source==="manual"?"人工确认优先，自动整理不会覆盖。":c.name?"根据角色名 / 生成信息自动关联，可手动纠正；未进行身份确认。":"没有可靠角色标识。可填写名称或选择候选后确认关联。";
+    els.characterFamilyTitle.textContent=`同角色图片 · ${context.relativeTotal} 张${context.relativeTotal>120?"（预览前 120 张）":""}`;
+    characterStrip(els.characterFamilyList,context.relatives); characterStrip(els.characterCandidateList,context.candidates,true);
+    els.viewCharacterFamily.hidden=!c.groupId; els.saveCharacterButton.disabled=false; els.excludeCharacterImage.disabled=false;
+    els.characterName.focus();
+  } catch(error) { if(request.isCurrent() && error.name!=="AbortError") els.characterError.textContent=error.message; }
+}
+
+function findSimilarCharacters() {
+  if (!state.characterContext) return;
+  try {
+    const descriptor=descriptorFromImage(els.characterPreviewImage);
+    if (!descriptor) { els.characterEvidence.textContent="当前图片尚未加载完成，请稍后重试。"; return; }
+    const candidates=[]; let checked=0;
+    for (const card of [...els.assetGrid.querySelectorAll(".image-card")].slice(0,120)) {
+      const asset=assetById(card.dataset.assetId);
+      if (!asset || asset.id===state.characterContext.asset.id || asset.character?.excluded) continue;
+      const other=descriptorFromImage(card.querySelector("img")); if(!other)continue;
+      checked++;
+      const score=visualSimilarity(descriptor,other); if(score>=.78)candidates.push({asset,score});
+    }
+    const matches=candidates.sort((a,b)=>b.score-a.score).slice(0,12).map(c=>c.asset);
+    characterStrip(els.characterCandidateList,matches,true);
+    els.characterEvidence.textContent=`本地比较 ${checked} 张已加载缩略图，找到 ${matches.length} 个画面相似候选。相似不代表同一角色；未上传图片或调用模型。`;
+  } catch { els.characterEvidence.textContent="此图片无法在本地计算相似度，可手动指定角色名和来源。"; }
+}
+
+async function saveCharacter(excluded) {
+  const context=state.characterContext; if(!context)return;
+  if(!excluded && !els.characterName.value.trim()){els.characterName.reportValidity();return;}
+  els.saveCharacterButton.disabled=true; els.excludeCharacterImage.disabled=true;
+  try {
+    await api("/api/assets/character",{method:"PATCH",body:JSON.stringify({assetId:context.asset.id,projectId:context.projectId,revision:context.revision,
+      character:{name:els.characterName.value,state:els.characterState.value,style:els.characterStyle.value,parentAssetId:els.characterParent.value,excluded}})});
+    if(state.characterContext!==context)return;
+    els.characterDialog.close(); await loadLibrary({quiet:true,reset:true}); showToast(excluded?"已排除角色关联，原文件未改变":"角色关联已保存，衍生图相邻展示");
+  } catch(error){if(state.characterContext===context)els.characterError.textContent=error.message;}
+  finally {els.saveCharacterButton.disabled=false;els.excludeCharacterImage.disabled=false;}
 }
 
 function renderImageCard(asset) {
@@ -260,13 +363,17 @@ function renderImageCard(asset) {
   card.className = "asset-card image-card";
   card.dataset.assetId = asset.id;
   card.dataset.smartGroup = asset.smartGroup;
+  card.tabIndex = 0;
+  card.setAttribute("aria-label", `预览 ${asset.title}`);
   card.innerHTML = `<figure class="media-frame"><img src="${asset.mediaUrl}" alt="${escapeHtml(asset.title)}" loading="lazy"><figcaption class="dimension-label">读取尺寸…</figcaption></figure>${commonCardMarkup(asset, asset.extension || "IMAGE")}`;
   const image = card.querySelector("img");
+  syncCharacterCard(card, asset);
+  card.addEventListener("keydown", event => { if (event.target === card && event.key === "Enter") { event.preventDefault(); previewAsset(assetById(card.dataset.assetId)); } });
   image.addEventListener("load", () => { card.querySelector(".dimension-label").textContent = `${image.naturalWidth} × ${image.naturalHeight}`; });
   card.addEventListener("dblclick", (event) => {
     if (event.target.closest("button, details, .review-actions")) return;
     event.preventDefault();
-    useAssetInCodex(assetById(card.dataset.assetId));
+    previewAsset(assetById(card.dataset.assetId));
   });
   return card;
 }
@@ -276,7 +383,7 @@ function renderAudioCard(asset) {
   card.className = "asset-card audio-card";
   card.dataset.assetId = asset.id;
   card.dataset.smartGroup = asset.smartGroup;
-  card.innerHTML = `${commonCardMarkup(asset, asset.extension || "AUDIO")}<div class="audio-visual"><button class="audio-play" type="button" aria-label="播放">▶</button><div class="waveform" aria-hidden="true">${Array.from({ length: 34 }, (_, index) => `<i style="--h:${22 + ((index * 17) % 64)}%"></i>`).join("")}</div><span class="duration-label">${formatDuration(asset.duration ?? asset.durationSeconds)}</span></div><audio preload="none"></audio><div class="card-hint">鼠标移入按需试听 · 双击添加到对话</div>`;
+  card.innerHTML = `${commonCardMarkup(asset, asset.extension || "AUDIO")}<div class="audio-visual"><button class="audio-play" type="button" aria-label="播放">▶</button><div class="waveform" aria-hidden="true">${Array.from({ length: 34 }, (_, index) => `<i style="--h:${22 + ((index * 17) % 64)}%"></i>`).join("")}</div><span class="duration-label">${formatDuration(asset.duration ?? asset.durationSeconds)}</span></div><audio preload="none"></audio><div class="card-hint">鼠标移入按需试听 · 双击预览详情</div>`;
   const audio = card.querySelector("audio");
   const play = card.querySelector(".audio-play");
   audio.addEventListener("loadedmetadata", () => { card.querySelector(".duration-label").textContent = formatDuration(audio.duration); });
@@ -292,7 +399,7 @@ function renderAudioCard(asset) {
     if (event.target.closest("button, details, .review-actions")) return;
     stop();
     event.preventDefault();
-    useAssetInCodex(assetById(card.dataset.assetId));
+    previewAsset(assetById(card.dataset.assetId));
   });
   return card;
 }
@@ -303,7 +410,7 @@ function renderVideoCard(asset) {
   card.dataset.assetId = asset.id;
   card.dataset.smartGroup = asset.smartGroup;
   const aspect = Number(asset.width) > 0 && Number(asset.height) > 0 ? `${Number(asset.width)} / ${Number(asset.height)}` : "16 / 9";
-  card.innerHTML = `<figure class="media-frame"><video muted loop playsinline preload="none" style="aspect-ratio:${aspect}"></video><div class="video-overlay"><button class="video-fullscreen" type="button">⛶ 全屏</button><span class="duration-label">${formatDuration(asset.duration ?? asset.durationSeconds)}</span></div></figure>${commonCardMarkup(asset, asset.extension || "VIDEO")}<div class="card-hint">鼠标移入按需预览 · 双击添加到对话</div>`;
+  card.innerHTML = `<figure class="media-frame"><video muted loop playsinline preload="none" style="aspect-ratio:${aspect}"></video><div class="video-overlay"><button class="video-fullscreen" type="button">⛶ 全屏</button><span class="duration-label">${formatDuration(asset.duration ?? asset.durationSeconds)}</span></div></figure>${commonCardMarkup(asset, asset.extension || "VIDEO")}<div class="card-hint">鼠标移入按需预览 · 双击预览详情</div>`;
   const video = card.querySelector("video");
   video.addEventListener("loadedmetadata", () => { card.querySelector(".duration-label").textContent = formatDuration(video.duration); });
   const start = () => {
@@ -325,7 +432,7 @@ function renderVideoCard(asset) {
     clearTimeout(pendingMediaHover.get(card));
     mediaPlayback.stop(video);
     event.preventDefault();
-    useAssetInCodex(assetById(card.dataset.assetId));
+    previewAsset(assetById(card.dataset.assetId));
   });
   return card;
 }
@@ -381,7 +488,8 @@ function visibleAssets() {
   if (state.serverPaging) return state.assets;
   const query = state.query.trim().toLocaleLowerCase("zh-CN");
   const assets = state.assets.filter((asset) => {
-    if (asset.smartGroup !== state.smartGroup) return false;
+    if (state.smartGroup && asset.smartGroup !== state.smartGroup) return false;
+    if (state.characterId && asset.character?.groupId !== state.characterId) return false;
     if (state.kind !== "all" && asset.kind !== state.kind) return false;
     if (state.category && asset.category !== state.category) return false;
     if (!query) return true;
@@ -401,7 +509,7 @@ function resetAssetWindow() {
 }
 
 function libraryQueryKey() {
-  return JSON.stringify([state.selectedProject, state.smartGroup, state.kind, state.category, state.query, state.sort]);
+  return JSON.stringify([state.selectedProject, state.smartGroup, state.kind, state.category, state.query, state.sort, state.related, state.characterId]);
 }
 
 function createAssetCard(asset) {
@@ -442,6 +550,7 @@ function updateAssetCard(card, asset, previous) {
     }
   } else if (asset.kind === "image") {
     card.querySelector("img").alt = asset.title;
+    syncCharacterCard(card, asset);
   }
   return card;
 }
@@ -456,7 +565,13 @@ function renderAssets() {
   const filteredTotal = state.serverPaging ? state.filteredTotal : matchingAssets.length;
   const hasMore = state.serverPaging ? state.pageStart + assets.length < filteredTotal : matchingAssets.length > assets.length;
   const scrollTop = document.scrollingElement?.scrollTop || 0;
-  els.assetGrid.className = `asset-grid ${["image", "video"].includes(state.kind) ? "masonry" : ""}`;
+  document.body.dataset.libraryView = state.view;
+  setColumns(state.settings.columns);
+  els.thumbnailViewButton.setAttribute("aria-pressed", String(state.view === "thumbnail"));
+  els.detailViewButton.setAttribute("aria-pressed", String(state.view === "detail"));
+  els.relatedAssetsToggle.checked = state.related;
+  els.clearCharacterFilter.hidden = !state.characterId;
+  els.assetGrid.className = `asset-grid ${state.view === "detail" && !state.related && ["image", "video"].includes(state.kind) ? "masonry" : ""}`;
   reconcileAssetCards(assets, state.assetsProjectId);
   let more = els.assetGrid.querySelector(".load-more-card");
   if (hasMore && (!state.serverPaging || assets.length < MAX_ASSET_WINDOW)) {
@@ -536,7 +651,7 @@ async function loadLibrary({ quiet = false, force = false, reset = false, append
   els.scanState.classList.add("busy");
   try {
     const query = new URLSearchParams({ project: project.id, limit: String(ASSET_PAGE_SIZE),
-      smartGroup: state.smartGroup || "asset", kind: state.kind || "all", category: state.category || "", query: state.query || "", sort: state.sort || "newest" });
+      smartGroup: state.characterId ? "" : state.smartGroup || "asset", kind: state.kind || "all", category: state.category || "", query: state.query || "", sort: state.sort || "newest", related: state.related ? "1" : "0", characterId: state.characterId });
     if (force) query.set("rescan", "1");
     const previousAssets = state.assets;
     const pageStart = state.pageStart || 0;
@@ -624,6 +739,8 @@ async function loadBootstrap() {
 }
 
 async function selectProject(projectId) {
+  els.characterDialog.close();
+  state.characterId = "";
   if (state.selectedProject === projectId && state.assets.length) return;
   state.selectedProject = projectId;
   state.category = "";
@@ -876,6 +993,14 @@ async function saveSettings(event) {
 }
 
 function bindEvents() {
+  for (const [button, view] of [[els.thumbnailViewButton,"thumbnail"],[els.detailViewButton,"detail"]]) button.addEventListener("click", () => { state.view=view; localStorage.setItem("asset-library:view",view); renderAssets(); });
+  els.relatedAssetsToggle.addEventListener("change", () => { state.related=els.relatedAssetsToggle.checked; localStorage.setItem("asset-library:related",state.related?"1":"0"); resetAssetWindow(); });
+  els.clearCharacterFilter.addEventListener("click", () => { state.characterId=""; resetAssetWindow(); });
+  els.characterForm.addEventListener("submit", event => { event.preventDefault(); saveCharacter(false); });
+  els.excludeCharacterImage.addEventListener("click", () => saveCharacter(true));
+  els.findSimilarCharacters.addEventListener("click", findSimilarCharacters);
+  els.viewCharacterFamily.addEventListener("click", () => { const id=state.characterContext?.asset.character?.groupId; if(!id)return; state.characterId=id; state.kind="image"; state.category=""; state.query=""; els.librarySearchInput.value=""; els.characterDialog.close(); resetAssetWindow(); });
+  els.characterDialog.addEventListener("close", () => { characterRequests.cancel(); state.characterContext=null; els.characterPreviewImage.removeAttribute("src"); });
   els.newProjectButton.addEventListener("click", () => openProjectDialog());
   els.emptyCreateProjectButton.addEventListener("click", () => openProjectDialog());
   els.editProjectButton.addEventListener("click", () => openProjectDialog(selectedProject()));
@@ -919,6 +1044,7 @@ function bindEvents() {
     if (["manual-category", "manual-tags"].includes(actionButton.dataset.action) && event.detail !== 0) return;
     const asset = assetById(actionButton.closest("[data-asset-id]")?.dataset.assetId);
     if (asset && actionButton.dataset.action === "use-in-codex") useAssetInCodex(asset);
+    else if (asset && actionButton.dataset.action === "character") openCharacterDialog(asset);
     else if (asset && actionButton.dataset.action === "preview") previewAsset(asset);
     else if (asset) openAssetAction(actionButton.dataset.action, asset);
   });

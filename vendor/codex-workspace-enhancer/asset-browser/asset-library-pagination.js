@@ -1,3 +1,4 @@
+import { keepCharacterFamiliesAdjacent } from "./character-associations.js";
 const kinds = ["text", "image", "audio", "video"];
 const groups = ["asset", "review", "noise"];
 const nameCollator = new Intl.Collator("zh-CN", { numeric: true });
@@ -12,6 +13,8 @@ export function normalizeLibraryPage(filters = {}) {
     category: String(filters.category || ""),
     query: String(filters.query || "").trim().toLocaleLowerCase("zh-CN"),
     sort: ["oldest", "name", "size", "largest"].includes(filters.sort) ? filters.sort : "newest",
+    related: filters.related !== false && filters.related !== "0",
+    characterId: String(filters.characterId || ""),
   };
 }
 
@@ -41,7 +44,7 @@ export class AssetLibraryPager {
       const counts = { all: 0, text: 0, image: 0, audio: 0, video: 0 };
       const smartCounts = { asset: 0, review: 0, noise: 0 };
       const categoryCounts = Object.create(null);
-      const matching = [];
+      let matching = [];
       for (const asset of assets) {
         if (Object.hasOwn(smartCounts, asset.smartGroup)) smartCounts[asset.smartGroup] += 1;
         if (options.smartGroup && asset.smartGroup !== options.smartGroup) continue;
@@ -50,10 +53,12 @@ export class AssetLibraryPager {
         if (options.kind && asset.kind !== options.kind) continue;
         if (asset.category) categoryCounts[asset.category] = (categoryCounts[asset.category] || 0) + 1;
         if (options.category && asset.category !== options.category) continue;
-        if (options.query && ![asset.name, asset.title, asset.preview, asset.category, ...(asset.tags || []), ...(asset.autoTags || [])].join(" ").toLocaleLowerCase("zh-CN").includes(options.query)) continue;
+        if (options.characterId && asset.character?.groupId !== options.characterId) continue;
+        if (options.query && ![asset.name, asset.title, asset.preview, asset.category, asset.character?.name, asset.character?.state, asset.character?.style, ...(asset.tags || []), ...(asset.autoTags || [])].join(" ").toLocaleLowerCase("zh-CN").includes(options.query)) continue;
         matching.push(asset);
       }
       matching.sort(compareAssets(options.sort));
+      if (options.related) matching = keepCharacterFamiliesAdjacent(matching);
       selected = { projectId, revision, total: assets.length, matching, counts, smartCounts, categoryCounts };
       this.cache.set(key, selected);
       while (this.cache.size > this.maxEntries) this.cache.delete(this.cache.keys().next().value);

@@ -147,6 +147,8 @@ if (options.strict) {
   try {
     expectedSourceHash = createHash("sha256")
       .update(await readFile(path.join(root, "inject", "conversation-preview.user.js"), "utf8"))
+      .update("\n")
+      .update(await readFile(path.join(root, "inject", "claude-code.user.js"), "utf8"))
       .update(JSON.stringify(await readManagedShortcuts())).digest("hex");
   } catch {} // An invalid private profile fails readiness without exposing its contents.
   try {

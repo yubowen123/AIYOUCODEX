@@ -171,6 +171,13 @@ try {
     $nodePath = Join-Path $fullInstallDir "runtime\node.exe"
   }
 
+  $dependencyNode = $nodePath
+  if (Test-Path -LiteralPath (Join-Path $stagingDir "runtime\node.exe")) {
+    $dependencyNode = Join-Path $stagingDir "runtime\node.exe"
+  }
+  & $dependencyNode (Join-Path $stagingDir "scripts\setup-claude-dependencies.mjs")
+  if ($LASTEXITCODE -ne 0) { throw "Claude dependency installation failed; previous runtime preserved." }
+
   New-Item -ItemType Directory -Path (Join-Path $stagingDir "windows") -Force | Out-Null
   $config = @{ nodePath = $nodePath; port = $port; logsDir = $logsDir } | ConvertTo-Json
   $utf8 = New-Object System.Text.UTF8Encoding($false)

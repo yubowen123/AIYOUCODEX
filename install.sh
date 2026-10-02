@@ -81,6 +81,8 @@ mkdir -p "${STAGING_DIR}"
 
 # Validate the staged package before replacing a usable installation. This is
 # package validation only; --strict performs the separate live renderer check.
+"${NODE_PATH}" "${STAGING_DIR}/scripts/setup-claude-dependencies.mjs" \
+  || fail "Claude dependency installation failed; previous installation preserved"
 "${NODE_PATH}" "${STAGING_DIR}/scripts/doctor.mjs" --json --port "${DEBUG_PORT}" >/dev/null \
   || fail "staged package validation failed; previous installation preserved"
 

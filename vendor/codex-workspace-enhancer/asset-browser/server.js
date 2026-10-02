@@ -19,6 +19,7 @@ import { readImageDimensions } from "./image-dimensions.js";
 import { createAssetScanCoordinator } from "./asset-scan-coordinator.js";
 import { filterLibraryResult } from "./asset-library-filter.js";
 import { AssetLibraryPager } from "./asset-library-pagination.js";
+import { normalizeCharacterMetadata, deriveCharacterRelations } from "./character-associations.js";
 import { PersistentAssetIndex, sameAssetIndexFolders } from "./persistent-asset-index.js";
 import { savePlainTextAsset, textContentRevision, textEditPolicy } from "./text-asset-safety.js";
 import { streamAssetFile } from "./media-file-response.js";
@@ -272,6 +273,7 @@ function normalizeAssetMetadata(value = {}) {
     category: String(meta?.category || ""),
     tags: [...new Set((Array.isArray(meta?.tags) ? meta.tags : []).map((item) => String(item || "").trim()).filter(Boolean))],
     smartGroup: ["asset", "review", "noise"].includes(meta?.smartGroup) ? meta.smartGroup : "",
+    ...(normalizeCharacterMetadata(meta?.character) ? { character: normalizeCharacterMetadata(meta.character) } : {}),
   }]));
 }
 
@@ -1522,6 +1524,8 @@ async function buildLibraryAsset(filePath, project, config, assignment, classifi
     directory: path.dirname(filePath),
     assigned: Boolean(assignment),
     promptAssociation,
+    characterMeta: normalizeCharacterMetadata(metadata.character),
+    characterEvidence: kind === "image" ? { references: promptAssociation.references || [], sameCharacter: promptAssociation.sameCharacter === true, prompt: promptAssociation.characterName ? `角色名：${promptAssociation.characterName}` : "" } : undefined,
     ...textEditPolicy(filePath),
     preview: kind === "text" ? await readTextPreview(filePath) : "",
     mediaUrl: `/media?id=${encodeURIComponent(assetRef)}`,
@@ -1668,7 +1672,7 @@ async function reconcileIndexedProject(project, config, entry) {
   return patched;
 }
 
-async function loadLibraryIndexView(projectId, { force = false } = {}) {
+async function loadRawLibraryIndexView(projectId, { force = false } = {}) {
   const config = await loadConfig();
   const project = projectId ? config.projects.find((item) => item.id === projectId) : config.projects[0];
   if (!project) return { project: null, entry: null, settings: config.assetManager, mode: "empty" };
@@ -1681,6 +1685,22 @@ async function loadLibraryIndexView(projectId, { force = false } = {}) {
   reconciledProjectContexts.set(project.id, contextKey);
   const mode = sameAssetIndexFolders(existing.folders, project.folders) ? "persistent" : "folder-incremental";
   return { project, entry, settings: config.assetManager, mode };
+}
+
+const characterViewCache = new Map();
+async function loadLibraryIndexView(projectId, options = {}) {
+  const view = await loadRawLibraryIndexView(projectId, options);
+  if (!view.project || !view.entry) return view;
+  const config = await loadConfig();
+  const key = JSON.stringify([view.project.id, view.entry.revision, view.entry.updatedAt, config.assetMetadata]);
+  let assets = characterViewCache.get(key);
+  if (!assets) {
+    const registry = await promptAssociations.readRegistry();
+    assets = deriveCharacterRelations(view.entry.assets, { projectId: view.project.id, metadata: config.assetMetadata, associations: registry.associations });
+    characterViewCache.clear(); // One active full-project view; never accumulate whole libraries.
+    characterViewCache.set(key, assets);
+  }
+  return { ...view, entry: { ...view.entry, assets } };
 }
 
 function listLibraryAssets(view) {
@@ -1731,6 +1751,16 @@ async function clearAssetProjectAssignment(body = {}) {
 async function renameLibraryAsset(body = {}) {
   const config = await loadConfig();
   const { filePath } = await resolveManagedAsset(config, body.assetId);
+  let retainedCharacter = null;
+  if (libraryAssetKind(filePath) === "image") {
+    const assigned = config.assetAssignments[filePath];
+    const project = config.projects.find(p => assigned ? p.id === assigned : p.folders.some(folder => isPathInside(folder, filePath)));
+    if (project) {
+      const view = await loadLibraryIndexView(project.id);
+      const character = view.entry?.assets.find(a => a.id === body.assetId)?.character;
+      if (character?.name) retainedCharacter = normalizeCharacterMetadata(character);
+    }
+  }
   const currentExt = path.extname(filePath);
   const requested = String(body.name || "").trim();
   if (!requested || requested !== path.basename(requested) || /[\\/]/.test(requested)) throw new Error("请输入有效文件名");
@@ -1768,6 +1798,12 @@ async function renameLibraryAsset(body = {}) {
       draft.assetMetadata[nextPath] = draft.assetMetadata[filePath];
       delete draft.assetMetadata[filePath];
     }
+    if (retainedCharacter && !draft.assetMetadata[nextPath]?.character) {
+      draft.assetMetadata[nextPath] = { ...draft.assetMetadata[nextPath], character: retainedCharacter };
+    }
+    for (const metadata of Object.values(draft.assetMetadata)) {
+      if (metadata.character?.parentAssetId === body.assetId) metadata.character.parentAssetId = encodeAssetRef(nextPath);
+    }
   });
   await enqueueAssetIndexUpdate([filePath, nextPath]);
   notifyClients("asset-change");
@@ -1786,6 +1822,9 @@ async function deleteLibraryAsset(body = {}) {
   await updateConfig((draft) => {
     delete draft.assetAssignments[filePath];
     delete draft.assetMetadata[filePath];
+    for (const metadata of Object.values(draft.assetMetadata)) {
+      if (metadata.character?.parentAssetId === body.assetId) metadata.character.parentAssetId = "";
+    }
   });
   await enqueueAssetIndexUpdate([filePath]);
   notifyClients("asset-change");
@@ -1821,10 +1860,55 @@ async function updateLibraryAssetMetadata(body = {}) {
     tags: [...new Set((Array.isArray(body.tags) ? body.tags : []).map((item) => String(item || "").trim()).filter(Boolean))],
     smartGroup: ["asset", "review", "noise"].includes(body.smartGroup) ? body.smartGroup : "",
   };
-  await updateConfig((draft) => { draft.assetMetadata[filePath] = metadata; });
+  await updateConfig((draft) => { draft.assetMetadata[filePath] = { ...draft.assetMetadata[filePath], ...metadata }; });
   await enqueueAssetIndexUpdate([filePath]);
   notifyClients("asset-change");
   return metadata;
+}
+
+async function characterAssetContext(projectId, assetId) {
+  const config = await loadConfig();
+  const { filePath } = await resolveManagedAsset(config, assetId);
+  const view = await loadLibraryIndexView(projectId);
+  const asset = view.entry?.assets.find(a => a.id === assetId && a.sourcePath === filePath && a.kind === "image");
+  if (!asset) throw new Error("图片不属于当前项目");
+  const record = config.assetMetadata[filePath]?.character || null;
+  const revision = createHash("sha256").update(JSON.stringify(record)).digest("hex");
+  const relatives = asset.character?.groupId ? view.entry.assets.filter(a => a.character?.groupId === asset.character.groupId) : [];
+  const parentIds = new Set(asset.character?.candidateParentIds || []);
+  const candidates = view.entry.assets.filter(a => a.id !== assetId && parentIds.has(a.id));
+  return { revision, asset, relatives: relatives.slice(0, 120), relativeTotal: relatives.length, candidates: candidates.slice(0, 20) };
+}
+
+async function updateCharacterAsset(body) {
+  const context = await characterAssetContext(body.projectId, body.assetId);
+  const character = normalizeCharacterMetadata(body.character);
+  if (!character || (!character.excluded && !character.name)) throw new Error("请填写角色名，或选择不关联此图");
+  if (character.parentAssetId) {
+    if (character.parentAssetId === body.assetId) throw new Error("不能以自己作为基准图");
+    const parent = await characterAssetContext(body.projectId, character.parentAssetId);
+    if (parent.asset.character?.excluded) throw new Error("基准图已被排除关联，请先恢复其角色关联");
+    if (parent.asset.character?.name && parent.asset.character.name !== character.name) throw new Error("角色名与基准图不一致，请先确认角色");
+    const view = await loadLibraryIndexView(body.projectId);
+    const byId = new Map(view.entry.assets.map(a => [a.id, a]));
+    let cursor = parent.asset, seen = new Set([body.assetId]);
+    for (let i=0; cursor && i<64; i++) {
+      if (seen.has(cursor.id)) throw new Error("衍生关系不能形成循环");
+      seen.add(cursor.id); cursor = byId.get(cursor.character?.parentAssetId);
+      if (i === 63 && cursor) throw new Error("衍生链过长，请选择基准角色图");
+    }
+  }
+  const filePath = context.asset.sourcePath;
+  await updateConfig(draft => {
+    const current = draft.assetMetadata[filePath]?.character || null;
+    const revision = createHash("sha256").update(JSON.stringify(current)).digest("hex");
+    if (body.revision !== revision) throw Object.assign(new Error("角色关系已变化，请重新打开后保存"), { statusCode: 409 });
+    draft.assetMetadata[filePath] = { ...draft.assetMetadata[filePath], character };
+  });
+  characterViewCache.clear();
+  await enqueueAssetIndexUpdate([filePath]);
+  notifyClients("asset-change");
+  return characterAssetContext(body.projectId, body.assetId);
 }
 
 async function updateAssetManagerSettings(body = {}) {
@@ -2621,6 +2705,8 @@ const server = createServer(async (req, res) => {
       const force = url.searchParams.get("rescan") === "1";
       const view = await libraryScanCoordinator.run(projectId, () => loadLibraryIndexView(projectId, { force }));
       const filters = {
+        related: url.searchParams.get("related") || "1",
+        characterId: url.searchParams.get("characterId") || "",
         kind: url.searchParams.get("kind") || "",
         category: url.searchParams.get("category") || "",
         smartGroup: url.searchParams.get("smartGroup") || "",
@@ -2636,6 +2722,12 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/api/assets/character" && req.method === "GET") {
+      sendJson(res, await characterAssetContext(url.searchParams.get("project"), url.searchParams.get("id"))); return;
+    }
+    if (url.pathname === "/api/assets/character" && req.method === "PATCH") {
+      sendJson(res, { ok: true, context: await updateCharacterAsset(await readRequestBody(req)) }); return;
+    }
     if (url.pathname === "/api/assets/prompt" && req.method === "GET") {
       const config = await loadConfig();
       const { filePath } = await resolveManagedAsset(config, url.searchParams.get("id") || "");

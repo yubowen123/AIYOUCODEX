@@ -80,4 +80,20 @@ test("project icons do not depend on the native icon format or label nesting", {
       await writeFile(process.env.AIYOUCODEX_ICON_SCREENSHOT, Buffer.from(screenshot.data, "base64"));
     }
   }
+
+  await client.evaluate(`document.body.insertAdjacentHTML('afterbegin', '<nav data-app-navigation-rail style="display:block;width:64px;height:100vh"><button>Home</button></nav>')`);
+  await waitForBrowserState(client,
+    `document.querySelector('#codex-sidebar-shortcut-grid[data-codex-shortcut-layout="rail"] [data-codex-sidebar-shortcut-name="项目管理"]') && !document.getElementById('codex-taskboard-entry')`,
+    "The new icon rail replaces the legacy project card");
+  const runtimeSource = await readFile(new URL("../vendor/codex-taskboard/scripts/codex-injector.mjs", import.meta.url), "utf8");
+  assert.match(runtimeSource, /entryMounted: Boolean\(document\.getElementById\("codex-taskboard-entry"\)[\s\S]*?data-codex-shortcut-layout/,
+    "The resident injector must accept the rail shortcut as a healthy entry");
+  assert.equal(await client.evaluate("document.querySelectorAll('[data-codex-sidebar-shortcut-name=\"项目管理\"]').length"), 1);
+  await client.evaluate("document.querySelector('[data-codex-sidebar-shortcut-name=\"项目管理\"]').click()");
+  assert.equal(await client.evaluate("document.documentElement.getAttribute('data-codex-taskboard-open')"), "true",
+    "The remaining rail shortcut still opens Taskboard");
+  await client.evaluate("window.__codexTaskboardInjection__.close()");
+  await client.evaluate("document.querySelector('nav[data-app-navigation-rail]').remove()");
+  await waitForBrowserState(client, "!!document.getElementById('codex-taskboard-entry')",
+    "The legacy entry returns when the icon rail is removed");
 });

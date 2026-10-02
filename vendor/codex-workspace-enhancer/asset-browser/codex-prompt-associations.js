@@ -2,6 +2,7 @@ import { createReadStream, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { hasSameCharacterInstruction } from "./character-associations.js";
 
 const MEDIA_EXTENSIONS = {
   image: new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif"]),
@@ -253,6 +254,8 @@ export class CodexPromptAssociationStore {
   async summary(assetPath) {
     const association = await this.get(assetPath);
     if (!association) return { available: false };
+    const references = association.references.filter(p => mediaKind(p) === "image").slice(0, 30);
+    const characterName = association.prompt.match(/(?:角色名|人物名|character\s*name)\s*[:：=]\s*["“]?([^\n,，。;；"”]{1,40})/iu)?.[1]?.trim() || "";
     return {
       available: true,
       source: association.source,
@@ -260,6 +263,9 @@ export class CodexPromptAssociationStore {
       generator: association.generator,
       model: association.model,
       threadId: association.threadId,
+      ...(references.length ? { references } : {}),
+      ...(characterName ? { characterName } : {}),
+      ...(hasSameCharacterInstruction(association.prompt) ? { sameCharacter: true } : {}),
     };
   }
 

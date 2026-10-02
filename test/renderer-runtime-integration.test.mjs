@@ -89,6 +89,9 @@ test("production attach and delivery survive CDP reconnect; real document reload
     skillOrganizationStore: { read: async () => ({ version: 0, groups: [], assignments: {} }) },
     skillProvenance: { trace: async () => ({ status: "unassociated" }) },
     SCRIPT_ID_GLOBAL: "__CODEX_CONVERSATION_PREVIEW_SCRIPT_IDENTIFIER__", readFile, sourcePath: userSourcePath,
+    claudeSourcePath: new URL("../inject/claude-code.user.js", import.meta.url),
+    claudeController: { request: async () => ({ available: false }) },
+    CLAUDE_BINDING: "__AIYOUCODEX_CLAUDE_REQUEST__",
     readManagedShortcuts: async () => shortcuts, createHash,
     readResetNotice: async () => ({ checkStatus: "never", active: null }),
     resetMonitorController: { snapshot: async () => ({ available: false }), request: async () => ({ available: false }) },
@@ -108,6 +111,7 @@ test("production attach and delivery survive CDP reconnect; real document reload
   }
   const installDeliveryCounters = async () => inspect.evaluate(`(()=>{const api=window.__codexConversationPreviewInjection__;window.__fixtureDeliveries={snapshot:0,history:0,destroy:0};for(const [method,key]of [['setSnapshot','snapshot'],['setConversationHistory','history'],['destroy','destroy']]){const original=api[method];api[method]=(...args)=>{window.__fixtureDeliveries[key]+=1;return original(...args)}}})()`);
   let session = await context.attachTarget(target);
+  assert.equal(await inspect.evaluate("typeof window.__AIYOUCODEX_CLAUDE_REQUEST__"), "function", "Claude bridge attaches in the native default world");
   await installDeliveryCounters();
   // The real watcher retries when a native mount is temporarily unavailable.
   // Verify that it does not incorrectly acknowledge readiness on that attempt.
