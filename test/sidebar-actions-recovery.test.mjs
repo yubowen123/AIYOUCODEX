@@ -93,7 +93,7 @@ test("sidebar actions recover after partial redraw, source gaps and host clones 
   await click(options);
   assert.equal(await client.evaluate("document.querySelector('[data-codex-sidebar-folder-search]').value"), "项目", "Toolbar recovery preserves the folder search");
   await click('[data-codex-sidebar-section-tab="最近"]');
-  assert.equal(await client.evaluate(`document.querySelector(${available}).hidden`), true);
+  assert.equal(await client.evaluate(`document.querySelector(${available}).hidden`), false, "New project/chat controls persist outside the Projects tab");
   await click('[data-codex-sidebar-section-tab="项目"]');
   await waitForBrowserState(client, `document.querySelector(${available})?.hidden===false&&document.querySelector(${available})?.querySelectorAll('button').length===3`, "Returning to Projects restores all three action icons");
 
@@ -124,7 +124,7 @@ test("sidebar actions recover after partial redraw, source gaps and host clones 
   await click(chat);
   assert.equal(await client.evaluate("window.__clicks.at(-1)"), "folder-new");
   await client.evaluate("document.getElementById('folder-new').remove()");
-  await waitForBrowserState(client, `document.querySelector(${JSON.stringify(chat)})?.hidden===true`, "Missing folder create action hides new chat");
+  await waitForBrowserState(client, `document.querySelector(${JSON.stringify(chat)})?.disabled===true&&!document.querySelector(${JSON.stringify(chat)}).hidden`, "Missing folder create action stays visible with an honest disabled state");
   assert.equal(await client.evaluate(`document.querySelector(${JSON.stringify(newChatControl)})?.disabled`), true, "Search-row new chat remains visible but disabled without a matching native action");
   await client.evaluate(`${api}.setSearchCatalog([{threadId:'11111111-1111-4111-8111-111111111111',title:'项目 A 的历史对话',projectId:'p1',projectName:'项目 A',projectRootPath:'/Users/test/project-a'}]);window.__bridgeCalls=[];window.electronBridge={sendMessageFromView:async message=>{window.__bridgeCalls.push(message)}}`);
   await waitForBrowserState(client, `document.querySelector(${JSON.stringify(newChatControl)})?.disabled===false`, "A local project root keeps new chat usable when Codex omits the folder button");
@@ -145,7 +145,7 @@ test("sidebar actions recover after partial redraw, source gaps and host clones 
     const section=document.querySelector('section[data-app-action-sidebar-section-heading]'),replacement=document.createElement('div');for(const a of section.attributes)replacement.setAttribute(a.name,a.value);replacement.append(...section.childNodes);section.replaceWith(replacement);
     const rail=document.createElement('nav');rail.dataset.appNavigationRail='';rail.style.cssText='position:fixed;right:0;top:0;width:50px;height:700px';document.body.append(rail);
     document.getElementById('native-actions').remove();window.__routes=[];`);
-  await waitForBrowserState(client, `document.querySelector(${JSON.stringify(chat)})?.hidden===true&&!document.querySelector(${JSON.stringify(proxies)})`, "Modern layout hides unavailable actions rather than showing misleading buttons");
+  await waitForBrowserState(client, `document.querySelector(${JSON.stringify(chat)})?.disabled===true&&!document.querySelector(${JSON.stringify(proxies)})&&!!document.querySelector('[data-codex-sidebar-tab-project-create]')`, "Modern layout keeps persistent project creation and honestly disabled chat controls");
   assert.equal(await client.evaluate(`document.querySelector(${JSON.stringify(sortControl)})?.getBoundingClientRect().width > 0`), true, "Sorting stays visible when Codex removes its project-toolbar actions");
   assert.equal(await client.evaluate(`document.querySelector(${JSON.stringify(createControl)})?.getBoundingClientRect().width > 0`), true, "Create stays visible when Codex removes its project-toolbar actions");
   assert.equal(await client.evaluate(`document.querySelector(${JSON.stringify(newChatControl)})?.getBoundingClientRect().width > 0`), true, "New chat stays visible when Codex removes its project-toolbar actions");

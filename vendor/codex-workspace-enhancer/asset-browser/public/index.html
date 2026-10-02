@@ -24,6 +24,8 @@
         <small id="projectCount">0</small>
       </div>
       <nav id="localProjectList" class="project-list" aria-label="本地项目"></nav>
+      <div class="sidebar-section-heading"><span>素材分类</span></div>
+      <nav id="categoryChips" class="category-chips" aria-label="子分类"></nav>
 
       <section id="projectFoldersPanel" class="project-folders-panel" hidden>
         <div class="sidebar-section-heading">
@@ -81,12 +83,17 @@
               <option value="size">文件大小</option>
             </select>
           </label>
-          <label class="column-control" title="每行卡片数量">每行
+          <label class="column-control" title="缩略图密度；详细模式下为每行卡片数量">密度
             <input id="assetColumnRange" type="range" min="1" max="8" value="4">
             <output id="assetColumnOutput">4</output>
           </label>
         </div>
-        <div id="categoryChips" class="category-chips" aria-label="子分类"></div>
+        <div class="library-view-row">
+          <div class="view-switch" role="group" aria-label="浏览样式"><button id="thumbnailViewButton" type="button" aria-pressed="true">▦ 缩略图</button><button id="detailViewButton" type="button" aria-pressed="false">☷ 详细</button></div>
+          <label class="related-toggle"><input id="relatedAssetsToggle" type="checkbox" checked>同角色相邻</label>
+          <button id="clearCharacterFilter" type="button" class="text-button" hidden>显示全部角色 ×</button>
+          <span class="browse-hint">双击预览详情 · 角色角标管理关联</span>
+        </div>
       </section>
 
       <section class="asset-content">
@@ -157,6 +164,17 @@
         <button type="button" class="secondary-button" data-close-dialog="assetActionDialog">取消</button>
         <button id="confirmAssetAction" type="submit" class="primary-button">确认</button>
       </footer>
+    </form>
+  </dialog>
+
+  <dialog id="characterDialog" class="modal character-modal" aria-labelledby="characterDialogTitle">
+    <form id="characterForm">
+      <header class="modal-header"><div><span class="eyebrow">CHARACTER FAMILY</span><h2 id="characterDialogTitle">角色与衍生关联</h2></div><button type="button" class="icon-button" data-close-dialog="characterDialog" aria-label="关闭角色关联">×</button></header>
+      <div class="character-editor"><img id="characterPreviewImage" alt="当前角色图"><div><label>角色名称<input id="characterName" name="name" maxlength="80" placeholder="例如：林照" required></label><div class="character-pair"><label>状态 / 服装<input id="characterState" name="state" maxlength="80" placeholder="觉醒 · 战斗服"></label><label>画风 / 样式<input id="characterStyle" name="style" maxlength="80" placeholder="写实 · 水墨"></label></div><label>基准 / 来源图片<select id="characterParent" name="parentAssetId"><option value="">独立基准图</option></select></label><p id="characterEvidence" class="field-hint" aria-live="polite"></p><div class="character-tools"><button id="findSimilarCharacters" type="button" class="secondary-button">本地找相似</button><button id="viewCharacterFamily" type="button" class="secondary-button" hidden>查看整组</button></div></div></div>
+      <section class="character-family-section"><h3 id="characterFamilyTitle">同角色图片</h3><div id="characterFamilyList" class="character-strip"></div></section>
+      <section class="character-family-section"><h3>关联候选</h3><p class="field-hint">生成来源或画面相似仅供参考，不等于同一角色。选择候选后填写角色名，再确认保存。</p><div id="characterCandidateList" class="character-strip"></div></section>
+      <div id="characterError" class="form-error" role="alert"></div>
+      <footer class="modal-actions"><button id="excludeCharacterImage" type="button" class="text-button">此图不参与角色关联</button><button type="button" class="secondary-button" data-close-dialog="characterDialog">取消</button><button id="saveCharacterButton" type="submit" class="primary-button">确认关联</button></footer>
     </form>
   </dialog>
 

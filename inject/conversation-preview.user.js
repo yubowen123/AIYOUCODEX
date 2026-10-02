@@ -2,7 +2,7 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
-  const RUNTIME_VERSION = "2026-10-01.1";
+  const RUNTIME_VERSION = "2026-10-01.2";
   const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
@@ -248,6 +248,7 @@
   let folderNewChatPending = false;
   let searchCatalog = [];
   let searchCatalogByProject = new Map();
+  let remoteProjectCatalog = new Map();
   let searchCatalogByThread = new Map();
   let recentCatalog = [];
   let recentCatalogByThread = new Map();
@@ -2920,6 +2921,7 @@
   }
 
   function closeOtherWorkspacePanels(panel) {
+    if (panel !== "claude") window.__aiyouClaudeInjection__?.close?.();
     if (panel !== "custom") closeCustomShortcutPanel(false);
     if (panel !== "asset") closeAssetConsolePanel({ notify: false, restoreFocus: false });
     if (panel !== "skills") closeSkillsGrouping(false);
@@ -2929,9 +2931,22 @@
   }
 
   function findCustomShortcutPageMount() {
-    let frameHost = document.querySelector(".app-shell-main-content-frame");
+    const active = (node) => {
+      if (!node || node.closest('[data-app-shell-active-page="false"]')) return false;
+      for (let parent = node; parent; parent = parent.parentElement) {
+        const style = getComputedStyle(parent);
+        if (parent.hidden || style.display === "none" || style.visibility === "hidden") return false;
+      }
+      return true;
+    };
+    const visible = (node) => {
+      if (!active(node)) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden";
+    };
+    let frameHost = Array.from(document.querySelectorAll(".app-shell-main-content-frame")).find(visible);
     if (!frameHost?.closest?.("[data-app-shell-main-content-layout]")) {
-      const viewport = document.querySelector("[data-app-shell-main-content-layout]");
+      const viewport = Array.from(document.querySelectorAll("[data-app-shell-main-content-layout]")).find(visible);
       if (viewport) {
         const viewportRect = viewport.getBoundingClientRect();
         frameHost = Array.from(viewport.children).find((candidate) => {
@@ -2943,8 +2958,7 @@
     }
     const viewport = frameHost?.closest?.("[data-app-shell-main-content-layout]");
     const surface = viewport?.parentElement
-      || document.querySelector("main")
-      || document.querySelector('[role="main"]');
+      || Array.from(document.querySelectorAll('main,[role="main"]')).find(active);
     if (!surface || surface.closest("aside")) return null;
     return { surface };
   }
@@ -6093,9 +6107,7 @@
       }
     }
     const actions = bar.querySelector("[data-codex-sidebar-project-actions]");
-    if (actions) actions.hidden = activeSectionTab !== "项目"
-      || (!actions.querySelector("[data-codex-native-action-proxies] button")
-        && !actions.querySelector("[data-codex-sidebar-current-folder-new-chat]:not([hidden])"));
+    if (actions) actions.hidden = false;
   }
 
   function selectSectionTab(name, { focus = false } = {}) {
@@ -6157,6 +6169,17 @@
     }
     actions.dataset.codexSidebarProjectActions = "true";
     actions.setAttribute("aria-label", "项目操作");
+    let createProject = actions.querySelector("[data-codex-sidebar-tab-project-create]");
+    if (nativeProjectCreateButton()) {
+      createProject?.remove(); createProject = null;
+    } else if (!createProject) {
+      createProject = document.createElement("button"); createProject.type = "button";
+      createProject.dataset.codexSidebarTabProjectCreate = "true";
+      createProject.setAttribute("aria-label", "新建项目"); createProject.title = "新建项目";
+      createProject.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+      actions.append(createProject);
+    }
+    if (createProject) createProject.onclick = startProjectCreation;
     let currentFolderNewChat = actions.querySelector("[data-codex-sidebar-current-folder-new-chat]");
     if (currentFolderNewChat) {
       currentFolderNewChat.onclick = handleCurrentFolderNewChat;
@@ -6489,11 +6512,14 @@
 
   function virtualFolderSourceItems(excludedIds = new Set(), sourceIndexOffset = 0) {
     let sourceIndex = sourceIndexOffset;
-    return Array.from(searchCatalogByProject, ([id, sourceEntries]) => {
+    const projects = new Map(searchCatalogByProject);
+    for (const [id] of remoteProjectCatalog) if (!projects.has(id)) projects.set(id, []);
+    return Array.from(projects, ([id, sourceEntries]) => {
       if (excludedIds.has(id)) return null;
       const { entries: catalogEntries } = dedupeFolderCatalogEntries(sourceEntries
         .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId))));
-      const label = catalogEntries.find((entry) => entry.projectName)?.projectName || id;
+      const remote = remoteProjectCatalog.get(id);
+      const label = remote?.label || catalogEntries.find((entry) => entry.projectName)?.projectName || id;
       const lastUsed = catalogEntries.reduce((latest, entry) => {
         const time = Date.parse(entry.updatedAt || "");
         return Number.isFinite(time) && time > latest ? time : latest;
@@ -6502,6 +6528,10 @@
         id,
         label,
         virtual: true,
+        remote: Boolean(remote),
+        hostId: remote?.hostId || "",
+        remotePath: remote?.remotePath || "",
+        nativeProjectId: remote?.nativeProjectId || "",
         actions: null,
         sourceIndex: sourceIndex++,
         catalogEntries,
@@ -6517,7 +6547,10 @@
     const rows = Array.from(nativeSidebarContentRoot()?.querySelectorAll("[data-app-action-sidebar-project-row]") || []);
     if (!rows.length) return null;
     const items = rows.flatMap((row, sourceIndex) => {
-      const id = row.getAttribute("data-app-action-sidebar-project-id") || "";
+      const nativeId = row.getAttribute("data-app-action-sidebar-project-id") || "";
+      const remoteKind = row.closest('[data-sidebar-project-kind="remote"]');
+      const remote = remoteKind ? Array.from(remoteProjectCatalog.values()).find(item => item.nativeProjectId === nativeId) : null;
+      const id = remote?.id || nativeId;
       const label = row.getAttribute("data-app-action-sidebar-project-label") || row.getAttribute("aria-label") || "";
       const folder = row.closest("[data-sidebar-project-kind]");
       let listRoot = folder?.parentElement;
@@ -6547,6 +6580,10 @@
         id,
         label,
         row,
+        remote: Boolean(remoteKind),
+        hostId: remote?.hostId || "",
+        remotePath: remote?.remotePath || "",
+        nativeProjectId: nativeId,
         folder,
         listRoot,
         panelHost,
@@ -6729,7 +6766,7 @@
   function nativeFolderActionButtons(item) {
     if (!item?.id || item.virtual) return [];
     const row = Array.from(sidebarRoot()?.querySelectorAll('[data-app-action-sidebar-project-row]') || [])
-      .find((node) => node.getAttribute('data-app-action-sidebar-project-id') === item.id);
+      .find((node) => node.getAttribute('data-app-action-sidebar-project-id') === (item.nativeProjectId || item.id));
     return Array.from(row?.querySelectorAll('button') || []).filter((button) =>
       isNativeSidebarActionSource(button) && (isProjectActionsLabel(button.getAttribute('aria-label'), item.label)
         || isFolderCreateLabel(button.getAttribute('aria-label'), item.label)));
@@ -6825,12 +6862,12 @@
   }
 
   function currentFolderChatSource(item) {
-    if (activeFolderId === ALL_FOLDER_ID) return findNativeShortcutButton("新对话");
+    if (activeSectionTab !== "项目" || activeFolderId === ALL_FOLDER_ID || !item) return findNativeShortcutButton("新对话");
     return nativeFolderCreateButton(item);
   }
 
   function currentFolderWorkspaceRoot(item) {
-    if (!item?.id || item.id === ALL_FOLDER_ID) return "";
+    if (!item?.id || item.id === ALL_FOLDER_ID || item.remote) return "";
     const entries = searchCatalogByProject.get(item.id) || [];
     const roots = new Set(entries.map((entry) => String(entry.projectRootPath || "").trim()).filter(Boolean));
     if (roots.size !== 1) return "";
@@ -6844,16 +6881,16 @@
     const source = currentFolderChatSource(item);
     const workspaceRoot = !source?.isConnected && currentFolderWorkspaceRoot(item);
     const workspaceAvailable = Boolean(workspaceRoot && typeof window.electronBridge?.sendMessageFromView === "function");
-    const available = source?.isConnected || workspaceAvailable;
+    const globalAvailable = (!item || activeSectionTab !== "项目") && typeof window.electronBridge?.sendMessageFromView === "function";
+    const available = source?.isConnected || workspaceAvailable || globalAvailable;
     for (const button of buttons) {
-      // The search-row action is a persistent third control. The legacy tab
-      // action stays hidden when its native source is unavailable.
-      button.hidden = !available && !button.closest(`#${FOLDER_SWITCHER_ID}`);
+      // Keep both action rows stable; unavailable native actions stay visible
+      // and disabled instead of removing the entire group.
+      button.hidden = false;
       button.disabled = !available || folderNewChatPending || Boolean(source?.isConnected
         && (source.disabled || source.getAttribute("aria-disabled") === "true"));
       const actions = button.closest("[data-codex-sidebar-project-actions]");
-      if (actions) actions.hidden = activeSectionTab !== "项目"
-        || (button.hidden && !actions.querySelector("[data-codex-native-action-proxies] button"));
+      if (actions) actions.hidden = false;
       if (!available) {
         button.dataset.codexSidebarCurrentFolderNewChat = "";
         button.setAttribute("aria-label", "新建对话");
@@ -6861,8 +6898,8 @@
         continue;
       }
       button.dataset.codexSidebarCurrentFolderNewChat = item?.id || ALL_FOLDER_ID;
-      button.setAttribute("aria-label", item ? `在“${item.label}”中新建对话` : "新建对话");
-      button.title = item ? `在“${item.label}”中新建对话` : "新建对话";
+      button.setAttribute("aria-label", activeSectionTab === "项目" && item ? `在“${item.label}”中新建对话` : "新建对话");
+      button.title = activeSectionTab === "项目" && item ? `在“${item.label}”中新建对话` : "新建对话";
     }
   }
 
@@ -6878,6 +6915,10 @@
     }
     const workspaceRoot = !source?.isConnected && currentFolderWorkspaceRoot(item);
     const bridge = window.electronBridge;
+    if ((!item || activeSectionTab !== "项目") && typeof bridge?.sendMessageFromView === "function") {
+      window.postMessage({ type: "navigate-to-route", path: "/", state: { focusComposerNonce: Date.now() } }, window.location.origin);
+      return;
+    }
     if (!workspaceRoot || typeof bridge?.sendMessageFromView !== "function") {
       syncCurrentFolderNewChatButton(item);
       scheduleSync();
@@ -7147,6 +7188,13 @@
       list.setAttribute("aria-label", `${item.label} 的项目`);
       list.className = "flex flex-col";
       list.replaceChildren(...entries.map(createAllProjectRow));
+      if (item.remote && !entries.length) {
+        const empty = document.createElement("div"); empty.style.cssText = "padding:20px 12px;color:#777;font-size:12px;line-height:1.7";
+        empty.textContent = `远程项目 · ${item.label}\n${item.remotePath}\n远程对话由 Codex 原生连接加载；此处不将远程路径当作本机目录。`;
+        const open = document.createElement("button"); open.type = "button"; open.textContent = "打开 Codex 原生项目列表";
+        open.onclick = () => window.postMessage({ type: "navigate-to-route", path: "/projects" }, window.location.origin);
+        empty.append(document.createElement("br"), open); list.append(empty);
+      }
       panel.replaceChildren(list);
     }
     return panel;
@@ -7190,8 +7238,14 @@
       ? ALL_PROJECTS_PANEL_ID
       : `codex-sidebar-folder-panel-${item.id}`);
     tag.setAttribute("aria-label", item.id === ALL_FOLDER_ID ? "显示全部项目" : `显示文件夹 ${item.label}`);
-    tag.title = item.label;
+    tag.title = item.remote ? `远程机器项目 · ${item.label}\n${item.remotePath}\n${item.hostId}` : item.label;
     tag.textContent = item.label;
+    if (item.remote) {
+      tag.dataset.codexSidebarRemoteProject = "true";
+      const badge = document.createElement("span"); badge.dataset.codexSidebarRemoteBadge = "true"; badge.textContent = "远";
+      badge.style.cssText = "position:absolute;right:6px;top:3px;font-size:9px;line-height:13px;padding:0 3px;border-radius:4px;background:#e8edf4;color:#65758a;pointer-events:none";
+      tag.style.position = "relative"; tag.style.paddingRight = "24px"; tag.append(badge);
+    }
     tag.onclick = () => selectFolder(item.id);
     tag.onkeydown = handleFolderTagKeydown;
     return tag;
@@ -7416,7 +7470,7 @@
     const tagItems = searching
       ? ranked
       : [{ id: ALL_FOLDER_ID, label: "全部", lastUsed: entries[0]?.time || 0 }, ...ranked];
-    const signature = tagItems.map((item) => `${item.id}:${item.lastUsed}`).join("\n");
+    const signature = tagItems.map((item) => `${item.id}:${item.label}:${item.lastUsed}:${item.remotePath || ""}`).join("\n");
     if (tags.dataset.signature !== signature) {
       tags.dataset.signature = signature;
       tags.replaceChildren(...tagItems.map(createFolderTag));
@@ -8087,6 +8141,7 @@
 
   function renderFeatures() {
     if (destroyed) return;
+    window.__aiyouClaudeInjection__?.refresh?.();
     syncFeature("panels", () => { restoreAssetConsoleOpenIntent(); restoreDetachedAssetConsolePanel(); restoreEfficiencyPanelMount(); });
     syncFeature("shortcuts", ensureShortcutGrid);
     syncFeature("skills", () => { ensureSkillOrganizer(); resumeSkillsGroupingOpenRequest(); });
@@ -8142,6 +8197,13 @@
       searchCatalogByProject.set(entry.projectId, entries);
       searchCatalogByThread.set(normalizedThreadId(entry.threadId), entry);
     }
+    scheduleSync();
+  }
+
+  function setRemoteProjectCatalog(items) {
+    remoteProjectCatalog = new Map((Array.isArray(items) ? items : []).filter(item =>
+      item && typeof item.id === "string" && typeof item.label === "string" && item.hostId && item.hostId !== "local",
+    ).map(item => [item.id, item]));
     scheduleSync();
   }
 
@@ -8219,6 +8281,7 @@
 
   function setSnapshot(snapshot = {}) {
     const setters = { previews: setPreviews, usage: setUsage, searchCatalog: setSearchCatalog,
+      remoteProjects: setRemoteProjectCatalog,
       recentCatalog: setRecentCatalog, interruptedCatalog: setInterruptedCatalog,
       pinnedThreads: setPinnedThreads, activeProjectThreads: setActiveProjectThreads,
       skillCatalog: setSkillCatalog, skillOrganization: setSkillOrganization, conversationHistory: setConversationHistory, efficiency: setEfficiencyData };
@@ -8364,7 +8427,7 @@
   }
 
   function handleHostMutations(records) {
-    records = records.filter((record) => !record.target?.closest?.(`#${RESET_NOTICE_ID}, #${RESET_DIALOG_ID}`));
+    records = records.filter((record) => !record.target?.closest?.(`#aiyoucodex-claude-panel, #aiyoucodex-agent-launchers, #${RESET_NOTICE_ID}, #${RESET_DIALOG_ID}`));
     const owned = `#aiyoucodex-skill-details, #${WORKSPACE_FOLDER_BUTTON_ID}, #${WORKSPACE_FOLDER_MENU_ID}, .codex-skill-context-menu, #aiyoucodex-native-shortcut-notice, #${SHORTCUT_GRID_ID}, #${SECTION_TABS_ID}, #${FOLDER_SWITCHER_ID}, #${SHORTCUT_SETTINGS_ID}, #${SKILL_ORGANIZER_ID}, #${CUSTOM_SHORTCUT_PAGE_ID}, #${ASSET_CONSOLE_PAGE_ID}, #${EFFICIENCY_PANEL_ID}, #${TASK_CONTEXT_BUTTON_ID}, #${USAGE_ID}, #${TOGGLE_ID}, #${FALLBACK_TOOLTIP_ID}, .${CARD_CONTENT_CLASS}, .${SUMMARY_CLASS}, .${STATUS_BUTTON_CLASS}`;
     if (records.some((record) => {
       const target = record.target?.nodeType === 1 ? record.target : record.target?.parentElement;
@@ -8429,6 +8492,7 @@
 
   function destroy() {
     destroyed = true;
+    window.__aiyouClaudeInjection__?.destroy?.();
     clearTimeout(resetMonitorPending?.timer); resetMonitorPending = null;
     clearInterval(resetNoticeTimer); resetNoticeTimer = null;
     document.removeEventListener("visibilitychange", updateResetNotice);
@@ -8558,6 +8622,13 @@
     setEfficiencyData,
     resolveEfficiencyRequest,
     resolveResetMonitorRequest,
+    resolveClaudeRequest: (response) => window.__aiyouClaudeInjection__?.resolve?.(response),
+    prepareClaudePanel: () => { closeOtherWorkspacePanels("claude"); return findCustomShortcutPageMount(); },
+    initializeClaudePanel: (page) => {
+      if (!page.dataset.aiyouClaudeInitialized) { initializeWorkspacePanel(page, "claude"); page.dataset.aiyouClaudeInitialized = "true"; }
+      setWorkspacePanelHostLayer(page, true);
+    },
+    closeClaudePanelLayer: (page) => setWorkspacePanelHostLayer(page, false),
     routeWorkspaceCommand,
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });

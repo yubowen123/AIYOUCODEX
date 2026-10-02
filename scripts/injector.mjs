@@ -26,10 +26,12 @@ import { readManagedShortcuts } from "../lib/managed-shortcuts.mjs";
 import { createEfficiencyController, EfficiencyBridge } from "../lib/efficiency-bridge.mjs";
 import { createConversationFolders, createConversationFolderSync } from "../lib/conversation-folders.mjs";
 import { executeConfirmedContext } from "../lib/context-execution.mjs";
+import { createClaudeController, CLAUDE_BINDING } from "../lib/claude-code.mjs";
 import { RENDERER_HEALTH_EXPRESSION, acceptDocumentHealth, canReuseRenderer, recordUpdateFailure, rendererReadiness } from "../lib/renderer-health.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(root, "inject", "conversation-preview.user.js");
+const claudeSourcePath = path.join(root, "inject", "claude-code.user.js");
 const SCRIPT_ID_GLOBAL = "__CODEX_CONVERSATION_PREVIEW_SCRIPT_IDENTIFIER__";
 
 function parseArgs(argv) {
@@ -53,6 +55,13 @@ const syncConversationFolders = createConversationFolderSync({ folders: conversa
 let stopped = false;
 const sessions = new Map();
 const resetMonitorController = createResetMonitorController();
+const claudeController = createClaudeController({ repository,
+  readSkills: (cwd) => readCachedSkillCatalog(cwd),
+  readActiveContext: () => {
+    const session = sessions.get(persistentShortcutOwnerTargetId) || sessions.values().next().value;
+    return session ? readActiveConversationContext(session) : null;
+  },
+});
 let persistentShortcutOwnerTargetId = "";
 const skillCatalogCache = new Map();
 let rendererSourceHashCheckedAt = 0;
@@ -63,9 +72,10 @@ async function expectedRendererSourceHash() {
   if (now - rendererSourceHashCheckedAt < 5_000) return cachedRendererSourceHash;
   rendererSourceHashCheckedAt = now;
   try {
-    const [userSource, managedShortcuts] = await Promise.all([
-      readFile(sourcePath, "utf8"), readManagedShortcuts(),
+    const [baseSource, claudeSource, managedShortcuts] = await Promise.all([
+      readFile(sourcePath, "utf8"), readFile(claudeSourcePath, "utf8"), readManagedShortcuts(),
     ]);
+    const userSource = baseSource + "\n" + claudeSource;
     // A partial edit must not replace a healthy renderer with invalid source.
     new Function(userSource);
     cachedRendererSourceHash = createHash("sha256").update(userSource)
@@ -105,6 +115,7 @@ async function disposeRendererSession(session, { destroy = false } = {}) {
   session.efficiencyBridge?.dispose();
   session.skillOrganizationBridge?.dispose();
   session.resetMonitorBridge?.dispose();
+  session.claudeBridge?.dispose();
   session.client.close();
   session.deliveredHistoryKey = "";
 }
@@ -124,6 +135,8 @@ async function attachTarget(target) {
   const skillOrganizationBridge = new SkillOrganizationBridge(skillOrganizationController);
   const resetMonitorBridge = new EfficiencyBridge(resetMonitorController, { binding: RESET_MONITOR_BINDING,
     resolver: "resolveResetMonitorRequest", publicErrorCodes: ["RESET_MONITOR_ERROR"], fallbackError: "监控设置未确认生效，请刷新核对。" });
+  const claudeBridge = new EfficiencyBridge(claudeController, { binding: CLAUDE_BINDING,
+    resolver: "resolveClaudeRequest", publicErrorCodes: ["CLAUDE_ERROR"], actionPayloadLimits: { "persona-save": 750000 }, fallbackError: "Claude 操作未确认完成；请核对本机连接，输入已保留。" });
   try {
     // New-document registration must be enabled on this exact CDP connection.
     await client.send("Page.enable");
@@ -131,8 +144,9 @@ async function attachTarget(target) {
     if (oldIdentifier) {
       try { await client.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: oldIdentifier }); } catch {}
     }
-    const [userSource, managedShortcuts] = await Promise.all([
+    const [baseSource, claudeSource, managedShortcuts] = await Promise.all([
       readFile(sourcePath, "utf8"),
+      readFile(claudeSourcePath, "utf8"),
       readManagedShortcuts().catch((error) => {
         // A malformed/unreadable private profile is not an intentionally empty
         // configuration. Do not replace a working page with an empty shortcut set.
@@ -140,6 +154,7 @@ async function attachTarget(target) {
         throw new Error("Managed shortcut profile could not be read");
       }),
     ]);
+    const userSource = baseSource + "\n" + claudeSource;
     const sourceHash = createHash("sha256").update(userSource).update(JSON.stringify(managedShortcuts)).digest("hex");
     const rendererSource = `if (window.top === window) { window.__CODEX_SIDEBAR_RENDERER_TARGET_ID__ = ${JSON.stringify(target.id)}; window.__CODEX_SIDEBAR_MANAGED_SHORTCUTS__ = ${JSON.stringify(managedShortcuts)}; ${userSource}\n window.__AIYOUCODEX_RUNTIME_SOURCE_HASH__ = ${JSON.stringify(sourceHash)}; }`;
     const snapshot = await client.evaluate(RENDERER_HEALTH_EXPRESSION);
@@ -151,6 +166,8 @@ async function attachTarget(target) {
     await efficiencyBridge.install(client);
     await skillOrganizationBridge.install(client);
     await resetMonitorBridge.install(client);
+    await claudeBridge.install(client);
+    await client.evaluate("window.__aiyouClaudeInjection__?.onBridgeReady?.();true");
     process.stdout.write(`[${new Date().toISOString()}] Codex conversation preview attached to renderer ${target.id}\n`);
     const session = {
       targetId: target.id,
@@ -161,6 +178,7 @@ async function attachTarget(target) {
       skillOrganizationController,
       skillOrganizationBridge,
       resetMonitorBridge,
+      claudeBridge,
       registeredScriptIdentifier: registered.identifier,
       deliveredHistoryKey: "",
       persistentShortcutIds: managedShortcuts
@@ -176,6 +194,7 @@ async function attachTarget(target) {
     efficiencyBridge.dispose();
     skillOrganizationBridge.dispose();
     resetMonitorBridge.dispose();
+    claudeBridge.dispose();
     client.close();
     throw error;
   }
@@ -405,7 +424,8 @@ async function pushPreviews(session) {
   let efficiency;
   try { efficiency = await session.efficiencyController.snapshot(); }
   catch { /* Keep the previous efficiency panel state; saves still fail closed. */ }
-  const snapshot = { previews, usage, searchCatalog, recentCatalog, interruptedCatalog, ...(efficiency ? { efficiency } : {}),
+  const remoteProjects = await repository.readRemoteProjectCatalog?.() || [];
+  const snapshot = { previews, usage, searchCatalog, remoteProjects, recentCatalog, interruptedCatalog, ...(efficiency ? { efficiency } : {}),
     pinnedThreads: pinnedThreadIds, activeProjectThreads: taskboardStatus.activeThreadIds,
     ...(skillOrganization ? { skillOrganization } : { skillCatalog }) };
   const serialized = JSON.stringify(snapshot);
@@ -422,6 +442,7 @@ async function pushPreviews(session) {
 async function stop() {
   if (stopped) return;
   stopped = true;
+  await claudeController.stopAll();
   const closing = [...sessions.values()];
   sessions.clear();
   // A supervisor restart must not take the user's persistent pages down with it.

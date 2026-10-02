@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { findNpmCli } from "../scripts/setup-claude-dependencies.mjs";
 
 const windowsOnly = { skip: process.platform !== "win32" };
 const projectRoot = path.resolve(".");
@@ -40,6 +41,11 @@ test("Windows public installer creates a user-local runtime and login shortcuts"
     assert.match(installed.stdout, /AIYOUcodex installed for Windows/);
     await access(path.join(installDir, "scripts", "injector.mjs"));
     await access(path.join(installDir, "inject", "conversation-preview.user.js"));
+    await access(path.join(installDir, "inject", "claude-code.user.js"));
+    if (await findNpmCli()) {
+      await access(path.join(installDir, "node_modules", "@anthropic-ai", "claude-agent-sdk", "package.json"));
+      await access(path.join(installDir, "node_modules", "smol-toml", "package.json"));
+    }
     for (const relative of [
       ...["index.html", "app.js", "style.css"].map(name => path.join("model-arena", "public", name)),
       ...["catalog", "providers", "local-extension", "media", "service", "http"].map(name => path.join("lib", "model-arena", `${name}.mjs`)),

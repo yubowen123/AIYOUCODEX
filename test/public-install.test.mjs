@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { isPrivateConfigPath } from "../scripts/verify-public-boundary.mjs";
+import { findNpmCli } from "../scripts/setup-claude-dependencies.mjs";
 
 const projectRoot = path.resolve(".");
 const macOnly = { skip: process.platform !== "darwin" };
@@ -38,6 +39,11 @@ test("public installer copies a portable runtime and activates it under the curr
     const hooks = JSON.parse(await readFile(path.join(testHome, ".codex", "hooks.json"), "utf8"));
     assert.ok(hooks.hooks.UserPromptSubmit[0].hooks[0].command.includes(installDir));
     await access(path.join(installDir, "inject", "conversation-preview.user.js"));
+    await access(path.join(installDir, "inject", "claude-code.user.js"));
+    if (await findNpmCli()) {
+      await access(path.join(installDir, "node_modules", "@anthropic-ai", "claude-agent-sdk", "package.json"));
+      await access(path.join(installDir, "node_modules", "smol-toml", "package.json"));
+    }
     await access(path.join(installDir, "vendor", "codex-taskboard", "dist", "web", "index.html"));
     await access(path.join(installDir, "vendor", "codex-taskboard", "server", "index.mjs"));
     await access(path.join(installDir, "vendor", "codex-taskboard", "inject", "codex-taskboard.user.js"));

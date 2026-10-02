@@ -99,7 +99,7 @@ test("project tab actions include a selected-folder new-chat proxy", () => {
   assert.match(source, /dataset\.codexSidebarCurrentFolderNewChat\s*=\s*item\?\.id \|\| ALL_FOLDER_ID/);
   assert.match(source, /`在“\$\{item\.label\}”中新建对话`/);
   assert.match(source, /function handleCurrentFolderNewChat[\s\S]{0,420}currentFolderChatSource\(item\)[\s\S]{0,400}source\.click\(\)/);
-  assert.match(source, /function syncCurrentFolderNewChatButton[\s\S]*?button\.hidden = !available && !button\.closest\(`#\$\{FOLDER_SWITCHER_ID\}`\);[\s\S]*?button\.disabled = !available/);
+  assert.match(source, /function syncCurrentFolderNewChatButton[\s\S]*?button\.hidden = false;[\s\S]*?button\.disabled = !available/);
   assert.match(source, /type: "electron-set-active-workspace-root", root: workspaceRoot/);
   assert.match(source, /newChatButton\.dataset\.codexSidebarFolderNewChat = "true"/);
   assert.doesNotMatch(source, /function openNativeProjectsPage\(/,
