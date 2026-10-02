@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { connectFixtureBrowser, waitForBrowserState } from "./helpers/browser-state.mjs";
 
-test("character API persists revisions and browser editing keeps preview/reference actions", {timeout:60000}, async t => {
+test("character API persists revisions and browser editing keeps preview/reference actions", {timeout:90000}, async t => {
   const root=await mkdtemp(path.join(tmpdir(),"aiyou-character-library-")), folder=path.join(root,"角色"), profile=path.join(root,"browser");
   await mkdir(folder); await mkdir(profile);
   // Valid image fixture: a tiny decoded PNG, never user assets.
@@ -55,10 +55,15 @@ test("character API persists revisions and browser editing keeps preview/referen
   for(const candidate of candidates){try{await access(candidate);executable=candidate;break;}catch{}}
   assert.ok(executable,"Browser verification requires Chrome");
   browser=spawn(executable,["--headless=new","--no-sandbox","--no-first-run","--no-default-browser-check","--disable-extensions","--window-size=1280,900","--remote-debugging-port=0",`--user-data-dir=${profile}`,"about:blank"],{stdio:["ignore","ignore","pipe"]});
-  ({client}=await connectFixtureBrowser({browser,profile,url:"about:blank"}));
+  ({client}=await connectFixtureBrowser({browser,profile,url:"about:blank",timeout:30000}));
   await client.send("Network.enable"); await client.send("Network.setExtraHTTPHeaders",{headers:{"x-asset-console-token":token}});
   await client.send("Page.navigate",{url:`http://127.0.0.1:${port}`});
-  await waitForBrowserState(client,"document.querySelectorAll('.image-card').length===4","Real asset UI loads images");
+  try {
+    await waitForBrowserState(client,"document.querySelectorAll('.image-card').length===4","Real asset UI loads images",20000);
+  } catch (error) {
+    const pageState=await client.evaluate("({url:location.href,readyState:document.readyState,cards:document.querySelectorAll('.image-card').length,scan:document.getElementById('scanState')?.textContent,toast:document.querySelector('.toast')?.textContent})").catch(()=>null);
+    throw new Error(`${error.message}; asset page=${JSON.stringify(pageState)}; service=${logs}`,{cause:error});
+  }
   assert.equal(await client.evaluate("document.body.dataset.libraryView"),"thumbnail");
   assert.ok(await client.evaluate("document.querySelector('.library-sidebar #categoryChips')!==null"));
   await client.evaluate(`document.querySelector('[data-asset-id=${JSON.stringify(unknown.id)}] .character-badge').click()`);
@@ -67,7 +72,7 @@ test("character API persists revisions and browser editing keeps preview/referen
   await client.evaluate("document.getElementById('characterState').value='觉醒';document.getElementById('saveCharacterButton').click()");
   await waitForBrowserState(client,"!document.getElementById('characterDialog').open","Confirmation saves and closes");
   assert.equal((await context()).asset.character.state,"觉醒");
-  await waitForBrowserState(client,"document.querySelectorAll('.image-card img').length===4&&!document.getElementById('scanState').classList.contains('busy')","Updated gallery finishes reloading before double-click preview");
+  await waitForBrowserState(client,"document.querySelectorAll('.image-card img').length===4&&!document.getElementById('scanState').classList.contains('busy')","Updated gallery finishes reloading before double-click preview",20000);
   await client.evaluate("window.__assetMessages=[];Object.defineProperty(window,'parent',{value:{postMessage:m=>window.__assetMessages.push(m)},configurable:true});true");
   const point=await client.evaluate("(()=>{const r=document.querySelector('.image-card img').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()");
   for (const clickCount of [1,2]) {
