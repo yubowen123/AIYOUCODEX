@@ -50,7 +50,9 @@ test("character API persists revisions and browser editing keeps preview/referen
   assert.deepEqual(await readFile(path.join(folder,"unknown.png")),bytes,"association never changes source bytes");
 
   let executable;
-  for(const candidate of [process.env.AIYOUCODEX_TEST_BROWSER,"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome","/usr/bin/google-chrome","/usr/bin/chromium"].filter(Boolean)){try{await access(candidate);executable=candidate;break;}catch{}}
+  const candidates = [process.env.AIYOUCODEX_TEST_BROWSER,"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome","/usr/bin/google-chrome","/usr/bin/chromium",
+    ...[process.env.PROGRAMFILES,process.env["PROGRAMFILES(X86)"],process.env.LOCALAPPDATA].filter(Boolean).map(root=>path.join(root,"Google/Chrome/Application/chrome.exe"))].filter(Boolean);
+  for(const candidate of candidates){try{await access(candidate);executable=candidate;break;}catch{}}
   assert.ok(executable,"Browser verification requires Chrome");
   browser=spawn(executable,["--headless=new","--no-sandbox","--no-first-run","--no-default-browser-check","--disable-extensions","--window-size=1280,900","--remote-debugging-port=0",`--user-data-dir=${profile}`,"about:blank"],{stdio:["ignore","ignore","pipe"]});
   ({client}=await connectFixtureBrowser({browser,profile,url:"about:blank"}));
@@ -65,6 +67,7 @@ test("character API persists revisions and browser editing keeps preview/referen
   await client.evaluate("document.getElementById('characterState').value='觉醒';document.getElementById('saveCharacterButton').click()");
   await waitForBrowserState(client,"!document.getElementById('characterDialog').open","Confirmation saves and closes");
   assert.equal((await context()).asset.character.state,"觉醒");
+  await waitForBrowserState(client,"document.querySelectorAll('.image-card img').length===4&&!document.getElementById('scanState').classList.contains('busy')","Updated gallery finishes reloading before double-click preview");
   await client.evaluate("window.__assetMessages=[];Object.defineProperty(window,'parent',{value:{postMessage:m=>window.__assetMessages.push(m)},configurable:true});true");
   const point=await client.evaluate("(()=>{const r=document.querySelector('.image-card img').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()");
   for (const clickCount of [1,2]) {
