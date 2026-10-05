@@ -1,5 +1,7 @@
 # AIYOUcodex
 
+**与更强的你，一起构建可能。**
+
 AIYOUcodex 是一套面向 macOS 与 Windows Codex 桌面体验的本地交互工作台。它为对话增加摘要、最近消息预览、双列卡片、项目标签搜索、最近使用排序和额度展示，并默认集成本地项目管理看板、Skills 分组和多媒体资产库，同时不修改应用包或对话正文。
 
 GitHub 开源地址：[https://github.com/yubowen123/AIYOUCODEX](https://github.com/yubowen123/AIYOUCODEX)

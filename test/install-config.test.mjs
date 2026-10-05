@@ -146,6 +146,8 @@ test("launcher revives missing helpers and focuses an existing native app withou
   const testHome = await mkdtemp(path.join(os.tmpdir(), "aiyou-startup-"));
   const logPath = path.join(testHome, "commands.log");
   try {
+    const fakeApp = path.join(testHome, "Applications", "ChatGPT.app");
+    await mkdir(fakeApp, {recursive: true});
     const plan = createInstallPlan({home: testHome});
     await mkdir(plan.launchAgentsDir, {recursive: true});
     await writeFile(plan.plistPath, plan.plist);
@@ -158,6 +160,8 @@ function mock_open() { print -r -- "open $*" >> "$AIYOU_TEST_LOG"; }
 function mock_osascript() { print -r -- "UNEXPECTED osascript $*" >> "$AIYOU_TEST_LOG"; return 1; }
 `;
     const isolatedScript = plan.launcherScript.replaceAll("/bin/launchctl", "mock_launchctl")
+      .replaceAll("/Applications/ChatGPT.app", fakeApp)
+      .replaceAll("/Applications/Codex.app", path.join(testHome, "Applications", "Codex.app"))
       .replaceAll("/usr/bin/curl", "mock_curl").replaceAll("/usr/bin/pgrep", "mock_pgrep")
       .replaceAll("/usr/bin/open", "mock_open").replaceAll("/usr/bin/osascript", "mock_osascript");
     const result = spawnSync("/bin/zsh", ["-c", mock + isolatedScript], {
@@ -168,7 +172,7 @@ function mock_osascript() { print -r -- "UNEXPECTED osascript $*" >> "$AIYOU_TES
     assert.match(log, /bootstrap gui\//);
     assert.match(log, /kickstart gui\/.*com\.yubowen\.codex-sidebar-enhancer/);
     assert.match(log, /kickstart gui\/.*com\.aiyoucodex\.theme-runtime/);
-    assert.match(log, /open -a \/Applications\/(?:ChatGPT|Codex)\.app/);
+    assert.ok(log.includes(`open -a ${fakeApp}`));
     assert.doesNotMatch(log, /UNEXPECTED|kickstart -k|open .* -na/);
     assert.match(plan.plist, /CODEX_SIDEBAR_ALLOW_HOST_RESTART<\/key>\s*<string>1<\/string>/);
   } finally { await rm(testHome, {recursive: true, force: true}); }
