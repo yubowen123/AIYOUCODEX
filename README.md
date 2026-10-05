@@ -4,11 +4,25 @@ AIYOUcodex 是一套面向 macOS 与 Windows Codex 桌面体验的本地交互�
 
 GitHub 开源地址：[https://github.com/yubowen123/AIYOUCODEX](https://github.com/yubowen123/AIYOUCODEX)
 
-![AIYOUcodex 最新全功能指南：Claude 角色、角色资产关联与 GitHub 地址](.github/assets/AIYOUcodex-project-guide-20261002.png)
+![AIYOUcodex 当前原生机甲动态实录](.github/assets/20261006/mecha-native-v1.4.2.gif)
 
-当前发行版：**v1.4.0**。项目管理、Skills 分组、本地资产库、快捷入口设置及对应的 macOS/Windows 后台运行时会作为同一安装包更新，不需要分别安装。
+当前发行版：**v1.5.0**。项目管理、Skills 分组、本地资产库、快捷入口设置及对应的 macOS/Windows 后台运行时会作为同一安装包更新，不需要分别安装。
 
 v1.4.0 将菜单功能统一为不打断对话的右侧面板：可以直接在项目对话里搜索项目、Skills 或资产，并把 Skill 与本地资产安全预填到当前输入框，不会自动发送。
+
+### 本次更新 · 自动恢复、双主题与主题生成 Skill · 2026-10-06
+
+- **重启自动加载**：安装器启用登录启动、增强恢复和主题后台服务，解除系统禁用标记；自动恢复等待会话空闲，重复打开不重启健康服务。
+- **机甲与粉嫩软糖同时保留**：最新机甲控制舱 **v1.4.2** 与粉嫩软糖 **v1.0.2** 共存，独立保存配置；升级基础模块保留原有皮肤，可回到系统默认。
+- **完整主题配置**：静态图 / GIF / 视频背景、七个事件媒体槽、输入框内外分层透明度、独立文字颜色、实时预览、取消和保存。
+- **按参考图构建主题**：新增 `aiyoucodex-theme-builder` Skill，包含独立身份模板、色卡与资源验证、编译安装和原生检查。
+- **近期交互更新合并发布**：Tibo 记录中文摘要与明确预告识别、Claude 交互与快捷指令、远程项目列表和执行状态、本地 Laya 搜索，以及右上角文件/上下文入口。
+
+![粉嫩软糖当前原生截图](.github/assets/20261006/pink-native-v1.0.2.png)
+
+![当前原生主题配置截图](.github/assets/20261006/theme-settings-mecha-native.png)
+
+上方 GIF 与截图直接录制当前原生 Codex，私人对话和输入草稿已隐藏。查看[完整更新详情与截图](docs/RELEASE-v1.5.0.md)、[安装与主题配置](docs/THEMES.md)和[主题 Skill](skills/aiyoucodex-theme-builder/SKILL.md)。整机重启与 Windows 原生主题效果未在本次实机验证。
 
 ### main 最新更新 · Claude 角色与角色资产库 · 2026-10-02
 

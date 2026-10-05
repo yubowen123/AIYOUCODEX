@@ -79,6 +79,13 @@ mkdir -p "${STAGING_DIR}"
   --exclude '/*.png' \
   "${SOURCE_DIR}/" "${STAGING_DIR}/"
 
+# Preserve the installed theme catalog, packages and personal local media.
+# New public source does not replace the user's selected skin or theme settings.
+if [[ -d "${INSTALL_DIR}/themes" ]]; then
+  mkdir -p "${STAGING_DIR}/themes"
+  /usr/bin/rsync -a "${INSTALL_DIR}/themes/" "${STAGING_DIR}/themes/"
+fi
+
 # Validate the staged package before replacing a usable installation. This is
 # package validation only; --strict performs the separate live renderer check.
 "${NODE_PATH}" "${STAGING_DIR}/scripts/setup-claude-dependencies.mjs" \

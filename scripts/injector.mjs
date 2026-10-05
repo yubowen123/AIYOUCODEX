@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { connectCodexTarget, readTargets, selectMainCodexTargets } from "./cdp-client.mjs";
 import { PreviewRepository } from "../lib/preview-data.mjs";
+import { readRemoteCatalog, readNativeExecutionStates } from "../lib/remote-thread-catalog.mjs";
 import { presentCardPreview } from "../lib/card-view.mjs";
 import { presentRateLimit } from "../lib/usage-data.mjs";
 import { createResetAnnouncementReader } from "../lib/reset-announcements.mjs";
@@ -28,6 +29,8 @@ import { createConversationFolders, createConversationFolderSync } from "../lib/
 import { executeConfirmedContext } from "../lib/context-execution.mjs";
 import { createClaudeController, CLAUDE_BINDING } from "../lib/claude-code.mjs";
 import { RENDERER_HEALTH_EXPRESSION, acceptDocumentHealth, canReuseRenderer, recordUpdateFailure, rendererReadiness } from "../lib/renderer-health.mjs";
+import { readOptionalThemeSource } from "../lib/theme-package.mjs";
+import { createLayaSearchController, LAYA_SEARCH_BINDING } from "../lib/laya-search.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(root, "inject", "conversation-preview.user.js");
@@ -48,6 +51,7 @@ function parseArgs(argv) {
 
 const options = parseArgs(process.argv.slice(2));
 const repository = new PreviewRepository();
+const layaSearchController = createLayaSearchController({ repository });
 const readResetNotice = createResetAnnouncementReader();
 const conversationFolders = createConversationFolders();
 const syncConversationFolders = createConversationFolderSync({ folders: conversationFolders, repository });
@@ -75,7 +79,7 @@ async function expectedRendererSourceHash() {
     const [baseSource, claudeSource, managedShortcuts] = await Promise.all([
       readFile(sourcePath, "utf8"), readFile(claudeSourcePath, "utf8"), readManagedShortcuts(),
     ]);
-    const userSource = baseSource + "\n" + claudeSource;
+    const userSource = baseSource + "\n" + claudeSource + "\n" + await readOptionalThemeSource(root);
     // A partial edit must not replace a healthy renderer with invalid source.
     new Function(userSource);
     cachedRendererSourceHash = createHash("sha256").update(userSource)
@@ -116,6 +120,7 @@ async function disposeRendererSession(session, { destroy = false } = {}) {
   session.skillOrganizationBridge?.dispose();
   session.resetMonitorBridge?.dispose();
   session.claudeBridge?.dispose();
+  session.layaSearchBridge?.dispose();
   session.client.close();
   session.deliveredHistoryKey = "";
 }
@@ -127,6 +132,8 @@ async function attachTarget(target) {
     readActiveContext: () => readActiveConversationContext({ client }),
     executeContext: (payload) => executeConfirmedContext({ client, ...payload }) });
   const efficiencyBridge = new EfficiencyBridge(efficiencyController);
+  const layaSearchBridge = new EfficiencyBridge(layaSearchController, { binding: LAYA_SEARCH_BINDING,
+    resolver: "resolveLayaSearchRequest", publicErrorCodes: ["LAYA_SEARCH_ERROR"], fallbackError: "Laya 检索未完成，普通搜索仍可使用。" });
   const skillOrganizationController = createSkillOrganizationController({ store: skillOrganizationStore, trace: skillProvenance.trace, readCatalog: async ({ refresh = false } = {}) => {
     const active = await readActiveConversationContext({ client });
     const record = active?.threadId ? await repository.resolveEfficiencyThread(active.threadId) : null;
@@ -154,7 +161,7 @@ async function attachTarget(target) {
         throw new Error("Managed shortcut profile could not be read");
       }),
     ]);
-    const userSource = baseSource + "\n" + claudeSource;
+    const userSource = baseSource + "\n" + claudeSource + "\n" + await readOptionalThemeSource(root);
     const sourceHash = createHash("sha256").update(userSource).update(JSON.stringify(managedShortcuts)).digest("hex");
     const rendererSource = `if (window.top === window) { window.__CODEX_SIDEBAR_RENDERER_TARGET_ID__ = ${JSON.stringify(target.id)}; window.__CODEX_SIDEBAR_MANAGED_SHORTCUTS__ = ${JSON.stringify(managedShortcuts)}; ${userSource}\n window.__AIYOUCODEX_RUNTIME_SOURCE_HASH__ = ${JSON.stringify(sourceHash)}; }`;
     const snapshot = await client.evaluate(RENDERER_HEALTH_EXPRESSION);
@@ -164,6 +171,7 @@ async function attachTarget(target) {
     await client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] = ${JSON.stringify(registered.identifier)}`);
     await assetConsoleBridge.install(client);
     await efficiencyBridge.install(client);
+    await layaSearchBridge.install(client);
     await skillOrganizationBridge.install(client);
     await resetMonitorBridge.install(client);
     await claudeBridge.install(client);
@@ -175,6 +183,7 @@ async function attachTarget(target) {
       assetConsoleBridge,
       efficiencyController,
       efficiencyBridge,
+      layaSearchBridge,
       skillOrganizationController,
       skillOrganizationBridge,
       resetMonitorBridge,
@@ -192,6 +201,7 @@ async function attachTarget(target) {
   } catch (error) {
     await assetConsoleBridge.dispose().catch(() => {});
     efficiencyBridge.dispose();
+    layaSearchBridge.dispose();
     skillOrganizationBridge.dispose();
     resetMonitorBridge.dispose();
     claudeBridge.dispose();
@@ -270,6 +280,7 @@ async function reconcileTargets() {
         }
         if (alive && session.bridgeDocumentEpoch !== session.documentEpoch) {
           await session.assetConsoleBridge.install(session.client);
+          await session.layaSearchBridge.install(session.client);
           session.bridgeDocumentEpoch = session.documentEpoch;
         }
         if (alive) {
@@ -294,7 +305,9 @@ async function reconcileTargets() {
       && process.env.CODEX_SIDEBAR_ALLOW_HOST_RESTART === "1") {
     let app = null;
     try { app = await desktopAppRuntime.readProcess(); } catch {}
-    const taskStatus = await readActiveTaskThreads();
+    const taskStatus = await readActiveTaskThreads({
+      isThreadIdle: (id) => repository.isConversationIdle(id),
+    });
     const action = desktopAppRecovery.next({ targetAvailable: false, app,
       recoveryAllowed: process.env.CODEX_SIDEBAR_ALLOW_HOST_RESTART === "1"
         && taskStatus.available && taskStatus.activeThreadIds.length === 0 });
@@ -304,7 +317,10 @@ async function reconcileTargets() {
         process.stdout.write(`Restarting ${action.app.appPath} to enable sidebar enhancement\n`);
       } catch {}
     } else if (action?.type === "launch") {
-      desktopAppRuntime.launch(action.appPath, options.port);
+      desktopAppRuntime.launch(action.appPath, options.port, {
+        codexHome: process.env.CODEX_HOME,
+        userDataDir: process.env.AIYOUCODEX_USER_DATA_DIR,
+      });
       desktopAppRecovery.markLaunched();
       process.stdout.write(`Launching ${action.appPath} with sidebar enhancement enabled\n`);
     }
@@ -317,6 +333,8 @@ async function reconcileTargets() {
 async function readActiveConversationContext(session) {
   if (!session?.client) return { threadId: "", title: "" };
   return session.client.evaluate(`(() => {
+    const route = window.__codexConversationPreviewInjection__?.getActiveTaskContext?.();
+    if (route) return { threadId: route.threadId, title: route.threadTitle };
     const active = document.querySelector('[data-app-action-sidebar-thread-active="true"], [data-app-action-sidebar-thread-selected="true"], [data-app-action-sidebar-thread-row][aria-current="page"]');
     return {
       threadId: active?.getAttribute('data-app-action-sidebar-thread-id') || '',
@@ -362,7 +380,7 @@ async function readCachedSkillCatalog(catalogKey, { refresh = false } = {}) {
 
 async function pushPreviews(session) {
   if (!session?.client) return;
-  const [requests, activeContext, recentCatalog, pinnedThreadIds, taskboardStatus] = await Promise.all([
+  const [requests, activeContext, localRecentCatalog, pinnedThreadIds, taskboardStatus, remoteProjects] = await Promise.all([
     session.client.evaluate(`(() => {
       const seen = new Set();
       const allPanel = document.getElementById('codex-sidebar-all-projects');
@@ -384,9 +402,13 @@ async function pushPreviews(session) {
     repository.readRecentCatalog(),
     repository.readPinnedThreadIds(),
     readActiveTaskThreads(),
+    repository.readRemoteProjectCatalog?.() || [],
   ]);
+  const remoteCatalog = await readRemoteCatalog(session, remoteProjects);
+  const threadExecutionStates = await readNativeExecutionStates(session, remoteProjects.map(project => project.hostId));
+  const recentCatalog = [...localRecentCatalog, ...remoteCatalog];
   const authoritative = activeContext?.threadId ? await repository.resolveEfficiencyThread(activeContext.threadId) : null;
-  try { await syncConversationFolders(recentCatalog, authoritative); }
+  try { await syncConversationFolders(localRecentCatalog, authoritative); }
   catch { /* A folder failure must not tear down sidebar cards or chat. */ }
   const catalogKey = authoritative?.projectPath || "";
   const skillCatalog = await readCachedSkillCatalog(catalogKey);
@@ -396,7 +418,7 @@ async function pushPreviews(session) {
   const interruptedCatalog = await repository.readInterruptedCatalog({
     activeThreadIds: taskboardStatus.activeThreadIds,
   });
-  const recentRequests = recentCatalog.slice(0, 30).map((entry) => ({
+  const recentRequests = localRecentCatalog.slice(0, 30).map((entry) => ({
     key: `local:${entry.threadId}\n${entry.title}`,
     id: `local:${entry.threadId}`,
     title: entry.title,
@@ -407,14 +429,19 @@ async function pushPreviews(session) {
     title: entry.title,
   }));
   const previewRequests = Array.from(new Map(
-    [...recentRequests, ...interruptedRequests, ...(Array.isArray(requests) ? requests : [])].map((request) => [request.key, request]),
+    [...recentRequests, ...interruptedRequests, ...(Array.isArray(requests) ? requests : [])]
+      .filter(request => !request.id?.startsWith("remote:"))
+      .map((request) => [request.key, request]),
   ).values());
   const searchCatalog = recentCatalog.filter((entry) => entry.projectId && entry.projectName);
   const [rawPreviews, rawUsage] = await Promise.all([
     repository.readMany(previewRequests),
     repository.readUsage(),
   ]);
-  const previews = rawPreviews.map((preview) => presentCardPreview(preview));
+  const previews = [...rawPreviews, ...remoteCatalog.map(entry => ({
+    key: `${entry.threadId}\n${entry.title}`, threadId: entry.threadId, title: entry.title,
+    updatedAt: entry.updatedAt, projectName: entry.projectName, remote: true,
+  }))].map((preview) => presentCardPreview(preview));
   const usage = presentRateLimit(rawUsage, { timeZone: "Asia/Shanghai" });
   usage.resetNotice = await readResetNotice({ accountReset: usage.resetAccount || null });
   usage.resetNotice.monitor = await resetMonitorController.snapshot();
@@ -424,9 +451,9 @@ async function pushPreviews(session) {
   let efficiency;
   try { efficiency = await session.efficiencyController.snapshot(); }
   catch { /* Keep the previous efficiency panel state; saves still fail closed. */ }
-  const remoteProjects = await repository.readRemoteProjectCatalog?.() || [];
-  const snapshot = { previews, usage, searchCatalog, remoteProjects, recentCatalog, interruptedCatalog, ...(efficiency ? { efficiency } : {}),
+  const snapshot = { previews, usage, searchCatalog, layaSearch: layaSearchController.snapshot(), remoteProjects, recentCatalog, interruptedCatalog, ...(efficiency ? { efficiency } : {}),
     pinnedThreads: pinnedThreadIds, activeProjectThreads: taskboardStatus.activeThreadIds,
+    ...(threadExecutionStates ? { threadExecutionStates } : {}),
     ...(skillOrganization ? { skillOrganization } : { skillCatalog }) };
   const serialized = JSON.stringify(snapshot);
   const snapshotHash = createHash("sha256").update(serialized).digest("hex");
@@ -442,6 +469,7 @@ async function pushPreviews(session) {
 async function stop() {
   if (stopped) return;
   stopped = true;
+  layaSearchController.stop();
   await claudeController.stopAll();
   const closing = [...sessions.values()];
   sessions.clear();

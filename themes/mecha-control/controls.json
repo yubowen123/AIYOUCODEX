@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "storageKey": "aiyoucodex.theme.v1",
+  "alphaRange": [
+    0,
+    1
+  ],
+  "transparencyPercentFormula": "100 * (1 - alpha)",
+  "defaults": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "motion": true,
+    "alpha": {
+      "overall": 1,
+      "chrome": 1,
+      "sidebar": 0.72,
+      "chat": 0,
+      "panel": 0.8,
+      "card": 0.82,
+      "message": 0.82,
+      "composer": 0.86,
+      "control": 0.86,
+      "menu": 0.96,
+      "text": 1,
+      "border": 0.65,
+      "shadow": 1,
+      "decoration": 0.9,
+      "image": 0.46,
+      "composer-area": 0
+    },
+    "colors": {
+      "primary": "#edf4fa",
+      "secondary": "#a9becf",
+      "link": "#49adff",
+      "success": "#52dba0",
+      "danger": "#ff716d",
+      "warning": "#ffa932",
+      "inverse": "#0c151e"
+    },
+    "background": {
+      "fit": "cover",
+      "x": 75,
+      "y": 50,
+      "type": "video",
+      "source": "builtin",
+      "custom": null,
+      "customStates": {}
+    }
+  },
+  "defaultReadability": {
+    "minimum": 5.34,
+    "passes": true
+  },
+  "source": "createThemeCustomization",
+  "documentation": "THEME-CONTROLS.md"
+}

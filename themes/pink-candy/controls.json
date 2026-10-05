@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "storageKey": "aiyoucodex.theme.pink-candy.v1",
+  "defaults": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "motion": false,
+    "alpha": {
+      "overall": 1,
+      "chrome": 0.9,
+      "sidebar": 0.86,
+      "chat": 0,
+      "panel": 0.86,
+      "card": 0.9,
+      "message": 0.82,
+      "composer": 0.9,
+      "control": 0.86,
+      "menu": 0.98,
+      "text": 1,
+      "border": 0.65,
+      "shadow": 1,
+      "decoration": 0.9,
+      "image": 0.78,
+      "composer-area": 0
+    },
+    "colors": {
+      "primary": "#493b45",
+      "secondary": "#595959",
+      "link": "#235caa",
+      "success": "#13774f",
+      "danger": "#b52c4c",
+      "warning": "#a74370",
+      "inverse": "#fffdfe"
+    },
+    "background": {
+      "fit": "cover",
+      "x": 75,
+      "y": 50,
+      "type": "image",
+      "source": "builtin",
+      "custom": null,
+      "customStates": {}
+    }
+  },
+  "defaultReadability": {
+    "minimum": 4.99,
+    "passes": true
+  },
+  "source": "createThemeCustomization"
+}

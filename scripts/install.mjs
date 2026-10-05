@@ -4,6 +4,7 @@ import { createInstallPlan, LEGACY_TASKBOARD_LABELS } from "../lib/install-confi
 import { access, mkdir, rm, unlink, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { activateLaunchAgent } from "../lib/launch-agent.mjs";
 import { installResetMonitorService } from "../lib/reset-monitor-service.mjs";
 
 function parseArgs(argv) {
@@ -35,6 +36,7 @@ if (options.dryRun) {
   await mkdir(plan.logsDir, { recursive: true });
   await mkdir(path.dirname(plan.launcherExecutablePath), { recursive: true });
   await writeFile(plan.plistPath, plan.plist, { mode: 0o644 });
+  await writeFile(plan.loginPlistPath, plan.loginPlist, { mode: 0o644 });
   await writeFile(path.join(plan.launcherContentsDir, "Info.plist"), plan.launcherInfoPlist, { mode: 0o644 });
   await writeFile(plan.launcherExecutablePath, plan.launcherScript, { mode: 0o755 });
   const resetMonitor = await installResetMonitorService({ ...options, home: plan.home, installDir: plan.installDir, nodePath: plan.nodePath });
@@ -54,11 +56,13 @@ if (options.dryRun) {
     if (disabledLegacyLabels.length > 0) {
       await writeFile(plan.legacyCompatibilityMarker, `${disabledLegacyLabels.join("\n")}\n`, { mode: 0o600 });
     }
-    spawnSync(options.launchctlPath, ["bootout", domain, plan.plistPath], { stdio: "ignore" });
-    const loaded = spawnSync(options.launchctlPath, ["bootstrap", domain, plan.plistPath], { encoding: "utf8" });
-    if (loaded.status !== 0) throw new Error(loaded.stderr || "launchctl bootstrap failed");
-    const kicked = spawnSync(options.launchctlPath, ["kickstart", "-k", `${domain}/${plan.label}`], { encoding: "utf8" });
-    if (kicked.status !== 0) throw new Error(kicked.stderr || "launchctl kickstart failed");
+    await activateLaunchAgent({domain, label: plan.label, plistPath: plan.plistPath, launchctlPath: options.launchctlPath});
+    await activateLaunchAgent({domain, label: "com.yubowen.aiyoucodex-login", plistPath: plan.loginPlistPath, launchctlPath: options.launchctlPath});
+    const themePlist = path.join(plan.launchAgentsDir, "com.aiyoucodex.theme-runtime.plist");
+    try {
+      await access(themePlist);
+      await activateLaunchAgent({domain, label: "com.aiyoucodex.theme-runtime", plistPath: themePlist, launchctlPath: options.launchctlPath, replace: false});
+    } catch (error) { if (error.code !== "ENOENT") throw error; }
     spawnSync(options.launchctlPath, ["bootout", domain, legacyPlistPath], { stdio: "ignore" });
   }
   try { await unlink(legacyPlistPath); } catch (error) {
@@ -75,6 +79,7 @@ if (options.dryRun) {
     launchctlSkipped: options.skipLaunchctl,
     label: plan.label,
     plistPath: plan.plistPath,
+    loginPlistPath: plan.loginPlistPath,
     logsDir: plan.logsDir,
     launcherPath: plan.launcherPath,
   })}\n`);

@@ -12,10 +12,11 @@ test("launcher passes the existing profile as one literal shell argument", macOn
   const testHome = "/tmp/AIYOU profile 'quotes' $AIYOU_TEST_VALUE";
   const { launcherScript } = createInstallPlan({ home: testHome });
   const assignment = launcherScript.split("\n").find(line => line.startsWith("AIYOU_CODEX_USER_DATA_DIR="));
-  const launch = launcherScript.slice(launcherScript.lastIndexOf('/usr/bin/open -na'));
+  const homeAssignment = launcherScript.split("\n").find(line => line.startsWith("AIYOU_CODEX_HOME="));
+  const launch = launcherScript.slice(launcherScript.lastIndexOf('/usr/bin/open --env'));
   // Only parse arguments in an isolated shell; never launch, quit or connect
   // to the user's app from this regression test.
-  const result = spawnSync("/bin/zsh", ["-c", `PORT=9231\nAPP_PATH=/unused/ChatGPT.app\n${assignment}\n${launch.replace('/usr/bin/open', '/usr/bin/printf "%s\\n"')}`], { encoding: "utf8" });
+  const result = spawnSync("/bin/zsh", ["-c", `PORT=9231\nAPP_PATH=/unused/ChatGPT.app\n${assignment}\n${homeAssignment}\n${launch.replace('/usr/bin/open', '/usr/bin/printf "%s\\n"')}`], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   const args = result.stdout.trim().split("\n");
   assert.ok(args.includes(`--user-data-dir=${path.join(testHome, "Library", "Application Support", "Codex")}`));
@@ -80,6 +81,10 @@ test("installer activation writes a loadable user LaunchAgent without invoking l
     assert.match(plist, new RegExp(process.execPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(plist, /scripts\/runtime\.mjs/);
     assert.equal(activation.launcherPath, path.join(testHome, "Applications", "AIYOUcodex.app"));
+    const loginPlist = await readFile(activation.loginPlistPath, "utf8");
+    assert.match(loginPlist, /com\.yubowen\.aiyoucodex-login/);
+    assert.match(loginPlist, /<key>RunAtLoad<\/key><true\/>/);
+    assert.match(loginPlist, /<key>KeepAlive<\/key><false\/>/);
     await access(path.join(activation.launcherPath, "Contents", "Info.plist"));
     const launcherInfo = await readFile(path.join(activation.launcherPath, "Contents", "Info.plist"), "utf8");
     assert.match(launcherInfo, /<string>AIYOUcodex<\/string>/);
@@ -126,8 +131,45 @@ test("installer explicitly kickstarts the registered LaunchAgent after bootstrap
     assert.equal(result.status, 0, result.stderr);
     const commands = (await readFile(launchctlLog, "utf8")).trim().split("\n");
     assert.ok(commands.some((command) => command.startsWith("bootstrap gui/")));
+    const enable = commands.indexOf(`enable gui/${process.getuid()}/com.yubowen.codex-sidebar-enhancer`);
+    const bootstrap = commands.indexOf(`bootstrap gui/${process.getuid()} ${path.join(testHome, "Library", "LaunchAgents", "com.yubowen.codex-sidebar-enhancer.plist")}`);
+    assert.ok(enable >= 0 && enable < bootstrap, "clear disabled override before registering recovery");
+    assert.ok(commands.some(command => command === `enable gui/${process.getuid()}/com.yubowen.aiyoucodex-login`));
     assert.ok(commands.some((command) => command === `kickstart -k gui/${process.getuid()}/com.yubowen.codex-sidebar-enhancer`));
   } finally {
     await rm(testHome, { recursive: true, force: true });
   }
+});
+
+
+test("launcher revives missing helpers and focuses an existing native app without quitting it", macOnly, async () => {
+  const testHome = await mkdtemp(path.join(os.tmpdir(), "aiyou-startup-"));
+  const logPath = path.join(testHome, "commands.log");
+  try {
+    const plan = createInstallPlan({home: testHome});
+    await mkdir(plan.launchAgentsDir, {recursive: true});
+    await writeFile(plan.plistPath, plan.plist);
+    await writeFile(path.join(plan.launchAgentsDir, "com.aiyoucodex.theme-runtime.plist"), "test");
+    const mock = `
+function mock_launchctl() { print -r -- "launchctl $*" >> "$AIYOU_TEST_LOG"; [[ "$1" != print ]]; }
+function mock_curl() { return 1; }
+function mock_pgrep() { return 0; }
+function mock_open() { print -r -- "open $*" >> "$AIYOU_TEST_LOG"; }
+function mock_osascript() { print -r -- "UNEXPECTED osascript $*" >> "$AIYOU_TEST_LOG"; return 1; }
+`;
+    const isolatedScript = plan.launcherScript.replaceAll("/bin/launchctl", "mock_launchctl")
+      .replaceAll("/usr/bin/curl", "mock_curl").replaceAll("/usr/bin/pgrep", "mock_pgrep")
+      .replaceAll("/usr/bin/open", "mock_open").replaceAll("/usr/bin/osascript", "mock_osascript");
+    const result = spawnSync("/bin/zsh", ["-c", mock + isolatedScript], {
+      encoding: "utf8", env: {...process.env, AIYOU_TEST_LOG: logPath},
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const log = await readFile(logPath, "utf8");
+    assert.match(log, /bootstrap gui\//);
+    assert.match(log, /kickstart gui\/.*com\.yubowen\.codex-sidebar-enhancer/);
+    assert.match(log, /kickstart gui\/.*com\.aiyoucodex\.theme-runtime/);
+    assert.match(log, /open -a \/Applications\/(?:ChatGPT|Codex)\.app/);
+    assert.doesNotMatch(log, /UNEXPECTED|kickstart -k|open .* -na/);
+    assert.match(plan.plist, /CODEX_SIDEBAR_ALLOW_HOST_RESTART<\/key>\s*<string>1<\/string>/);
+  } finally { await rm(testHome, {recursive: true, force: true}); }
 });

@@ -272,3 +272,16 @@ test("Windows desktop app recovery uses the same complete debugging arguments", 
     "--enable-features=LocalNetworkAccessForSubframeNavigationsWarningOnly",
   ]);
 });
+
+
+test("automatic recovery waits for idle and never restarts an already debug-enabled or closed host", async () => {
+  const {DesktopAppRecovery} = await import("../lib/injector-state.mjs");
+  const recovery = new DesktopAppRecovery();
+  const app = {pid: 101, appPath: "/Applications/ChatGPT.app"};
+  assert.equal(recovery.next({targetAvailable: false, app, recoveryAllowed: false}), null);
+  assert.equal(recovery.next({targetAvailable: false, app: {...app, debuggingPort: 9231}}), null);
+  assert.equal(recovery.next({targetAvailable: false, app: null}), null);
+  assert.equal(recovery.next({targetAvailable: false, app, recoveryAllowed: true}).type, "quit");
+  assert.equal(recovery.next({targetAvailable: false, app: null, recoveryAllowed: false}), null);
+  assert.equal(recovery.next({targetAvailable: false, app: null, recoveryAllowed: true}).type, "launch");
+});

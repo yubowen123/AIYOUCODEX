@@ -28,7 +28,7 @@ function Test-Node22([string]$Candidate) {
 function Copy-Package([string]$From, [string]$To) {
   $entries = @(
     "LICENSE", "README.md", "package.json", "package-lock.json",
-    "inject", "lib", "scripts", "vendor", "windows", "install.ps1", "uninstall.ps1"
+    "inject", "lib", "scripts", "vendor", "windows", "themes", "skills", "install.ps1", "uninstall.ps1"
   )
   foreach ($entry in $entries) {
     $source = Join-Path $From $entry
@@ -159,6 +159,14 @@ try {
   New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($fullInstallDir)) -Force | Out-Null
   New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
   Copy-Package $sourceDir $stagingDir
+  $existingThemes = Join-Path $fullInstallDir "themes"
+  if (Test-Path -LiteralPath $existingThemes -PathType Container) {
+    $stagedThemes = Join-Path $stagingDir "themes"
+    New-Item -ItemType Directory -Path $stagedThemes -Force | Out-Null
+    Get-ChildItem -LiteralPath $existingThemes -Force | ForEach-Object {
+      Copy-Item -LiteralPath $_.FullName -Destination $stagedThemes -Recurse -Force
+    }
+  }
 
   $nodePath = Get-Setting "CODEX_SIDEBAR_NODE" ""
   if (-not (Test-Node22 $nodePath)) {
