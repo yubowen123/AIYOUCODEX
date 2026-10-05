@@ -15,7 +15,7 @@ const POST = { sourceUrl: 'https://x.com/thsottiaux/status/2100000000000000001',
 async function fixture(t) {
   const root = await mkdtemp(path.join(tmpdir(), 'aiyou-internal-reset-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  return { root, filePath: path.join(root, 'monitor.json'), announcementPath: path.join(root, 'announcements.json') };
+  return { translationFetchImpl: async () => ({ ok: true, json: async () => [[['测试中文译文。']]] }), root, filePath: path.join(root, 'monitor.json'), announcementPath: path.join(root, 'announcements.json') };
 }
 test('monitor persists settings, rejects stale windows, and never depends on native automations', async t => {
   const f = await fixture(t);

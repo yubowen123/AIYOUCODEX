@@ -48,3 +48,24 @@ test("custom Taskboard root URL is trusted only with the enhancer marker and pin
   assert.equal(trustedTaskboardRuntimeBaseUrl({ ...descriptor, version: "0.1.0" }), null);
   assert.equal(trustedTaskboardRuntimeBaseUrl({ ...descriptor, url: "http://example.com/" }), null);
 });
+
+
+test("recovery excludes completed board threads but retains active and unknown replies", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codex-sidebar-recovery-"));
+  const runtimeFile = path.join(directory, "runtime.json");
+  await writeFile(runtimeFile, JSON.stringify({ url: "http://127.0.0.1:47823/private-token-1234" }));
+  try {
+    const result = await readActiveTaskThreads({
+      runtimeFile,
+      fetchImpl: async () => new Response(JSON.stringify({ tasks:
+        ["finished", "active", "unknown", "failed-read"].map(threadId => ({status: "in_progress", threadId})),
+      })),
+      isThreadIdle: async id => {
+        if (id === "failed-read") throw new Error("unavailable");
+        if (id === "unknown") return undefined;
+        return id === "finished";
+      },
+    });
+    assert.deepEqual(result, {available: true, activeThreadIds: ["active", "unknown", "failed-read"]});
+  } finally { await rm(directory, {recursive: true, force: true}); }
+});

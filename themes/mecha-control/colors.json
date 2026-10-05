@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "mode": "dark",
+  "primitives": {
+    "graphite-950": "#0c151e", "graphite-900": "#131f2b", "graphite-800": "#1b2a38",
+    "steel-500": "#58748b", "white-100": "#edf4fa", "gray-400": "#a9becf",
+    "blue-400": "#49adff", "green-400": "#52dba0", "red-400": "#ff716d",
+    "amber-400": "#ffa932", "teal-800": "#10635b"
+  },
+  "semantic": {
+    "bg": "graphite-950", "surface": "graphite-900", "elevated": "graphite-800",
+    "text": "white-100", "muted": "gray-400", "border": "steel-500",
+    "accent": "amber-400", "running": "blue-400", "complete": "green-400",
+    "error": "red-400", "user-bg": "teal-800"
+  },
+  "pairs": [
+    {"role":"body","foreground":"text","background":"bg","minimum":7},
+    {"role":"panel-body","foreground":"text","background":"elevated","minimum":7},
+    {"role":"secondary","foreground":"muted","background":"elevated","minimum":4.5},
+    {"role":"placeholder","foreground":"muted","background":"elevated","minimum":4.5},
+    {"role":"timestamp","foreground":"muted","background":"bg","minimum":4.5},
+    {"role":"link","foreground":"running","background":"elevated","minimum":4.5},
+    {"role":"success","foreground":"complete","background":"elevated","minimum":4.5},
+    {"role":"error","foreground":"error","background":"elevated","minimum":4.5},
+    {"role":"warning","foreground":"accent","background":"elevated","minimum":4.5},
+    {"role":"user-message","foreground":"text","background":"user-bg","minimum":4.5,"translucent":true},
+    {"role":"assistant-message","foreground":"text","background":"elevated","minimum":7,"translucent":true},
+    {"role":"message-link","foreground":"running","background":"elevated","minimum":4.5,"translucent":true},
+    {"role":"accent-button","foreground":"bg","background":"running","minimum":4.5},
+    {"role":"error-button","foreground":"bg","background":"error","minimum":4.5}
+  ],
+  "contexts": ["Codex","Dot","Claude","menus","inputs","tool-results","assets","arena","taskboard","settings","dialogs","permissions","notifications","search","skills","mcp","terminal","diff","media-controls"],
+  "dynamicBackground": {"textSurfaceMustBeOpaque":false,"textSurfaceAlpha":0.82,"textOpacity":1,"imageOpacityMaximum":0.46},
+  "states": {"running":"running","completed-unread":"complete","error":"error","read":"border"}
+}

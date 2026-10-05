@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "id": "pink-candy",
+  "name": "粉嫩软糖",
+  "version": "1.0.2",
+  "renderer": "aiyoucodex-theme-v1",
+  "palette": "colors.json",
+  "design": "design.json",
+  "controls": "controls.json",
+  "poster": "assets/poster.png",
+  "decorations": {
+    "wordmark": "assets/wordmark.svg",
+    "corner": "assets/candy-corner.svg"
+  },
+  "motion": {
+    "enter": {
+      "file": "assets/poster.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "click": {
+      "file": "assets/poster.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "send": {
+      "file": "assets/poster.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "running": {
+      "file": "assets/poster.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "complete": {
+      "file": "assets/poster.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "error": {
+      "file": "assets/poster.png",
+      "durationMs": 1200,
+      "loop": false
+    }
+  },
+  "defaults": {
+    "enabled": true,
+    "motion": false,
+    "backgroundType": "image",
+    "backgroundOpacity": 0.78
+  },
+  "limits": {
+    "maxAssetBytes": 10000000,
+    "maxBundleBytes": 20000000
+  },
+  "events": {
+    "chatEntry": "enter",
+    "interaction": "click",
+    "sendAccepted": "send",
+    "running": "running",
+    "completed-unread": "complete",
+    "error": "error",
+    "read": "poster"
+  }
+}

@@ -91,3 +91,18 @@ test("macOS runtime keeps the existing exact process, quit, and open behavior", 
     "--enable-features=LocalNetworkAccessForSubframeNavigationsWarningOnly",
   ]);
 });
+
+
+test("automatic recovery preserves the selected account home and desktop profile", () => {
+  const calls = [];
+  const runtime = createDesktopAppRuntime({
+    platform: "darwin", home: "/Users/example",
+    spawnProcess(command, args) { calls.push({command, args}); return {unref() {}}; },
+  });
+  runtime.launch("/Applications/ChatGPT.app", 9231, {
+    codexHome: "/Users/example/accounts/second/.codex",
+    userDataDir: "/Users/example/accounts/second/Desktop profile",
+  });
+  assert.deepEqual(calls[0].args.slice(0, 2), ["--env", "CODEX_HOME=/Users/example/accounts/second/.codex"]);
+  assert.ok(calls[0].args.includes("--user-data-dir=/Users/example/accounts/second/Desktop profile"));
+});

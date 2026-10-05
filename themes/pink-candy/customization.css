@@ -1,0 +1,82 @@
+/* Shared workspace background. No native content is reparented or resized. */
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] {isolation:isolate!important;background:transparent!important}
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace-path]:not([data-aiyou-theme-host]):not([data-aiyou-composer-area]),
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] [data-aiyou-workspace-path]:not([data-aiyou-theme-host]):not([data-aiyou-composer-area]),
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] :is(.messaging-root,.messaging-root .workspace,.thread-pane,.conversation-viewport,.messages-scroll):not([data-aiyou-theme-host]) {background:transparent!important}
+/* The chat host is a separate backing layer; descendants and foreground never
+   inherit its alpha. Contextual selectors also override the dark prepaint. */
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] [data-aiyou-theme-host],
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace][data-aiyou-theme-host],
+html[data-aiyou-theme="pink-candy"] #aiyoucodex-claude-panel[data-aiyou-theme-host] {background:var(--aiyou-fill-chat)!important}
+#aiyou-theme-backdrop {position:fixed;inset:auto;z-index:-1;background:var(--aiyou-bg);contain:strict;pointer-events:none!important}
+#aiyou-theme-backdrop .aiyou-motion-art {inset:0;width:100%;height:100%;max-height:none;object-fit:var(--aiyou-background-fit,cover);object-position:var(--aiyou-background-position,75% 50%);opacity:var(--aiyou-image-alpha,.46);mask-image:none}
+#aiyou-theme-backdrop :is(.aiyou-brand,.aiyou-brand-side),#aiyou-theme-chassis {opacity:var(--aiyou-decoration-alpha,.9)}
+/* Theme backgrounds only. Images, text, icons and click targets never inherit container opacity. */
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] [data-aiyou-composer-area] {background:var(--aiyou-fill-composer-area)!important;background-image:none!important}
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] [data-aiyou-composer-path] {background:transparent!important;background-image:none!important;--composer-layout-surface-background:transparent!important;--composer-layout-surface-backdrop-filter:none!important}
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] :is([data-aiyou-composer-area],[data-aiyou-composer-path])::before,
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] :is([data-aiyou-composer-area],[data-aiyou-composer-path])::after {background:transparent!important;background-image:none!important;backdrop-filter:none!important}
+/* Native ComposerLayoutRoot paints a second surface outside data-composer-body.
+   Only the body owns composer alpha; native surface variants cannot repaint it. */
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] :is([data-composer-body],[data-claude-compose]) {--composer-layout-surface-background:transparent!important;--composer-layout-surface-backdrop-filter:none!important}
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] :is([data-composer-body],[data-claude-compose]) :is([data-composer-input],[data-composer-footer],[data-composer-editor],[contenteditable],textarea),
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] :is([data-composer-body],[data-claude-compose])::before,
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] :is([data-composer-body],[data-claude-compose])::after {background:transparent!important;background-image:none!important;backdrop-filter:none!important}
+/* Paint the sidebar content, not its outer resize gutter. Keep the native hit
+   areas and horizontal history markers intact; never hide their containers. */
+html[data-aiyou-theme="pink-candy"] .app-shell-left-panel {background:transparent!important;border-right-color:transparent!important}
+html[data-aiyou-theme="pink-candy"] .app-shell-left-panel .sidebar-navigation {background:var(--aiyou-fill-sidebar)!important}
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] [class*="_MainContentLeftBorder_"] {border-left-color:transparent!important}
+html[data-aiyou-theme="pink-candy"] .app-shell-left-panel .sidebar-resize-handle,
+html[data-aiyou-theme="pink-candy"] .app-shell-left-panel .sidebar-resize-handle-line,
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] nav:has([data-thread-user-message-navigation-rail-list]) {background:transparent!important;box-shadow:none!important;border-color:transparent!important}
+html[data-aiyou-theme="pink-candy"] :is([data-aiyou-titlebar],[data-aiyou-rail]) {background-color:var(--aiyou-fill-chrome)!important;background-image:none!important}
+html[data-aiyou-theme="pink-candy"] :is(#codex-sidebar-section-tabs,#codex-sidebar-folder-switcher,#aiyoucodex-reset-notice,#codex-conversation-usage-status,#aiyoucodex-efficiency-panel,#codex-skill-organizer,[data-execution-output]) {background:var(--aiyou-fill-panel)!important}
+html[data-aiyou-theme="pink-candy"] #aiyoucodex-claude-panel [data-claude-process] {color:var(--aiyou-muted)!important;opacity:1!important}
+html[data-aiyou-theme="pink-candy"] #aiyoucodex-claude-panel [data-claude-process-content] {background:var(--aiyou-fill-panel)!important;border-radius:var(--aiyou-radius-card,10px);padding:8px 12px;color:var(--aiyou-muted)!important;opacity:1!important}
+html[data-aiyou-theme="pink-candy"] :is([data-codex-conversation-preview-enhanced],[data-app-action-sidebar-thread-row][data-codex-conversation-preview-enhanced]) {background:var(--aiyou-fill-card)!important}
+html[data-aiyou-theme="pink-candy"] :is(#aiyoucodex-agent-launchers button,#codex-sidebar-section-tabs [aria-selected="true"],#codex-sidebar-folder-switcher input,[data-codex-sidebar-folder-tag],#aiyoucodex-claude-panel button,#aiyoucodex-claude-panel input,#aiyoucodex-claude-panel select,#aiyoucodex-claude-panel textarea) {background:var(--aiyou-fill-control)!important}
+html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] :is(input,textarea,select,[role="combobox"]) {background-color:var(--aiyou-fill-control)!important}
+html[data-aiyou-theme="pink-candy"] :is([data-composer-body],#aiyoucodex-claude-panel [data-claude-compose],.thread-pane .composer) {background:var(--aiyou-fill-composer)!important}
+html[data-aiyou-theme="pink-candy"] :is([data-composer-body],#aiyoucodex-claude-panel [data-claude-compose],.thread-pane .composer) {background-image:none!important}
+html[data-aiyou-theme="pink-candy"] :is([data-composer-body],#aiyoucodex-claude-panel [data-claude-compose],.thread-pane .composer) :is(textarea,[contenteditable],[data-composer-input]) {background:transparent!important;background-image:none!important}
+html[data-aiyou-theme="pink-candy"] [data-aiyou-theme-host] [data-markdown-text-style="assistant-message"],
+html[data-aiyou-theme="pink-candy"] :is(.thread-pane .message-bubble,#aiyoucodex-claude-panel article:not([data-welcome]),#aiyoucodex-claude-panel [data-claude-bubble]) {background:var(--aiyou-fill-message)!important}
+html[data-aiyou-theme="pink-candy"] [data-user-message-bubble] {background:color-mix(in srgb,var(--aiyou-surface) calc(var(--aiyou-alpha-message) * 100%),transparent)!important}
+html[data-aiyou-theme="pink-candy"] :is(.thread-pane .message-row.self .message-bubble,#aiyoucodex-claude-panel article[data-role="user"]) {background:color-mix(in srgb,var(--aiyou-user-bg) calc(var(--aiyou-alpha-message) * 100%),transparent)!important}
+html[data-aiyou-theme="pink-candy"] :is([data-radix-menu-content],[role="dialog"],dialog,#aiyoucodex-reset-dialog,#aiyoucodex-workspace-folder-menu,#codex-sidebar-shortcut-settings-dialog):not(#aiyou-theme-settings) {background:var(--aiyou-fill-menu)!important}
+html[data-aiyou-theme="pink-candy"] :is(#aiyoucodex-claude-panel,.thread-pane,[data-aiyou-theme-host]) :is(pre,code) {background-color:var(--aiyou-fill-panel)!important}
+html[data-aiyou-theme="pink-candy"] :is([data-aiyou-theme-host],.app-shell-left-panel) a {color:var(--aiyou-ink-link)!important}
+html[data-aiyou-theme="pink-candy"] .messaging-root {--color-text-info:var(--aiyou-ink-link)!important;--color-text-danger:var(--aiyou-ink-danger)!important;--color-text-warning:var(--aiyou-ink-warning)!important;--color-text-success:var(--aiyou-ink-success)!important}
+html[data-aiyou-theme="pink-candy"] :is(.message-text,[data-markdown-text-style="assistant-message"],[data-message-author-role="assistant"]) :is(a,[role="link"]) {color:var(--aiyou-ink-link)!important}
+html[data-aiyou-theme="pink-candy"] :is([data-codex-conversation-preview-enhanced],[data-composer-body],#aiyoucodex-claude-panel [data-claude-compose],[data-markdown-text-style="assistant-message"],[data-user-message-bubble],.thread-pane .message-bubble,#aiyoucodex-agent-launchers button,#codex-sidebar-section-tabs,[data-radix-menu-content]) {box-shadow:var(--aiyou-custom-shadow)!important}
+html[data-aiyou-theme="pink-candy"] :is(#aiyoucodex-claude-panel,.thread-pane) :is(.error,[data-error]) {color:var(--aiyou-ink-danger)!important}
+/* Theme editor stays readable even if user makes all theme text fully transparent. */
+#aiyou-theme-settings {width:min(560px,calc(100vw - 40px));max-height:calc(100vh - 40px);padding:22px;box-sizing:border-box;background:#fff3f7!important;color:#493b45!important;--aiyou-text:#493b45!important;--aiyou-muted:#595959!important;--color-text-primary:#493b45!important;--color-text-secondary:#595959!important;--color-text:#493b45!important;--color-background-panel:#fffdfe!important;border:1px solid #e6bccd!important;overflow:auto}
+#aiyou-theme-settings .aiyou-settings-scroll {max-height:calc(100vh - 245px);overflow:auto;padding-right:8px}
+#aiyou-theme-settings .aiyou-settings-note {color:#595959!important;margin:0 0 12px}
+#aiyou-theme-settings fieldset {border:1px solid #e6bccd70;border-radius:12px;margin:16px 0;padding:4px 14px 10px}
+#aiyou-theme-settings legend {padding:0 6px;color:#493b45!important;font-weight:600}
+#aiyou-theme-settings label {display:grid;grid-template-columns:minmax(130px,1fr) minmax(90px,1.2fr) 45px;gap:12px;margin:12px 0;color:#493b45!important}
+#aiyou-theme-settings label:has(select),#aiyou-theme-settings label:has(input[type="checkbox"]) {grid-template-columns:1fr auto}
+#aiyou-theme-settings input[type="range"] {width:100%;min-width:0;appearance:auto;accent-color:#a74370;background:transparent!important}
+#aiyou-theme-settings output {text-align:right;color:#595959!important;font:12px/1.5 ui-monospace,monospace}
+#aiyou-theme-settings label:has(input[type="color"]) {grid-template-columns:1fr 44px 105px}
+#aiyou-theme-settings input[type="color"] {width:44px;height:30px;padding:2px;border:1px solid #e6bccd;border-radius:6px;background:#fffdfe!important}
+#aiyou-theme-settings input[type="text"] {width:100%;box-sizing:border-box;padding:6px;color:#493b45!important;background:#fffdfe!important;border:1px solid #e6bccd;border-radius:6px;font:12px ui-monospace,monospace}
+#aiyou-theme-settings input[aria-invalid="true"] {border-color:#b52c4c}
+#aiyou-theme-settings :is(button,select) {background:#fffdfe!important;color:#493b45!important;border-color:#e6bccd!important}
+#aiyou-theme-settings :is(button,input,select):focus-visible {outline:2px solid #a74370;outline-offset:3px}
+#aiyou-theme-settings footer {display:flex;gap:8px;justify-content:flex-end;padding-top:16px;border-top:1px solid #e6bccd70}
+#aiyou-theme-settings [data-reset] {margin-right:auto}
+#aiyou-theme-settings [data-theme-close] {background:#a74370!important;color:#fffdfe!important}
+#aiyou-theme-settings small,#aiyou-theme-settings [data-contrast] {color:#595959!important;opacity:1}
+#aiyou-theme-settings .aiyou-custom-slot {margin:12px 0;padding:12px;border:1px solid #e6bccd70;border-radius:12px;background:#fffdfe60}
+#aiyou-theme-settings .aiyou-custom-slot h3 {margin:0 0 8px;font-size:14px;color:#493b45!important}
+#aiyou-theme-settings .aiyou-custom-slot label {grid-template-columns:1fr;gap:6px;font-size:12px}
+#aiyou-theme-settings .aiyou-custom-slot input[type="number"] {width:80px;padding:5px;background:#fffdfe!important;color:#493b45!important;border:1px solid #e6bccd;border-radius:6px}
+#aiyou-theme-settings .aiyou-custom-slot p {font-size:12px;color:#595959!important;overflow-wrap:anywhere}
+#aiyou-theme-settings .aiyou-custom-slot button {font-size:12px;padding:5px 10px;margin-right:6px}
+#aiyou-theme-settings .aiyou-theme-sample {border-radius:16px;padding:14px;border:1px solid #e6bccd;box-shadow:inset 0 1px #ffffff24,0 5px 14px #c2578620}
+#aiyou-theme-settings .aiyou-theme-sample small {margin:0;color:var(--sample-secondary,#595959)!important}
+@media(max-width:500px) {#aiyou-theme-settings label{grid-template-columns:minmax(90px,1fr) minmax(60px,1fr) 40px;gap:8px}#aiyou-theme-settings{padding:16px}#aiyou-theme-settings footer{flex-wrap:wrap}}

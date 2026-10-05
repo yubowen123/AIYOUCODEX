@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "id": "mecha-control",
+  "name": "机甲控制舱",
+  "version": "1.4.2",
+  "palette": "colors.json",
+  "design": "design.json",
+  "controls": "controls.json",
+  "decorations": {"wordmark":"assets/wordmark.svg","corner":"assets/armor-corner.svg"},
+  "renderer": "aiyoucodex-theme-v1",
+  "videoModel": "seedance-2.5",
+  "poster": "assets/poster.png",
+  "background": {
+    "defaultType": "video",
+    "image": "assets/background.png",
+    "videos": {
+      "enter": "assets/enter.mp4",
+      "click": "assets/click.mp4",
+      "send": "assets/send.mp4",
+      "running": "assets/running.mp4",
+      "complete": "assets/complete.mp4",
+      "error": "assets/error.mp4"
+    }
+  },
+  "transitions": {"mode":"shared-anchor","switchAt":"clip-boundary","pendingPolicy":"latest-wins","anchor":"assets/poster.png","neutralHoldFrames":3},
+  "motion": {
+    "enter": {
+      "file": "assets/enter.gif",
+      "durationMs": 4000,
+      "loop": false
+    },
+    "click": {
+      "file": "assets/click.gif",
+      "durationMs": 4000,
+      "loop": false
+    },
+    "send": {
+      "file": "assets/send.gif",
+      "durationMs": 4000,
+      "loop": false
+    },
+    "running": {
+      "file": "assets/running.gif",
+      "durationMs": 4000,
+      "loop": true
+    },
+    "complete": {
+      "file": "assets/complete.gif",
+      "durationMs": 4000,
+      "loop": false
+    },
+    "error": {
+      "file": "assets/error.gif",
+      "durationMs": 4000,
+      "loop": false
+    }
+  },
+  "defaults": {
+    "enabled": true,
+    "motion": true,
+    "backgroundOpacity": 0.46
+  },
+  "limits": {
+    "maxAssetBytes": 5000000,
+    "maxBundleBytes": 50000000,
+    "gifWidth": 768,
+    "gifFps": 12
+  },
+  "events": {
+    "chatEntry": "enter",
+    "interaction": "click",
+    "sendAccepted": "send",
+    "running": "running",
+    "completed-unread": "complete",
+    "error": "error",
+    "read": "poster"
+  }
+}

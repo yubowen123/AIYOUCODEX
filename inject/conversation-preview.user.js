@@ -2,7 +2,7 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
-  const RUNTIME_VERSION = "2026-10-01.2";
+  const RUNTIME_VERSION = "2026-10-05.1";
   const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
@@ -122,6 +122,12 @@
   const TAGS_CLASS = "codex-conversation-card-tags";
   const ROW_SELECTOR = "[data-app-action-sidebar-thread-row]";
   const RUNTIME_TOKEN = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+  if (window.__aiyouClaudeInjection__?.getState) {
+    const state = window.__aiyouClaudeInjection__.getState(), panel = document.getElementById("aiyoucodex-claude-panel");
+    window.__aiyouClaudeRendererHandoff__ = { projectId: state.projectId, sessionId: state.sessionId, draftMode: state.draftMode,
+      skillIds: state.skillIds || state.data?.session?.skillIds, mcpIds: state.mcpIds || state.data?.session?.mcpIds,
+      ui: { open: Boolean(panel && !panel.hidden), prompt: panel?.querySelector("[data-claude-prompt]")?.value || "" } };
+  }
   try { window[SENTINEL]?.destroy?.(); } catch {}
 
   let destroyed = false;
@@ -241,6 +247,14 @@
   let activeSectionTab = null;
   let activeFolderId = null;
   let folderSearchQuery = "";
+  let layaSearchStatus = { ready: false, enabled: false, message: "正在检查本地部署" };
+  let layaSearchResults = null;
+  let layaSearchSequence = 0;
+  let layaSearchTimer = null;
+  let layaSearchPending = false;
+  let layaSearchControlPending = false;
+  let layaSearchNotice = "";
+  const layaSearchRequests = new Map();
   let folderSortMode = "recent";
   let folderPreSearchId = null;
   let folderTagsExpanded = false;
@@ -257,6 +271,14 @@
   let pinnedThreadIds = new Set();
   let pinnedThreadTimes = {};
   let activeProjectThreadIds = new Set();
+  let threadExecutionStates = new Map();
+  let executionStateTimer = null;
+  const EXECUTION_READ_STORAGE_KEY = "codex-conversation-preview:execution-read-revisions";
+  let executionReadRevisions = {};
+  try {
+    const saved = JSON.parse(localStorage.getItem(EXECUTION_READ_STORAGE_KEY) || "{}");
+    if (saved && typeof saved === "object" && !Array.isArray(saved)) executionReadRevisions = saved;
+  } catch {}
   let folderSearchExpansionPending = null;
   let folderSearchRevealKey = "";
   let threadStatuses = {};
@@ -494,6 +516,15 @@
         mask-composite: exclude;
         animation: codex-running-border-flow 2.4s linear infinite;
       }
+      html[data-codex-conversation-view="card"] ${ROW_SELECTOR}[data-codex-execution-state="completed-unread"],
+      html[data-codex-conversation-view="card"] ${ROW_SELECTOR}[data-codex-execution-state="error"] {
+        border-color: color-mix(in srgb, var(--codex-execution-halo) 58%, transparent) !important;
+        box-shadow: 0 7px 22px color-mix(in srgb, black 6%, transparent),
+          0 0 0 1px color-mix(in srgb, var(--codex-execution-halo) 26%, transparent),
+          0 0 15px color-mix(in srgb, var(--codex-execution-halo) 24%, transparent) !important;
+      }
+      ${ROW_SELECTOR}[data-codex-execution-state="completed-unread"] { --codex-execution-halo: #24b47e; }
+      ${ROW_SELECTOR}[data-codex-execution-state="error"] { --codex-execution-halo: #ef5350; }
       html[data-codex-conversation-view="card"] [data-codex-conversation-preview-title="true"] {
         display: none !important;
       }
@@ -523,6 +554,20 @@
         overflow-wrap: anywhere;
         -webkit-box-orient: vertical;
         -webkit-line-clamp: 2;
+      }
+      [data-codex-sidebar-remote-host] [data-thread-title="true"]::after,
+      [data-codex-sidebar-remote-host] .${CARD_TITLE_CLASS}::after {
+        content: "远";
+        display: inline-block;
+        margin-left: 6px;
+        padding: 0 3px;
+        border-radius: 4px;
+        background: #e8edf4;
+        color: #65758a;
+        font-size: 9px;
+        font-weight: 500;
+        line-height: 13px;
+        vertical-align: middle;
       }
       .${TIME_CLASS} {
         min-width: 0;
@@ -1128,13 +1173,13 @@
       }
       #${EFFICIENCY_PANEL_ID}[hidden] { display: none !important; }
       #${EFFICIENCY_PANEL_ID} [hidden] { display: none !important; }
-      #${TASK_CONTEXT_BUTTON_ID}, #${WORKSPACE_FOLDER_BUTTON_ID} { box-sizing: border-box; flex: 0 0 32px; display: inline-flex; align-items: center; justify-content: center; width: 32px; min-width: 32px; height: 32px; padding: 0; pointer-events: auto; -webkit-app-region: no-drag; cursor: pointer; border: 1px solid transparent; border-radius: 8px; background: transparent; color: inherit; }
+      #${TASK_CONTEXT_BUTTON_ID}, #${WORKSPACE_FOLDER_BUTTON_ID} { box-sizing: border-box; flex: 0 0 28px; display: inline-flex; align-items: center; justify-content: center; width: 28px; min-width: 28px; height: 28px; padding: 0; pointer-events: auto; -webkit-app-region: no-drag; cursor: pointer; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--aiyou-toolbar-icon-color, var(--color-text-tertiary, color-mix(in srgb, CanvasText 50%, transparent))); }
       #${TASK_CONTEXT_BUTTON_ID} svg, #${WORKSPACE_FOLDER_BUTTON_ID} svg { width: 18px; height: 18px; flex: none; pointer-events: none; }
-      #${TASK_CONTEXT_BUTTON_ID}:hover { background: #80808018; }
+      #${TASK_CONTEXT_BUTTON_ID}:hover { background: var(--color-bg-secondary, #80808012); color: var(--color-text-primary, CanvasText); }
       #${TASK_CONTEXT_BUTTON_ID}:focus-visible { outline: 2px solid #328bfa; outline-offset: -2px; }
       #${TASK_CONTEXT_BUTTON_ID}:disabled { opacity: .4; cursor: default; }
       #${TASK_CONTEXT_BUTTON_ID}[hidden] { display: none !important; }
-      #${WORKSPACE_FOLDER_BUTTON_ID}:hover { background: #80808018; }
+      #${WORKSPACE_FOLDER_BUTTON_ID}:hover { background: var(--color-bg-secondary, #80808012); color: var(--color-text-primary, CanvasText); }
       #${WORKSPACE_FOLDER_BUTTON_ID}:focus-visible { outline: 2px solid #328bfa; outline-offset: -2px; }
       #${WORKSPACE_FOLDER_BUTTON_ID}[hidden], #${WORKSPACE_FOLDER_MENU_ID}[hidden] { display: none !important; }
       #${WORKSPACE_FOLDER_MENU_ID} { position: fixed; inset: auto; margin: 0; z-index: 2147483000; box-sizing: border-box; width: 300px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow: auto; padding: 8px; border: 1px solid color-mix(in srgb, CanvasText 15%, transparent); border-radius: 12px; background: Canvas; color: CanvasText; box-shadow: 0 8px 32px #0002; font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; pointer-events: auto; -webkit-app-region: no-drag; }
@@ -1445,6 +1490,15 @@
         backdrop-filter: blur(13px) saturate(110%);
         -webkit-backdrop-filter: blur(13px) saturate(110%);
       }
+      #${FOLDER_SWITCHER_ID} .codex-sidebar-laya-search { display:flex; align-items:center; gap:6px; padding:5px 0 7px; font-size:11px; min-width:0; }
+      #${FOLDER_SWITCHER_ID} input[type="search"]::-webkit-search-cancel-button { display:none; -webkit-appearance:none; }
+      #${FOLDER_SWITCHER_ID} .codex-sidebar-laya-search button { border:1px solid var(--border-subtle, #64748b55); border-radius:12px; padding:3px 8px; background:transparent; color:inherit; cursor:pointer; flex:none; }
+      #${FOLDER_SWITCHER_ID} .codex-sidebar-laya-search button[aria-checked="true"] { border-color:#66bba2; background:#66bba222; }
+      #${FOLDER_SWITCHER_ID} .codex-sidebar-laya-search button:disabled { opacity:.45; cursor:default; }
+      #${FOLDER_SWITCHER_ID} [data-laya-search-status] { flex:1; min-width:0; opacity:.75; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      #${FOLDER_SWITCHER_ID} [data-laya-search-evidence] { font-size:11px; max-height:210px; overflow:auto; border-top:1px solid #64748b33; margin-top:5px; }
+      #${FOLDER_SWITCHER_ID} [data-laya-search-evidence] button { text-align:left; color:inherit; background:none; border:0; padding:7px 0 2px; cursor:pointer; font-weight:600; }
+      #${FOLDER_SWITCHER_ID} [data-laya-search-evidence] p { margin:0 0 7px; opacity:.75; line-height:1.5; overflow-wrap:anywhere; }
       #${FOLDER_SWITCHER_ID} .codex-sidebar-folder-search-row {
         display: grid;
         min-width: 0;
@@ -2285,10 +2339,10 @@
       .trim()
       .slice(0, 8) || "任务主题";
     return {
-      catalogOnly: true,
+      catalogOnly: !entry.remote,
       threadId: entry.threadId,
       updatedAt: entry.updatedAt,
-      summary: `正在读取“${title}”的核心总结…`,
+      summary: entry.remote ? "暂无 AI 总结" : `正在读取“${title}”的核心总结…`,
       recentInput: "",
       recentOutput: "",
       lastCommunication: formatCatalogCommunication(entry.updatedAt),
@@ -2483,7 +2537,9 @@
     if (!titleHost) return;
     row.setAttribute("data-codex-conversation-preview-enhanced", "true");
     const threadId = normalizedThreadId(row.getAttribute("data-app-action-sidebar-thread-id"));
-    if (activeProjectThreadIds.has(threadId)) row.setAttribute("data-codex-project-running", "true");
+    const execution = cardExecution(threadId, preview);
+    row.setAttribute("data-codex-execution-state", execution.state);
+    if (execution.state === "running") row.setAttribute("data-codex-project-running", "true");
     else row.removeAttribute("data-codex-project-running");
     if (preview && !preview.catalogOnly && preview.updatedAt) {
       row.setAttribute("data-codex-conversation-preview-loaded", "true");
@@ -2505,6 +2561,51 @@
     summary.title = value;
     applyCardDetails(row, preview);
     ensureCardStatusButton(row);
+  }
+
+  function cardExecution(threadId, preview) {
+    const native = threadExecutionStates.get(threadId);
+    const local = preview?.execution;
+    const revision = `${native?.revision || ""}|${local?.revision || ""}`;
+    const sameTurn = !native?.turnId || !local?.turnId || native.turnId === local.turnId;
+    if (["error", "systemError", "failed"].includes(native?.runtimeStatus)
+      || native?.turnStatus === "failed" || native?.turnError
+      || (local?.state === "error" && sameTurn && native?.turnStatus !== "completed")) {
+      return { state: "error", revision };
+    }
+    if (native?.runtimeStatus === "active") return { state: "running", revision };
+    if (native?.turnStatus === "interrupted") return { state: "idle", revision };
+    // A known native idle state overrides a stale taskboard in_progress card.
+    const completed = native?.runtimeStatus === "idle" || native?.unread === true || local?.state === "completed";
+    if (completed) {
+      const read = native?.unread === false || executionReadRevisions[threadId] === revision;
+      return { state: read ? "read" : "completed-unread", revision };
+    }
+    if (local?.state === "running" || (!native && !local && activeProjectThreadIds.has(threadId))) {
+      return { state: "running", revision };
+    }
+    return { state: "idle", revision };
+  }
+
+  function handleExecutionCardClick(event) {
+    if (event.type === "keydown" && !["Enter", " "].includes(event.key)) return;
+    if (event.button > 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const row = event.target?.closest?.(ROW_SELECTOR);
+    if (!row || event.target?.closest?.(`.${STATUS_BUTTON_CLASS}, [role="menu"], [data-codex-sidebar-pin-button]`)) return;
+    // Exclude row action buttons; only the card/navigation target acknowledges.
+    const button = event.target?.closest?.("button");
+    if (button && button !== row && !button.querySelector('[data-thread-title-trigger="true"]')) return;
+    const id = normalizedThreadId(row.getAttribute("data-app-action-sidebar-thread-id"));
+    const execution = cardExecution(id, previewForRow(row));
+    if (execution.state !== "completed-unread") return;
+    executionReadRevisions[id] = execution.revision;
+    try {
+      // Keep this small and host-scoped; values contain no conversation text.
+      const entries = Object.entries(executionReadRevisions).slice(-2000);
+      executionReadRevisions = Object.fromEntries(entries);
+      localStorage.setItem(EXECUTION_READ_STORAGE_KEY, JSON.stringify(executionReadRevisions));
+    } catch {}
+    scheduleSync();
   }
 
   function applyCardDetails(row, preview) {
@@ -3131,6 +3232,22 @@
   }
 
   function currentCodexTaskContext() {
+    // Retained tabs may leave no selected native sidebar row. Resolve the active
+    // page's route, never a hidden tab or a conversation title match.
+    const page = document.querySelector('[data-app-shell-active-page="true"]');
+    const fiberKey = page && Object.keys(page).find(key => key.startsWith("__reactFiber$"));
+    let fiber = fiberKey ? page[fiberKey] : null;
+    for (let depth = 0; fiber && depth < 32; depth++, fiber = fiber.return) {
+      const route = fiber.memoizedProps?.route || fiber.memoizedProps?.view?.route;
+      if (!route) continue;
+      const id = route.conversationId;
+      if (typeof id === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)
+        && route.pathname === `/local/${id}`) {
+        return { threadId: id, threadTitle: "" };
+      }
+      // A known active route that is not local must not inherit a stale sidebar selection.
+      if (typeof route.pathname === "string") return { threadId: "", threadTitle: "" };
+    }
     const active = document.querySelector('[data-app-action-sidebar-thread-active="true"], [data-app-action-sidebar-thread-selected="true"], [data-app-action-sidebar-thread-row][aria-current="page"]');
     return {
       threadId: normalizedThreadId(active?.getAttribute("data-app-action-sidebar-thread-id") || ""),
@@ -4923,6 +5040,24 @@
     const isNativeControl = (node) => !node.closest(
       `#${TASK_CONTEXT_BUTTON_ID}, #${WORKSPACE_FOLDER_BUTTON_ID}, [role="tablist"], [role="tab"], [role="menu"]`,
     ) && isVisible(node);
+    // Current titlebar: the outer end slot is a grid for layered native content.
+    // Mount inside its real horizontal action group, never as new grid rows.
+    for (const toolbar of document.querySelectorAll('[data-app-shell-header-toolbar="true"]')) {
+      if (toolbar.closest('[data-app-shell-active-page="false"]') || !isVisible(toolbar)) continue;
+      const controls = [...toolbar.querySelectorAll('button')].filter(isNativeControl);
+      for (const control of controls) {
+        for (let host = control.parentElement; host && toolbar.contains(host); host = host.parentElement) {
+          if (!getComputedStyle(host).display.includes("flex")) continue;
+          const buttons = controls.filter(button => host.contains(button));
+          if (buttons.length < 2) continue;
+          const box = host.getBoundingClientRect();
+          if (box.top < -1 || box.bottom > 64 || box.right < innerWidth - 240) continue;
+          let before = buttons[0];
+          while (before.parentElement !== host) before = before.parentElement;
+          return { host, before, iconColor: getComputedStyle(buttons[0]).color };
+        }
+      }
+    }
     const candidates = new Map();
     for (const surface of document.querySelectorAll('[data-testid="app-shell-header-context-menu-surface"]')) {
       if (!isVisible(surface)) continue;
@@ -4953,7 +5088,7 @@
           const bottom = Math.max(...boxes.map((box) => box.bottom));
           // Ignore title/tab rows and large layout containers. A credible action
           // cluster is compact, visible, and its controls share a single row.
-          if (rect.width <= 0 || rect.height > 64 || bottom - top > 48
+          if (!getComputedStyle(host).display.includes("flex") || rect.width <= 0 || rect.height > 64 || bottom - top > 48
             || rect.width > right - left + 96 || right < root.getBoundingClientRect().right - 96) continue;
           let before = buttons[0];
           while (before.parentElement !== host) before = before.parentElement;
@@ -5029,6 +5164,8 @@
     button.disabled = typeof window[EFFICIENCY_BINDING] !== "function";
     button.setAttribute("aria-expanded", String(efficiencyView === "context" && Boolean(efficiencyPanel && !efficiencyPanel.hidden)));
     ensureWorkspaceFolderButton(toolbar.host, button);
+    const iconColor = toolbar.iconColor || getComputedStyle(toolbar.before.querySelector?.("button") || toolbar.before).color;
+    for (const icon of [button, workspaceFolderButton]) icon.style.setProperty("--aiyou-toolbar-icon-color", iconColor);
   }
 
   function ensureWorkspaceFolderButton(obstacle, contextButton) {
@@ -6519,7 +6656,7 @@
       const { entries: catalogEntries } = dedupeFolderCatalogEntries(sourceEntries
         .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId))));
       const remote = remoteProjectCatalog.get(id);
-      const label = remote?.label || catalogEntries.find((entry) => entry.projectName)?.projectName || id;
+      const label = remote?.label || sourceEntries.find((entry) => entry.projectName)?.projectName || id;
       const lastUsed = catalogEntries.reduce((latest, entry) => {
         const time = Date.parse(entry.updatedAt || "");
         return Number.isFinite(time) && time > latest ? time : latest;
@@ -6641,8 +6778,11 @@
 
   function rankedFolders(items, query = folderSearchQuery) {
     const needle = normalizeFolderSearch(query);
+    const semantic = layaSearchStatus.enabled && layaSearchResults?.query === query
+      ? new Map(layaSearchResults.results.map((row, index) => [row.projectId, index])) : new Map();
     return items
-      .map((item) => ({ ...item, searchScore: needle ? fuzzyFolderScore(item.searchText, needle) : 0 }))
+      .map((item) => ({ ...item, searchScore: needle
+        ? Math.min(fuzzyFolderScore(item.searchText, needle), semantic.has(item.id) ? 50 + semantic.get(item.id) : Infinity) : 0 }))
       .filter((item) => Number.isFinite(item.searchScore))
       .sort((left, right) => needle
         ? left.searchScore - right.searchScore || right.lastUsed - left.lastUsed || left.sourceIndex - right.sourceIndex
@@ -6698,8 +6838,13 @@
   function catalogMatchesForFolder(item, query = folderSearchQuery) {
     const needle = normalizeFolderSearch(query);
     if (!needle) return [];
-    return (item?.catalogEntries || [])
-      .map((entry) => ({ ...entry, searchScore: fuzzyFolderScore(entry.title, needle) }))
+    const semantic = layaSearchStatus.enabled && layaSearchResults?.query === query
+      ? layaSearchResults.results.find(row => row.projectId === item?.id) : null;
+    const hits = new Map((semantic?.hits || []).map((hit, index) => [normalizedThreadId(hit.threadId), index]));
+    const pool = semantic ? (searchCatalogByProject.get(item?.id) || item?.catalogEntries || []) : (item?.catalogEntries || []);
+    return pool
+      .map((entry) => ({ ...entry, searchScore: Math.min(fuzzyFolderScore(entry.title, needle),
+        hits.has(normalizedThreadId(entry.threadId)) ? 50 + hits.get(normalizedThreadId(entry.threadId)) : Infinity) }))
       .filter((entry) => Number.isFinite(entry.searchScore))
       .sort((left, right) => left.searchScore - right.searchScore
         || Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""));
@@ -6956,15 +7101,18 @@
     syncCurrentFolderNewChatButton(item);
   }
 
-  function conversationRoute(rawThreadId) {
-    const threadId = String(rawThreadId || "").trim().replace(/^(?:local|cloud):/i, "");
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(threadId)
-      ? `/local/${threadId}`
-      : null;
+  function conversationRoute(value) {
+    const entry = typeof value === "object" && value ? value : { threadId: value };
+    const threadId = String(entry.remote ? entry.nativeThreadId || "" : entry.threadId || "").trim().replace(/^(?:local|cloud):/i, "");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(threadId)) return null;
+    if (!entry.remote) return `/local/${threadId}`;
+    if (!entry.hostId || entry.hostId === "local" || !entry.nativeProjectId) return null;
+    const query = new URLSearchParams({ hostId: entry.hostId, projectId: entry.nativeProjectId });
+    return `/local/${threadId}?${query}`;
   }
 
   function openAllProject(entry) {
-    const route = conversationRoute(entry?.threadId);
+    const route = conversationRoute(entry);
     if (route) window.postMessage({ type: "navigate-to-route", path: route }, "*");
   }
 
@@ -6982,7 +7130,8 @@
     row.className = sourceRow?.className
       || "group relative cursor-interaction text-sm hover:bg-token-list-hover-background focus-visible:outline-offset-[-2px] sidebar-item";
     row.dataset.appActionSidebarThreadRow = "";
-    row.dataset.appActionSidebarThreadId = `local:${entry.threadId}`;
+    row.dataset.appActionSidebarThreadId = entry.remote ? entry.threadId : `local:${entry.threadId}`;
+    if (entry.remote) row.dataset.codexSidebarRemoteHost = entry.hostId;
     row.dataset.appActionSidebarThreadTitle = entry.title;
     if (kind === "pinned") {
       row.dataset.codexSidebarPinnedProjectRow = "true";
@@ -7190,10 +7339,8 @@
       list.replaceChildren(...entries.map(createAllProjectRow));
       if (item.remote && !entries.length) {
         const empty = document.createElement("div"); empty.style.cssText = "padding:20px 12px;color:#777;font-size:12px;line-height:1.7";
-        empty.textContent = `远程项目 · ${item.label}\n${item.remotePath}\n远程对话由 Codex 原生连接加载；此处不将远程路径当作本机目录。`;
-        const open = document.createElement("button"); open.type = "button"; open.textContent = "打开 Codex 原生项目列表";
-        open.onclick = () => window.postMessage({ type: "navigate-to-route", path: "/projects" }, window.location.origin);
-        empty.append(document.createElement("br"), open); list.append(empty);
+        empty.textContent = "暂无对话";
+        list.append(empty);
       }
       panel.replaceChildren(list);
     }
@@ -7255,6 +7402,7 @@
     const input = document.querySelector(`#${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-search]`);
     if (input) input.value = "";
     folderSearchQuery = "";
+    cancelLayaSearch();
     folderSearchExpansionPending = null;
     folderSearchRevealKey = "";
     if (folderPreSearchId === ALL_FOLDER_ID || (folderPreSearchId && folderSources.has(folderPreSearchId))) {
@@ -7268,10 +7416,112 @@
     const nextQuery = event.currentTarget.value;
     if (!normalizeFolderSearch(folderSearchQuery) && normalizeFolderSearch(nextQuery)) folderPreSearchId = activeFolderId;
     folderSearchQuery = nextQuery;
+    scheduleLayaSearch();
     const items = Array.from(folderSources.values());
     const results = rankedFolders(items, folderSearchQuery);
     activeFolderId = results[0]?.id || null;
     updateFolderSwitcherState(items);
+  }
+
+  function cancelLayaSearch() {
+    clearTimeout(layaSearchTimer); layaSearchTimer = null;
+    layaSearchSequence++; layaSearchResults = null; layaSearchPending = false; layaSearchNotice = "";
+  }
+
+  function requestLayaSearch(action, data = {}) {
+    const binding = window.__AIYOUCODEX_LAYA_SEARCH_REQUEST__;
+    if (typeof binding !== "function") return Promise.reject(new Error("本地检索连接尚未就绪"));
+    const requestId = `laya.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        layaSearchRequests.delete(requestId); reject(new Error("Laya 请求超时，普通搜索仍可使用"));
+      }, action === "search" ? 15_000 : 90_000);
+      layaSearchRequests.set(requestId, { resolve, reject, timer });
+      try { Promise.resolve(binding(JSON.stringify({ requestId, action, ...data }))).catch(() => resolveLayaSearchRequest({ requestId, ok: false, error: "本地检索连接失败" })); }
+      catch { resolveLayaSearchRequest({ requestId, ok: false, error: "本地检索连接失败" }); }
+    });
+  }
+
+  function resolveLayaSearchRequest(response) {
+    const request = layaSearchRequests.get(response?.requestId); if (!request) return;
+    clearTimeout(request.timer); layaSearchRequests.delete(response.requestId);
+    response.ok ? request.resolve(response.data) : request.reject(new Error(response.error || "检索未完成"));
+  }
+
+  function setLayaSearchData(value) {
+    const wasEnabled = layaSearchStatus.enabled;
+    layaSearchStatus = { ...layaSearchStatus, ...value, enabled: value?.enabled === true && value?.ready === true };
+    if (!layaSearchStatus.enabled) cancelLayaSearch();
+    else if (!wasEnabled) scheduleLayaSearch();
+    updateFolderSwitcherState(Array.from(folderSources.values()));
+  }
+
+  function scheduleLayaSearch() {
+    cancelLayaSearch();
+    if (!layaSearchStatus.enabled || !normalizeFolderSearch(folderSearchQuery)) return;
+    const sequence = layaSearchSequence, query = folderSearchQuery;
+    layaSearchPending = true;
+    layaSearchTimer = setTimeout(async () => {
+      try {
+        const response = await requestLayaSearch("search", { query });
+        if (destroyed || sequence !== layaSearchSequence || query !== folderSearchQuery || !layaSearchStatus.enabled) return;
+        if (response.status) setLayaSearchData(response.status);
+        if (!response.fallback && layaSearchStatus.enabled && response.query === query) layaSearchResults = response;
+        else layaSearchNotice = "已回到普通搜索";
+      } catch (error) {
+        if (sequence !== layaSearchSequence || destroyed) return;
+        layaSearchNotice = error.message;
+      } finally {
+        if (sequence === layaSearchSequence && !destroyed) { layaSearchPending = false; updateFolderSwitcherState(Array.from(folderSources.values())); }
+      }
+    }, 320);
+  }
+
+  async function changeLayaSearch(action) {
+    if (layaSearchControlPending) return;
+    layaSearchControlPending = true; cancelLayaSearch();
+    updateFolderSwitcherState(Array.from(folderSources.values()));
+    try {
+      const response = await requestLayaSearch(action, action === "toggle" ? { enabled: !layaSearchStatus.enabled } : {});
+      if (!destroyed) { setLayaSearchData(response.status); if (layaSearchStatus.enabled) scheduleLayaSearch(); }
+    } catch (error) { layaSearchNotice = error.message; }
+    finally { layaSearchControlPending = false; if (!destroyed) updateFolderSwitcherState(Array.from(folderSources.values())); }
+  }
+
+  function updateLayaSearchUI(root, items) {
+    const toggle = root.querySelector("[data-laya-search-toggle]"); if (!toggle) return;
+    toggle.disabled = !layaSearchStatus.ready || layaSearchControlPending;
+    toggle.setAttribute("aria-checked", String(layaSearchStatus.enabled));
+    toggle.textContent = `Laya 检索${layaSearchStatus.enabled ? "：开" : "：关"}`;
+    toggle.title = layaSearchStatus.ready ? "使用本地 Laya 匹配历史内容" : "只有本地 Laya 成功推理后才能开启";
+    const status = root.querySelector("[data-laya-search-status]");
+    status.textContent = layaSearchControlPending ? "正在检查…" : layaSearchPending ? "正在匹配历史内容…"
+      : layaSearchNotice || (layaSearchStatus.checking && !layaSearchStatus.indexReady
+        ? `梳理历史 ${layaSearchStatus.progress?.scanned || 0}/${layaSearchStatus.progress?.total || 0}` : layaSearchStatus.message);
+    root.querySelector("[data-laya-search-refresh]").disabled = layaSearchControlPending;
+    const evidence = root.querySelector("[data-laya-search-evidence]");
+    const row = layaSearchStatus.enabled && layaSearchResults?.query === folderSearchQuery
+      ? layaSearchResults.results.find(item => item.projectId === activeFolderId) : null;
+    const item = items.find(item => item.id === activeFolderId);
+    const catalog = item ? searchCatalogByProject.get(item.id) || item.catalogEntries || [] : [];
+    const signature = JSON.stringify([row, catalog.map(entry => [entry.threadId, entry.title])]);
+    evidence.hidden = !row?.hits?.length;
+    if (evidence.dataset.signature === signature) return;
+    evidence.dataset.signature = signature; evidence.replaceChildren();
+    for (const hit of row?.hits || []) {
+      // Link only to an authoritative catalog entry in this exact project.
+      const entry = catalog.find(entry => entry.projectId === row.projectId && normalizedThreadId(entry.threadId) === normalizedThreadId(hit.threadId));
+      if (!entry) continue;
+      const block = document.createElement("div");
+      const title = document.createElement("button"); title.type = "button"; title.textContent = entry.title;
+      title.title = "定位这条对话";
+      title.onclick = () => {
+        selectFolder(row.projectId);
+        openAllProject(entry);
+      };
+      const text = document.createElement("p"); text.textContent = hit.snippet.slice(0, 180);
+      block.append(title, text); evidence.append(block);
+    }
   }
 
   function createFolderSwitcher() {
@@ -7293,6 +7543,7 @@
     input.placeholder = "搜索文件夹或项目";
     input.autocomplete = "off";
     input.spellcheck = false;
+    input.maxLength = 200;
     input.dataset.codexSidebarFolderSearch = "true";
     input.setAttribute("aria-label", "搜索文件夹或项目");
     input.setAttribute("aria-controls", "codex-sidebar-folder-tags");
@@ -7416,7 +7667,16 @@
     };
     expand.innerHTML = '<span>展开全部</span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m3 4.5 3 3 3-3" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     meta.append(result, expand);
-    root.append(searchRow, tags, meta);
+    const laya = document.createElement("div"); laya.className = "codex-sidebar-laya-search";
+    const layaToggle = document.createElement("button"); layaToggle.type = "button";
+    layaToggle.dataset.layaSearchToggle = "true"; layaToggle.setAttribute("role", "switch"); layaToggle.setAttribute("aria-label", "Laya 检索");
+    layaToggle.onclick = () => changeLayaSearch("toggle");
+    const layaStatus = document.createElement("span"); layaStatus.dataset.layaSearchStatus = "true"; layaStatus.setAttribute("role", "status");
+    const layaRefresh = document.createElement("button"); layaRefresh.type = "button"; layaRefresh.dataset.layaSearchRefresh = "true";
+    layaRefresh.textContent = "检查"; layaRefresh.title = "检查本地 Laya 部署并刷新历史索引"; layaRefresh.onclick = () => changeLayaSearch("refresh");
+    laya.append(layaToggle, layaStatus, layaRefresh);
+    const evidence = document.createElement("div"); evidence.dataset.layaSearchEvidence = "true"; evidence.hidden = true;
+    root.append(searchRow, laya, tags, meta, evidence);
     return root;
   }
 
@@ -7505,6 +7765,7 @@
     const activeItem = allSelected ? null : items.find((item) => item.id === activeFolderId);
     moveActiveFolderActions(activeItem);
     syncCurrentFolderNewChatButton(activeItem);
+    updateLayaSearchUI(root, items);
     revealFolderSearchMatch(activeItem);
   }
 
@@ -7855,7 +8116,8 @@
       }
       const summary = document.createElement("div"); summary.setAttribute("data-reset-signal-summary", ""); summary.textContent = candidate.summary || "未提供摘要";
       const source = document.createElement("div"); source.setAttribute("data-reset-signal-source", ""); source.textContent = `${resetVerificationLabel(candidate)} · ${resetDeliveryTypeLabel(candidate)} · ${resetDeliveryPresentation(candidate, notice).text.replace(/^到账状态：/u, "")}`;
-      const evidence = document.createElement("div"); evidence.setAttribute("data-reset-signal-evidence", ""); evidence.textContent = candidate.evidence ? `原文依据：${candidate.evidence}` : "原文依据：未提供";
+      const evidence = document.createElement("div"); evidence.setAttribute("data-reset-signal-evidence", ""); evidence.textContent = candidate.evidenceTranslation ? `中文译文：${candidate.evidenceTranslation}` : candidate.evidence ? `原文依据（翻译待完成）：${candidate.evidence}` : "原文依据：未提供";
+      if (candidate.evidenceTranslation && candidate.evidence) { const original = document.createElement("details"); const label = document.createElement("summary"); label.textContent = "查看英文原文"; original.append(label, document.createTextNode(candidate.translationSource || candidate.evidence)); evidence.appendChild(original); }
       card.append(head, summary, source, evidence); feed?.appendChild(card);
     });
     const diagnostics = [
@@ -8258,6 +8520,51 @@
     scheduleSync();
   }
 
+  function setThreadExecutionStates(items) {
+    threadExecutionStates = new Map((Array.isArray(items) ? items : [])
+      .filter(item => item?.threadId).map(item => [normalizedThreadId(item.threadId), item]));
+    scheduleSync();
+  }
+
+  function refreshNativeExecutionStates() {
+    // The host adapter seeds this registry. Reading its cached metadata also
+    // keeps halos current during host reconnects, with no fetch/model calls.
+    const atom = window.__aiyouNativeRemoteCatalogAdapter__?.atom;
+    if (!atom?.scope?.id || typeof atom.resolve !== "function") return;
+    const root = document.getElementById("root");
+    const key = root && Object.keys(root).find(value => value.startsWith("__reactContainer"));
+    const queue = key ? [root[key]] : [];
+    try {
+      for (let count = 0; queue.length && count < 256; count += 1) {
+        const fiber = queue.shift();
+        const scopes = fiber?.memoizedProps?.value;
+        const node = scopes instanceof Map && scopes.get(atom.scope.id);
+        if (node?.store) {
+          const managers = node.store.get(atom.resolve(node, scopes));
+          if (!Array.isArray(managers)) return;
+          const items = [];
+          for (const manager of managers) {
+            const host = manager.getHostId?.();
+            if (!host || host === "durable" || typeof manager.getThreadSummaries !== "function") continue;
+            for (const thread of manager.getThreadSummaries().slice(0, 512)) {
+              const conversation = manager.getConversation?.(thread.conversationId);
+              const turns = Object.values(conversation?.turnHistory?.history?.entitiesByKey || {})
+                .concat(conversation?.turns || []).filter(turn => turn?.status);
+              const turn = turns.sort((a, b) => (b.turnStartedAtMs || 0) - (a.turnStartedAtMs || 0))[0];
+              items.push({ threadId: host === "local" ? thread.conversationId : `remote:${host}:${thread.conversationId}`,
+                runtimeStatus: thread.threadRuntimeStatus?.type, unread: thread.hasUnreadTurn,
+                revision: String(thread.updatedAt || ""), turnStatus: turn?.status, turnId: turn?.turnId, turnError: Boolean(turn?.error) });
+            }
+          }
+          if (JSON.stringify(items) !== JSON.stringify([...threadExecutionStates.values()])) setThreadExecutionStates(items);
+          return;
+        }
+        if (fiber?.child) queue.push(fiber.child);
+        if (fiber?.sibling) queue.push(fiber.sibling);
+      }
+    } catch { /* Keep known state during native scope transitions. */ }
+  }
+
   function setUsage(value) {
     usage = value && typeof value === "object" ? value : {
       available: false,
@@ -8284,7 +8591,9 @@
       remoteProjects: setRemoteProjectCatalog,
       recentCatalog: setRecentCatalog, interruptedCatalog: setInterruptedCatalog,
       pinnedThreads: setPinnedThreads, activeProjectThreads: setActiveProjectThreads,
+      threadExecutionStates: setThreadExecutionStates,
       skillCatalog: setSkillCatalog, skillOrganization: setSkillOrganization, conversationHistory: setConversationHistory, efficiency: setEfficiencyData };
+    setters.layaSearch = setLayaSearchData;
     for (const [key, setter] of Object.entries(setters)) {
       if (!Object.hasOwn(snapshot, key)) continue;
       const signature = JSON.stringify(snapshot[key]);
@@ -8463,6 +8772,8 @@
 
   function start() {
     installStyles();
+    refreshNativeExecutionStates();
+    executionStateTimer = setInterval(refreshNativeExecutionStates, 3000);
     resetNoticeTimer = setInterval(() => { if (!document.hidden) updateResetNotice(); }, 30_000);
     document.addEventListener("visibilitychange", updateResetNotice);
     updateViewState();
@@ -8477,6 +8788,8 @@
     document.addEventListener("scroll", positionWorkspaceFolderMenu, true);
     document.addEventListener("click", handlePinDocumentClick, true);
     document.addEventListener("click", handleNativeActivityClick, true);
+    document.addEventListener("click", handleExecutionCardClick, true);
+    document.addEventListener("keydown", handleExecutionCardClick, true);
     document.addEventListener("keydown", handleWorkspaceEnhancementKeydown, true);
     document.addEventListener("click", handleWorkspaceCommandClick, true);
     window.addEventListener("message", handleAssetConsoleMessage);
@@ -8491,6 +8804,7 @@
   }
 
   function destroy() {
+    clearInterval(executionStateTimer);
     destroyed = true;
     window.__aiyouClaudeInjection__?.destroy?.();
     clearTimeout(resetMonitorPending?.timer); resetMonitorPending = null;
@@ -8519,6 +8833,8 @@
     clearTimeout(workspaceFolderPending?.timer); workspaceFolderPending = null;
     document.removeEventListener("click", handlePinDocumentClick, true);
     document.removeEventListener("click", handleNativeActivityClick, true);
+    document.removeEventListener("click", handleExecutionCardClick, true);
+    document.removeEventListener("keydown", handleExecutionCardClick, true);
     document.removeEventListener("keydown", handleWorkspaceEnhancementKeydown, true);
     document.removeEventListener("click", handleWorkspaceCommandClick, true);
     window.removeEventListener("message", handleAssetConsoleMessage);
@@ -8551,6 +8867,9 @@
     efficiencyMountSurface = null; efficiencyResizeObserver?.disconnect(); efficiencyResizeObserver = null;
     for (const request of efficiencyRequests.values()) clearTimeout(request.timer);
     efficiencyRequests.clear(); efficiencyDrafts.clear(); efficiencyTargetDrafts.clear(); efficiencyTaskDraft = null;
+    cancelLayaSearch();
+    for (const request of layaSearchRequests.values()) { clearTimeout(request.timer); request.reject(new Error("检索界面已关闭")); }
+    layaSearchRequests.clear();
     for (const request of skillOrganizationRequests.values()) { clearTimeout(request.timer); request.resolve(null); }
     skillOrganizationRequests.clear(); closeSkillContextMenu();
     closeSkillDetails(false); skillDetailsDialog?.remove(); skillDetailsDialog = null;
@@ -8575,6 +8894,7 @@
     document.querySelectorAll('[data-codex-conversation-preview-enhanced="true"]').forEach((row) => {
       row.removeAttribute("data-codex-conversation-preview-enhanced");
       row.removeAttribute("data-codex-project-running");
+      row.removeAttribute("data-codex-execution-state");
     });
     document.querySelectorAll('[data-codex-conversation-preview-title="true"]').forEach((node) => {
       node.removeAttribute("data-codex-conversation-preview-title");
@@ -8603,6 +8923,7 @@
     setInterruptedCatalog,
     setPinnedThreads,
     setActiveProjectThreads,
+    setThreadExecutionStates,
     setConversationHistory,
     setUsage,
     setAssetConsole,
@@ -8619,8 +8940,11 @@
     openTaskContextPanel,
     closeEfficiencyPanel,
     getEfficiencyState,
+    getActiveTaskContext: currentCodexTaskContext,
     setEfficiencyData,
     resolveEfficiencyRequest,
+    resolveLayaSearchRequest,
+    setLayaSearchData,
     resolveResetMonitorRequest,
     resolveClaudeRequest: (response) => window.__aiyouClaudeInjection__?.resolve?.(response),
     prepareClaudePanel: () => { closeOtherWorkspacePanels("claude"); return findCustomShortcutPageMount(); },

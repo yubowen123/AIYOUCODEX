@@ -6,6 +6,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { convertCodexMcp, createClaudeController, redactClaudeText, normalizeClaudePersona } from "../lib/claude-code.mjs";
 import { EfficiencyBridge } from "../lib/efficiency-bridge.mjs";
+import { claudeReplyChoices, claudeQuestionAnswers } from "../lib/claude-interaction.mjs";
+import { normalizeClaudeCommands, claudeCommandCatalog, claudeSlashName } from "../lib/claude-commands.mjs";
 
 test("MCP converts standard transports in backend and rejects missing auth / native-only commands", () => {
   const servers = convertCodexMcp({ mcp_servers: {
@@ -130,4 +132,156 @@ test("tool approvals are single-use, duplicate send is blocked, stop aborts only
   await f.controller.request({ action: "stop", sessionId: id });
   await until(() => f.controller.sessions.get(id).status === "stopped");
   assert.equal(approved.behavior, "deny");
+});
+
+const questionInput = { questions: [
+  { header: "方式", question: "请选择处理方式", options: [{ label: "自动填写", description: "停在发布前" }, { label: "仅存草稿" }], multiSelect: false },
+  { header: "素材", question: "选择素材", options: [{ label: "横版" }, { label: "竖版" }], multiSelect: true },
+] };
+
+test("explicit reply choices, not ordinary numbered steps or code, and structured answers validation", () => {
+  const text = "下面三种方式选一种：\n1. **自动填写（推荐）**：准备素材\n2. **仅存草稿**：不发布\n3. **你手动发**：打开文件夹\n回复 1、2 或 3，我就开始。";
+  assert.deepEqual(claudeReplyChoices(text).map(o => [o.value, o.label]), [["1", "自动填写（推荐）"], ["2", "仅存草稿"], ["3", "你手动发"]]);
+  assert.deepEqual(claudeReplyChoices("1. 打开文件\n2. 安装应用\n以上是操作步骤。"), []);
+  assert.deepEqual(claudeReplyChoices("```\n1. a\n2. b\n回复 1、2\n```"), []);
+  assert.deepEqual(claudeQuestionAnswers(questionInput, [{ selected: ["1"], custom: "" }, { selected: ["0", "1"], custom: "自制封面" }]), { "请选择处理方式": "仅存草稿", "选择素材": ["横版", "竖版", "自制封面"] });
+  assert.throws(() => claudeQuestionAnswers(questionInput, [{ selected: ["0", "1"] }, { selected: ["0"] }]), /单选/);
+  assert.throws(() => claudeQuestionAnswers(questionInput, [{ selected: ["9"] }, { selected: [] }]), /失效/);
+  assert.throws(() => claudeQuestionAnswers(questionInput, []), /全部/);
+});
+
+test("Auto starts only by explicit selection, persists per session and still waits for AskUserQuestion", async t => {
+  let seen, answer;
+  const f = await fixture(t, ({ prompt, options }) => (async function* () {
+    seen = { input: await prompt[Symbol.asyncIterator]().next(), options };
+    assert.equal((await options.canUseTool("Bash", { command: "fixture only" }, { signal: options.abortController.signal })).behavior, "allow");
+    answer = await options.canUseTool("AskUserQuestion", questionInput, { signal: options.abortController.signal });
+    yield { type: "result", is_error: false, result: "选择已收到" };
+  })());
+  const view = await f.controller.snapshot();
+  const sent = await f.controller.request({ action: "send", projectId: view.projectId, prompt: "fixture", permissionMode: "auto" });
+  const id = sent.session.id;
+  const pending = await until(async () => (await f.controller.snapshot({ sessionId: id })).session.permissions[0]);
+  assert.equal(seen.options.permissionMode, "bypassPermissions"); assert.equal(seen.options.allowDangerouslySkipPermissions, true);
+  assert.equal(seen.input.value.type, "user"); assert.equal(seen.input.value.message.content, "fixture");
+  assert.equal(pending.kind, "question"); assert.equal(pending.autoEligible, false); assert.equal(answer, undefined);
+  await assert.rejects(f.controller.request({ action: "permission", sessionId: id, permissionId: pending.id, allow: true }), /选择题/);
+  const answers = [{ selected: [], custom: "我自己处理" }, { selected: ["0", "1"], custom: "" }];
+  await f.controller.request({ action: "question-answer", sessionId: id, permissionId: pending.id, answers });
+  await assert.rejects(f.controller.request({ action: "question-answer", sessionId: id, permissionId: pending.id, answers }), /已回答/);
+  await until(() => f.controller.sessions.get(id).status === "idle");
+  assert.deepEqual(answer.updatedInput.questions, questionInput.questions);
+  assert.deepEqual(answer.updatedInput.answers, { "请选择处理方式": "我自己处理", "选择素材": ["横版", "竖版"] });
+  const restored = createClaudeController(f.options);
+  assert.equal((await restored.snapshot({ sessionId: id })).session.permissionMode, "auto");
+  await restored.request({ action: "permission-mode", sessionId: id, mode: "manual" });
+  assert.equal((await restored.snapshot({ sessionId: id })).session.permissionMode, "manual");
+  await assert.rejects(restored.request({ action: "permission-mode", sessionId: id, mode: "all" }), /无效/);
+});
+
+test("runtime mode ACK precedes auto approval; rejected changes stay manual; explicit human prompts remain pending", async t => {
+  let controller, resolveMode, failMode = true;
+  const modes = [], results = [];
+  const f = await fixture(t, ({ options }) => {
+    const query = (async function* () {
+      results.push(await options.canUseTool("Edit", { file_path: "fixture" }, { signal: options.abortController.signal }));
+      results.push(await options.canUseTool("Bash", { command: "fixture" }, { signal: options.abortController.signal, matchedAskRule: { source: "user", toolName: "Bash" } }));
+      yield { type: "result", is_error: false, result: "OK" };
+    })();
+    query.setPermissionMode = async mode => { modes.push(mode); if (failMode) throw Error("fixture rejected"); await new Promise(resolve => { resolveMode = resolve; }); };
+    return query;
+  }); controller = f.controller;
+  const sent = await controller.request({ action: "send", projectId: (await controller.snapshot()).projectId, prompt: "fixture" });
+  const id = sent.session.id;
+  await until(() => controller.sessions.get(id).permissions.size);
+  await assert.rejects(controller.request({ action: "permission-mode", sessionId: id, mode: "auto" }), /rejected/);
+  assert.equal(controller.sessions.get(id).permissionMode, "manual"); assert.equal(results.length, 0);
+  failMode = false;
+  const switchMode = controller.request({ action: "permission-mode", sessionId: id, mode: "auto" });
+  await until(() => resolveMode); assert.equal(results.length, 0);
+  resolveMode(); await switchMode;
+  await until(() => results.length === 1 && controller.sessions.get(id).permissions.size);
+  const human = (await controller.snapshot({ sessionId: id })).session.permissions[0];
+  assert.equal(human.autoEligible, false); assert.equal(results[0].behavior, "allow");
+  await controller.request({ action: "permission", sessionId: id, permissionId: human.id, allow: false });
+  await until(() => controller.sessions.get(id).status === "idle");
+  assert.deepEqual(modes, ["bypassPermissions", "bypassPermissions"]);
+});
+
+test("numbered quick reply is bound to latest final message, single-use and never executes the option text", async t => {
+  const prompts = [];
+  const f = await fixture(t, ({ prompt }) => (async function* () {
+    const packet = await prompt[Symbol.asyncIterator]().next(); prompts.push(packet.value.message.content);
+    yield { type: "result", is_error: false, result: prompts.length === 1 ? "1. **自动填写**：准备素材\n2. **仅存草稿**：不发布\n回复 1、2。" : "已收到" };
+  })());
+  const sent = await f.controller.request({ action: "send", projectId: (await f.controller.snapshot()).projectId, prompt: "选择方式" });
+  const id = sent.session.id;
+  const choices = await until(async () => (await f.controller.snapshot({ sessionId: id })).session.replyChoices);
+  await assert.rejects(f.controller.request({ action: "choice", sessionId: id, messageId: "stale", value: "2" }), /已失效/);
+  await assert.rejects(f.controller.request({ action: "choice", sessionId: id, messageId: choices.messageId, value: "9" }), /已失效/);
+  const payload = { action: "choice", sessionId: id, messageId: choices.messageId, value: "2" };
+  const replies = await Promise.allSettled([f.controller.request(payload), f.controller.request(payload)]);
+  assert.equal(replies.filter(r => r.status === "fulfilled").length, 1);
+  await until(() => f.controller.sessions.get(id).status === "idle");
+  assert.deepEqual(prompts, ["选择方式", "2"]);
+  await assert.rejects(f.controller.request(payload), /已失效/);
+  assert.equal((await f.controller.snapshot({ sessionId: id })).session.replyChoices, null);
+});
+
+test("slash catalog preserves SDK names and aliases, hides terminal commands and separates panel operations", () => {
+  const commands = normalizeClaudeCommands([
+    { name: "usage", description: "usage", aliases: ["cost", "stats"], builtin: true },
+    { name: "usage", description: "shadowed user command" }, { name: "cost", description: "named command wins" },
+    { name: "plugin:lint", description: "check", argumentHint: "<file>" }, "theme", "exit", "terminal-setup", "bad name", null,
+  ]);
+  assert.equal(commands.find(c => c.name === "usage").description, "usage");
+  assert.equal(commands.find(c => c.name === "cost").description, "named command wins");
+  assert.equal(commands.find(c => c.name === "stats").aliasFor, "usage");
+  assert.ok(!commands.some(c => ["theme", "exit", "terminal-setup", "bad name"].includes(c.name)));
+  const catalog = claudeCommandCatalog(commands);
+  assert.equal(catalog.find(c => c.name === "permissions").kind, "panel");
+  assert.equal(catalog.find(c => c.name === "plugin:lint").verified, true);
+  assert.equal(catalog.find(c => c.name === "compact").verified, false);
+  assert.equal(claudeSlashName("/compact keep files"), "compact");
+  assert.equal(claudeSlashName("/Users/person/Documents/file.txt 请读取"), "");
+});
+
+test("slash dispatch validates SDK catalog before releasing input, preserves exact arguments and dynamic metadata", async t => {
+  const received = []; let verified = false;
+  const f = await fixture(t, ({ prompt }) => {
+    const query = (async function* () {
+      const packet = await prompt[Symbol.asyncIterator]().next(); assert.equal(verified, true);
+      received.push(packet.value.message.content);
+      yield { type: "system", subtype: "init", slash_commands: ["compact", "usage", "terminal-private"], terminal_slash_commands: ["terminal-private"] };
+      yield { type: "system", subtype: "local_command_output", content: "压缩已完成" };
+      yield { type: "system", subtype: "commands_changed", commands: [{ name: "plugin:lint", description: "检查项目", argumentHint: "<file>" }, "theme"] };
+      yield { type: "result", is_error: false, result: "压缩已完成" };
+    })();
+    query.supportedCommands = async () => { verified = true; return [{ name: "compact", description: "Summarize", argumentHint: "[focus]" }]; };
+    return query;
+  });
+  const view = await f.controller.snapshot(); assert.equal(view.commandVersion, 1);
+  const sent = await f.controller.request({ action: "send", projectId: view.projectId, prompt: "/compact 保留接口约定", skillIds: ["skill-demo"] });
+  const id = sent.session.id;
+  await until(() => f.controller.sessions.get(id).status === "idle");
+  assert.deepEqual(received, ["/compact 保留接口约定"], "Reference instructions must not become slash arguments");
+  const result = (await f.controller.snapshot({ sessionId: id })).session;
+  assert.deepEqual(result.commands.map(c => c.name), ["plugin:lint"]);
+  assert.equal(result.messages.filter(m => m.text === "压缩已完成").length, 1);
+  const restored = createClaudeController(f.options);
+  assert.ok((await restored.snapshot({ sessionId: id })).commands.some(c => c.name === "plugin:lint" && c.verified));
+  await assert.rejects(f.controller.request({ action: "send", sessionId: id, prompt: "/clear" }), /面板内/);
+});
+
+test("unsupported slash command never releases model input or fabricates successful execution", async t => {
+  let delivered = false, closed = false;
+  const f = await fixture(t, ({ prompt }) => {
+    const query = (async function* () { const packet = await prompt[Symbol.asyncIterator]().next(); delivered = !packet.done; yield { type: "result", is_error: false, result: "must not run" }; })();
+    query.supportedCommands = async () => [{ name: "compact" }]; query.close = () => { closed = true; };
+    return query;
+  });
+  const sent = await f.controller.request({ action: "send", projectId: (await f.controller.snapshot()).projectId, prompt: "/unknown-native" });
+  await until(() => f.controller.sessions.get(sent.session.id).status === "error");
+  assert.equal(delivered, false); assert.equal(closed, true);
+  assert.match((await f.controller.snapshot({ sessionId: sent.session.id })).session.error, /命令未发送给模型/);
 });

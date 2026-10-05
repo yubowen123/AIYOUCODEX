@@ -1,0 +1,32 @@
+/* Palette-only adapters. Asset contents, dimensions, drag/drop and preview behavior stay native. */
+html[data-aiyou-theme="mecha-control"] {
+ color-scheme:dark; --bg:var(--aiyou-bg); --panel:var(--aiyou-surface); --card:var(--aiyou-elevated); --ink:var(--aiyou-text);
+ --muted:var(--aiyou-muted); --soft:#243746; --line:#3b5265; --accent:var(--aiyou-running);
+ --accent-soft:#213c53; --blue:#49adff; --danger:#ff716d; --shadow:0 12px 36px #0005;
+ --header-bg:#131f2b; --sidebar-bg:#101c27; --surface:#131f2b; --surface-raised:#1b2a38;
+ --surface-muted:#243746; --surface-hover:#263d50; --surface-active:#294b63; --column-header:#182938;
+ --text-primary:var(--aiyou-text); --text-secondary:var(--aiyou-muted); --text-tertiary:var(--aiyou-muted); --text-quaternary:var(--aiyou-muted);
+ --border:#3b5265; --border-strong:#58748b; --accent-hover:#72c0ff; --danger-soft:#412a2b;
+ --scrollbar-thumb:#58748b66; --scrollbar-thumb-hover:#88a1b7aa;
+ color:var(--ink); background:var(--bg);
+}
+html[data-aiyou-theme="mecha-control"] {--panel:var(--aiyou-fill-panel);--card:var(--aiyou-fill-card);--ink:var(--aiyou-text);--muted:var(--aiyou-muted);--line:var(--aiyou-card-border);--header-bg:var(--aiyou-fill-panel);--sidebar-bg:var(--aiyou-fill-sidebar);--surface:var(--aiyou-fill-panel);--surface-raised:var(--aiyou-fill-panel);--surface-muted:var(--aiyou-fill-panel);--surface-hover:var(--aiyou-fill-control);--surface-active:var(--aiyou-fill-control);--column-header:var(--aiyou-fill-panel);--border:var(--aiyou-card-border);--border-strong:var(--aiyou-card-border);--shadow:var(--aiyou-custom-shadow)}
+html[data-aiyou-theme="mecha-control"] body {background:var(--bg)!important;color:var(--ink)!important}
+html[data-aiyou-theme="mecha-control"] :is(.library-sidebar,.asset-toolbar,.family,.model-config,.composition,.run,.settings-panel,.detail-panel,.detail-modal,.modal,.modal-panel,.dialog,.dialog-panel,dialog,.lightbox-panel) {background:var(--panel)!important;color:var(--ink)!important;border-color:var(--line)!important}
+html[data-aiyou-theme="mecha-control"] :is(.icon-button,.secondary-button,.project-item.active,.project-item:hover,.type-tabs button,.smart-group-tabs button,.mode-switch button.active,.steps button.active,.asset,.model-pick,.result-card,.asset-card,.asset-group,.detail-section) {background:var(--card)!important;color:var(--ink)!important;border-color:var(--line)!important}
+html[data-aiyou-theme="mecha-control"] :is(input,textarea,select) {background:var(--aiyou-fill-control)!important;color:var(--ink)!important;border-color:var(--line)!important}
+html[data-aiyou-theme="mecha-control"] :is(.mode-switch,.steps,.mentions,.limits,.asset .placeholder,.project-avatar,.project-copy small,.folder-row,.run-prompt,label) {background-color:transparent;color:var(--muted)!important}
+html[data-aiyou-theme="mecha-control"] :is(.type-tabs button.active,.model-pick.selected,.smart-group-tabs button.active) {background:var(--accent-soft)!important;border-color:var(--accent)!important;color:var(--ink)!important}
+html[data-aiyou-theme="mecha-control"] :is(.primary,.primary-button) {background:var(--accent)!important;color:var(--aiyou-ink-inverse)!important;border-color:var(--accent)!important}
+html[data-aiyou-theme="mecha-control"] .danger-button {background:var(--danger)!important;color:var(--aiyou-ink-inverse)!important}
+html[data-aiyou-theme="mecha-control"] :is(.privacy-note,.scan-state,#notice) {background:var(--aiyou-fill-panel)!important;color:var(--aiyou-ink-success)!important;border-color:var(--line)!important}
+html[data-aiyou-theme="mecha-control"] #notice.error {background:var(--aiyou-fill-panel)!important;color:var(--aiyou-ink-danger)!important;border-color:var(--line)!important}
+html[data-aiyou-theme="mecha-control"] :is(.kind-tabs,.smart-group-tabs,.view-switch,.asset-menu>div,.category-chips button,.sort-control,.column-control,.text-card-preview,.media-prompt-panel,.character-modal .modal-actions,.character-strip-item,.character-editor>img,.character-strip-item img,.media-frame,.asset-tag,.search-box kbd) {background:var(--card)!important;color:var(--muted)!important;border-color:var(--line)!important}
+html[data-aiyou-theme="mecha-control"] :is(.kind-tabs button,.view-switch button,.kind-tabs button small,.smart-group-tabs button small) {color:var(--muted)!important;background:transparent!important}
+html[data-aiyou-theme="mecha-control"] :is(.kind-tabs button.active,.view-switch button[aria-pressed="true"],.smart-group-tabs button.active) {background:var(--accent-soft)!important;color:var(--ink)!important}
+html[data-aiyou-theme="mecha-control"] :is(.smart-group-tabs button.active small,.kind-tabs button.active small) {background:#315874!important;color:var(--ink)!important}
+html[data-aiyou-theme="mecha-control"] :is(.local-rule-note,.badge) {background:var(--aiyou-fill-panel)!important;color:var(--aiyou-ink-success)!important;border-color:var(--line)!important}
+html[data-aiyou-theme="mecha-control"] :is(.classification-line span:first-child,.prompt-section h4,.character-fields label,.modal legend) {color:var(--muted)!important}
+html[data-aiyou-theme="mecha-control"] .sidebar-section-heading small,
+html[data-aiyou-theme="mecha-control"] input::placeholder,
+html[data-aiyou-theme="mecha-control"] textarea::placeholder {color:var(--muted)!important;opacity:1}

@@ -76,8 +76,8 @@ test("task context has a native-header entry, isolated drafts, read-only summari
   await update();
   assert.equal(await client.evaluate("document.getElementById('aiyoucodex-task-context-open').parentElement.id"), "native-actions");
   assert.deepEqual(await client.evaluate(`[...document.querySelectorAll('#aiyoucodex-workspace-folder-open,#aiyoucodex-task-context-open')].map(e=>({label:e.getAttribute('aria-label'),text:e.textContent,icon:!!e.querySelector('svg[aria-hidden=true]'),width:e.getBoundingClientRect().width}))`), [
-    { label: "打开文件", text: "", icon: true, width: 32 },
-    { label: "任务上下文", text: "", icon: true, width: 32 },
+    { label: "打开文件", text: "", icon: true, width: 28 },
+    { label: "任务上下文", text: "", icon: true, width: 28 },
   ], "Both entries are square icons with accessible names, not titlebar text");
   await click("#native-share");
   assert.equal(await client.evaluate("window.__shareClicks"), 1, "Injected entry does not overlap or steal the Share control");
@@ -249,7 +249,7 @@ test("task context has a native-header entry, isolated drafts, read-only summari
   // before native controls instead of disappearing with the obsolete marker.
   await client.evaluate(`document.getElementById('native-header').innerHTML = '<div id="new-title" style="flex:1;min-width:0">Current conversation</div><div id="new-menu-wrap"><button id="new-more" aria-label="更多">⋯</button></div><div id="new-layout-wrap"><button id="new-layout" aria-label="布局">☷</button></div><div id="new-panel-wrap"><button id="new-panel" aria-label="添加面板">+</button></div>';window.__newMenuClicks=0;document.getElementById('new-more').onclick=()=>window.__newMenuClicks++`);
   await update();
-  await waitForBrowserState(client, "document.getElementById('aiyoucodex-task-context-open')?.getBoundingClientRect().width===32&&document.getElementById('aiyoucodex-workspace-folder-open')?.getBoundingClientRect().width===32", "Both actions survive an unmarked split native header");
+  await waitForBrowserState(client, "document.getElementById('aiyoucodex-task-context-open')?.getBoundingClientRect().width===28&&document.getElementById('aiyoucodex-workspace-folder-open')?.getBoundingClientRect().width===28", "Both actions survive an unmarked split native header");
   assert.equal(await client.evaluate(`(()=>{const ids=['aiyoucodex-workspace-folder-open','aiyoucodex-task-context-open','new-more','new-layout','new-panel'];const boxes=ids.map(id=>document.getElementById(id).getBoundingClientRect());return boxes.every((b,i)=>b.width>0&&b.top>=0&&b.right<=innerWidth&&(!i||b.left>=boxes[i-1].right-1))})()`), true);
   await click("#new-more");
   assert.equal(await client.evaluate("window.__newMenuClicks"), 1);
@@ -285,6 +285,18 @@ test("task context has a native-header entry, isolated drafts, read-only summari
   await update(automatic);
   assert.equal(await client.evaluate("window.__requests.length"), autoCount + 1);
   assert.equal(await client.evaluate("document.querySelector('[data-efficiency-field=goal]').value"), "人工修改必须保留");
+  // Real shell regression: grid end slot must never stack custom buttons below the titlebar.
+  await client.evaluate(`document.getElementById('native-header').innerHTML='<div data-testid="app-shell-header-context-menu-surface"><div data-app-shell-header-toolbar="true" style="display:flex;flex:1;height:44px;align-items:center;justify-content:flex-end"><div id="native-horizontal-actions" style="display:flex;gap:6px;color:rgba(26,28,31,.494)"><span style="display:contents"><button id="native-more" aria-label="聊天操作" style="color:inherit;width:28px;height:28px">…</button></span><button id="native-summary" aria-label="切换摘要" style="color:inherit;width:28px;height:28px">☷</button></div></div></div><div id="grid-end-slot" data-app-shell-header-obstacle="true" style="display:grid"><button aria-label="新建标签页">+</button></div>'`);
+  await update(automatic);
+  await waitForBrowserState(client, "document.getElementById('aiyoucodex-task-context-open')?.parentElement.id==='native-horizontal-actions'", "Custom icons live beside native actions inside the horizontal group");
+  assert.equal(await client.evaluate(`(()=>{const a=document.getElementById('aiyoucodex-workspace-folder-open'),b=document.getElementById('aiyoucodex-task-context-open'),n=document.getElementById('native-more');const x=a.getBoundingClientRect(),y=b.getBoundingClientRect(),z=n.getBoundingClientRect();return Math.abs(x.top-y.top)<1&&Math.abs(y.top-z.top)<1&&x.width===28&&y.width===28&&y.right<=z.left&&getComputedStyle(a).color===getComputedStyle(n).color})()`), true, 'Horizontal alignment, 28px size, spacing and native gray match');
+  assert.equal(await client.evaluate("document.querySelector('#grid-end-slot #aiyoucodex-task-context-open')===null"), true);
+  // No native selected sidebar row in retained-page shells: only the active local route wins.
+  await client.evaluate(`window.__routeFixture=document.createElement('div');window.__routeFixture.dataset.appShellActivePage='true';window.__routeFixture.__reactFiber$fixture={memoizedProps:{route:{conversationId:'01a0fd1a-a135-7871-a30b-b9bf34dd207a',pathname:'/local/01a0fd1a-a135-7871-a30b-b9bf34dd207a'}}};document.body.prepend(window.__routeFixture)`);
+  assert.equal(await client.evaluate(`${api}.getActiveTaskContext().threadId`), '01a0fd1a-a135-7871-a30b-b9bf34dd207a');
+  await client.evaluate(`window.__routeFixture.__reactFiber$fixture.memoizedProps.route.pathname='/cloud/other'`);
+  assert.equal(await client.evaluate(`${api}.getActiveTaskContext().threadId`), '', 'A foreign route cannot inherit stale local selection');
+  await client.evaluate(`window.__routeFixture.remove()`);
   await client.evaluate(`${api}.destroy()`);
   assert.equal(await client.evaluate("document.getElementById('aiyoucodex-task-context-open')===null"), true);
 });

@@ -54,7 +54,38 @@ test("retained product surfaces never mix headings, folders or new-chat sources"
   assert.equal(await client.evaluate("document.querySelectorAll('[data-codex-sidebar-folder-label=\"项目 A\"]').length"), 3, "Same-name local and two remote projects never collapse");
   await client.evaluate("document.querySelector('[data-codex-sidebar-section-tab=\"项目\"]').click();document.querySelector('[data-codex-sidebar-folder-tag=\"remote:host-a:p1\"]').click()");
   assert.equal(await client.evaluate("document.querySelector('[data-codex-sidebar-folder-new-chat]').disabled"), true, "A remote path cannot become a local execution root");
-  assert.ok(await client.evaluate("document.querySelector('[data-codex-sidebar-virtual-folder-panel=\"remote:host-a:p1\"]').textContent.includes('远程项目')"));
+  assert.equal(await client.evaluate("document.querySelector('[data-codex-sidebar-virtual-folder-panel=\"remote:host-a:p1\"]').textContent"), "暂无对话");
+  const nativeThreadId = "11111111-1111-4111-8111-111111111111";
+  const remoteEntries = ["host-a", "host-b"].map(hostId => ({
+    threadId: `remote:${hostId}:${nativeThreadId}`, nativeThreadId, remote: true, hostId,
+    nativeProjectId: "p1", projectId: `remote:${hostId}:p1`, projectName: "项目 A",
+    title: "真实远程任务", updatedAt: new Date().toISOString(),
+  }));
+  await client.evaluate(`${api}.setSearchCatalog([{threadId:${JSON.stringify(nativeThreadId)},title:'同 UUID 本机任务',projectId:'p1',projectName:'项目 A'},...${JSON.stringify(remoteEntries)}]);window.__routes=[];window.addEventListener('message',event=>{if(event.data?.type==='navigate-to-route')window.__routes.push(event.data.path)})`);
+  const remotePanel = '[data-codex-sidebar-virtual-folder-panel="remote:host-a:p1"]';
+  await waitForBrowserState(client, `document.querySelector('${remotePanel} [data-codex-sidebar-remote-host]')?.getAttribute('data-codex-conversation-preview-loaded')==='true'`, "Remote metadata renders an ordinary loaded card, without requesting local session files");
+  assert.equal(await client.evaluate(`document.querySelectorAll('${remotePanel} [data-app-action-sidebar-thread-row]').length`), 1);
+  assert.ok(await client.evaluate(`!document.querySelector('${remotePanel}').textContent.includes('原生连接')`));
+  assert.equal(await client.evaluate(`document.querySelector('${remotePanel} [data-app-action-sidebar-thread-row]').dataset.appActionSidebarThreadId`), remoteEntries[0].threadId);
+  assert.equal(await client.evaluate(`document.querySelector('${remotePanel} [data-app-action-sidebar-thread-row]').getBoundingClientRect().height>0`), true);
+  await client.evaluate(`document.querySelector('${remotePanel} [data-app-action-sidebar-thread-row]').click()`);
+  await waitForBrowserState(client, "window.__routes.length===1", "Remote card opens through native navigation");
+  assert.equal(await client.evaluate("window.__routes[0]"), `/local/${nativeThreadId}?hostId=host-a&projectId=p1`);
+  await client.evaluate("document.querySelector('[data-codex-sidebar-folder-tag=\"remote:host-b:p1\"]').click()");
+  await waitForBrowserState(client, "document.querySelector('[data-codex-sidebar-virtual-folder-panel=\"remote:host-b:p1\"]').hidden===false", "Same UUID on another host has its own project list");
+  await client.evaluate("document.querySelector('[data-codex-sidebar-virtual-folder-panel=\"remote:host-b:p1\"] [data-app-action-sidebar-thread-row]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
+  await waitForBrowserState(client, "window.__routes.length===2", "Keyboard navigation keeps host identity");
+  assert.equal(await client.evaluate("window.__routes[1]"), `/local/${nativeThreadId}?hostId=host-b&projectId=p1`);
+  await client.evaluate("document.querySelector('[data-codex-sidebar-folder-tag=\"__all__\"]').click()");
+  await waitForBrowserState(client, "document.getElementById('codex-sidebar-all-projects').hidden===false", "All projects includes remote threads");
+  assert.equal(await client.evaluate("document.querySelectorAll('#codex-sidebar-all-projects [data-app-action-sidebar-thread-row]').length"), 3, "Same UUID local and on two remote hosts remain three distinct conversations");
+  await client.evaluate(`${api}.setThreadExecutionStates([{threadId:${JSON.stringify(nativeThreadId)},runtimeStatus:'active',revision:'1'},{threadId:${JSON.stringify(remoteEntries[0].threadId)},runtimeStatus:'idle',unread:true,revision:'2'},{threadId:${JSON.stringify(remoteEntries[1].threadId)},runtimeStatus:'systemError',revision:'3'}])`);
+  await waitForBrowserState(client, "[...document.querySelectorAll('#codex-sidebar-all-projects [data-app-action-sidebar-thread-row]')].every(row=>row.hasAttribute('data-codex-execution-state'))", "Virtual cards receive execution state");
+  assert.deepEqual(await client.evaluate("Object.fromEntries([...document.querySelectorAll('#codex-sidebar-all-projects [data-app-action-sidebar-thread-row]')].map(row=>[row.dataset.appActionSidebarThreadId,row.dataset.codexExecutionState]))"), {
+    [`local:${nativeThreadId}`]: "running", [remoteEntries[0].threadId]: "completed-unread", [remoteEntries[1].threadId]: "error",
+  });
+  // Preserve the original saved pin for the product-switch regression below.
+  await client.evaluate(`${api}.setSearchCatalog([{threadId:'22222222-2222-4222-8222-222222222222',title:'已保存的置顶任务',projectId:'p1',projectName:'项目 A'},...${JSON.stringify(remoteEntries)}])`);
   await client.evaluate("document.getElementById('codex-header').style.display='';document.getElementById('codex-scroll').style.display='';document.getElementById('chatgpt-header').style.setProperty('display','none','important');document.getElementById('chatgpt-scroll').style.setProperty('display','none','important')");
   await waitForBrowserState(client, "document.querySelector('#codex-sidebar-section-tabs')?.parentElement.id==='codex-scroll'", "Switching product rebinds all groups to the new visible scroller");
   await waitForBrowserState(client, "document.querySelector('#codex-sidebar-folder-switcher')?.closest('#codex-scroll')!==null", "Codex without a native Projects section gets its own virtual project panel");
