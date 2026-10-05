@@ -20,6 +20,10 @@ v1.4.0 将菜单功能统一为不打断对话的右侧面板：可以直接在�
 - **按参考图构建主题**：新增 `aiyoucodex-theme-builder` Skill，包含独立身份模板、色卡与资源验证、编译安装和原生检查。
 - **近期交互更新合并发布**：Tibo 记录中文摘要与明确预告识别、Claude 交互与快捷指令、远程项目列表和执行状态、本地 Laya 搜索，以及右上角文件/上下文入口。
 
+![与更强的你，一起构建可能 · 本次更新知识卡片](.github/assets/20261006/AIYOUcodex-v1.5.0-knowledge-card.png)
+
+知识卡片中的皮肤画面为插画示意；真实皮肤以本页原生截图与动态实录为准。
+
 ![粉嫩软糖当前原生截图](.github/assets/20261006/pink-native-v1.0.2.png)
 
 ![当前原生主题配置截图](.github/assets/20261006/theme-settings-mecha-native.png)
