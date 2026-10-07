@@ -380,7 +380,7 @@ async function readCachedSkillCatalog(catalogKey, { refresh = false } = {}) {
 
 async function pushPreviews(session) {
   if (!session?.client) return;
-  const [requests, activeContext, localRecentCatalog, pinnedThreadIds, taskboardStatus, remoteProjects] = await Promise.all([
+  const [requests, activeContext, localRecentCatalog, pinnedThreadIds, taskboardStatus, remoteProjects, localProjects] = await Promise.all([
     session.client.evaluate(`(() => {
       const seen = new Set();
       const allPanel = document.getElementById('codex-sidebar-all-projects');
@@ -403,6 +403,7 @@ async function pushPreviews(session) {
     repository.readPinnedThreadIds(),
     readActiveTaskThreads(),
     repository.readRemoteProjectCatalog?.() || [],
+    repository.readLocalProjectCatalog?.() || [],
   ]);
   const remoteCatalog = await readRemoteCatalog(session, remoteProjects);
   const threadExecutionStates = await readNativeExecutionStates(session, remoteProjects.map(project => project.hostId));
@@ -451,7 +452,7 @@ async function pushPreviews(session) {
   let efficiency;
   try { efficiency = await session.efficiencyController.snapshot(); }
   catch { /* Keep the previous efficiency panel state; saves still fail closed. */ }
-  const snapshot = { previews, usage, searchCatalog, layaSearch: layaSearchController.snapshot(), remoteProjects, recentCatalog, interruptedCatalog, ...(efficiency ? { efficiency } : {}),
+  const snapshot = { previews, usage, localProjects, searchCatalog, layaSearch: layaSearchController.snapshot(), remoteProjects, recentCatalog, interruptedCatalog, ...(efficiency ? { efficiency } : {}),
     pinnedThreads: pinnedThreadIds, activeProjectThreads: taskboardStatus.activeThreadIds,
     ...(threadExecutionStates ? { threadExecutionStates } : {}),
     ...(skillOrganization ? { skillOrganization } : { skillCatalog }) };

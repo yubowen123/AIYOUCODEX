@@ -185,7 +185,7 @@ test("sidebar actions recover after partial redraw, source gaps and host clones 
   await client.evaluate("const restored=document.createElement('button');restored.id='restored-folder-new';restored.setAttribute('aria-label','在 项目 A 中开始新聊天');restored.onclick=()=>window.__clicks.push('restored-folder-new');document.getElementById('folder-row').append(restored)");
   await waitForBrowserState(client, `document.querySelector(${JSON.stringify(newChatControl)})?.disabled===false`, "Restored native chat action re-enables the search-row button");
   await click(newChatControl);
-  assert.equal(await client.evaluate("window.__clicks.at(-1)"), "restored-folder-new", "Repaired button still opens a new chat rather than a project list");
+  assert.equal(await client.evaluate("window.__bridgeCalls.at(-1).root"), "/Users/test/project-a", "Selected project root wins over a restored but unbound native button");
   const narrowActions = await client.evaluate(`(()=>{const h=document.querySelector(${available}).getBoundingClientRect();return [...document.querySelectorAll(${JSON.stringify(host + " button:not([hidden])")})].map(b=>{const r=b.getBoundingClientRect();return {label:b.getAttribute('aria-label'),left:r.left,right:r.right,width:r.width,height:r.height,hostLeft:h.left,hostRight:h.right}})})()`);
   assert.equal(narrowActions.every(r => r.width >= 26 && r.left >= r.hostLeft && r.right <= r.hostRight && r.height > 0), true, JSON.stringify(narrowActions));
   await delay(250);

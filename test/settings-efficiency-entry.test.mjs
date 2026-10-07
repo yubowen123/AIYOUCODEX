@@ -73,7 +73,7 @@ test("settings output-preferences entry opens by actual mouse and keyboard inter
   assert.equal(await client.evaluate("document.activeElement===document.querySelector('[data-efficiency-close]')"), true,
     "Closing the settings dialog transfers focus to the newly opened panel");
   await client.send("Emulation.setDeviceMetricsOverride", { width: 760, height: 620, deviceScaleFactor: 1, mobile: false });
-  await waitForBrowserState(client, reachable, "The body-mounted fallback stays reachable after resizing");
+  try { await waitForBrowserState(client, reachable, "The body-mounted fallback stays reachable after resizing"); } catch (error) { console.error(await client.evaluate(`(()=>{const p=document.getElementById("aiyoucodex-efficiency-panel"),b=p.querySelector("[data-efficiency-close]"),r=b.getBoundingClientRect();return {panel:p.getBoundingClientRect().toJSON(),button:r.toJSON(),hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.outerHTML.slice(0,200),viewport:[innerWidth,innerHeight],body:document.body.getBoundingClientRect().toJSON(),limit:document.body.style.getPropertyValue("--aiyou-workspace-panel-limit")}})()`));throw error;}
   await click("[data-efficiency-close]");
   assert.equal(await client.evaluate(`${api}.getEfficiencyState().open`), false);
   await client.evaluate(`(()=>{document.getElementById('aiyoucodex-efficiency-panel').remove();window.__nativeAppend=document.body.appendChild;document.body.appendChild=function(node){if(node.id==='aiyoucodex-efficiency-panel')throw new Error('Synthetic unavailable mount');return window.__nativeAppend.call(this,node)}})()`);

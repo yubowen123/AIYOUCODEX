@@ -68,7 +68,7 @@ test("Dot and Claude real clicks: folded process, preserved answers and approval
   assert.equal(await client.evaluate("document.querySelector('#aiyoucodex-claude-panel').parentElement.id"), "active-main");
   assert.equal(await client.evaluate("document.querySelector('[data-claude-setup] [data-claude-skills]')"), null);
   assert.equal(await client.evaluate("document.querySelector('[data-claude-reference-menu]').hidden"), true);
-  assert.equal(await client.evaluate("getComputedStyle(document.querySelector('._header_fixture')).visibility"),"hidden","Dot overlay is isolated while Claude is open");
+  assert.equal(await client.evaluate("getComputedStyle(document.querySelector('._header_fixture')).visibility"),"visible","Native Dot header remains usable alongside Claude");
   assert.equal(await client.evaluate("document.querySelector('[data-claude-name]').textContent"),"Claude Code");
   await click("[data-claude-identity]");
   const settingsGeometry=await client.evaluate("(()=>{const p=document.querySelector('#aiyoucodex-claude-panel').getBoundingClientRect(),r=document.querySelector('[data-claude-persona]').getBoundingClientRect();return {inside:r.x>=p.x&&r.right<=p.right,nearHeader:r.y-p.y<150};})()");
