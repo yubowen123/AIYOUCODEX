@@ -401,6 +401,8 @@
   }
 
   function findPageMount() {
+    const shared = window.__codexConversationPreviewInjection__?.getWorkspacePanelMount?.();
+    if (shared) return shared;
     const frameHost = findPageHost();
     const viewport = frameHost?.closest?.("[data-app-shell-main-content-layout]");
     const surface = viewport?.parentElement;
@@ -941,6 +943,7 @@
   function createPage() {
     const section = document.createElement("section");
     section.id = PAGE_ID;
+    section.setAttribute("data-codex-workspace-side-panel", "taskboard");
     section.hidden = true;
     section.setAttribute(OWNED_ATTRIBUTE, "true");
     section.setAttribute("role", "region");

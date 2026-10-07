@@ -23,7 +23,7 @@ test("reset notice fits header, opens once, updates locally, and never rewrites 
   assert.ok(executable);
   const profile = await mkdtemp(path.join(tmpdir(), "aiyou-reset-ui-"));
   const html = `<style>body{margin:0;font-family:Arial}.contents{display:contents}#header{display:flex;align-items:center;gap:8px;width:510px;box-sizing:border-box;padding:8px}#title{margin-right:auto;min-width:60px}button{width:28px;height:28px;border:0;background:#eee}</style>
-    <header id="header"><span id="title">Codex</span><div class="contents"><span class="contents"><button aria-label="搜索">搜</button></span></div><button id="notify" aria-label="通知">铃</button></header><div contenteditable="true" id="composer">用户未发送的草稿</div>`;
+    <header id="header"><span id="title">Codex</span><div class="contents"><span class="contents"><button aria-label="搜索">搜</button></span></div><button id="notify" aria-label="通知">铃</button></header><main style="height:700px;display:flex"><div id="chat" style="flex:1;min-width:0"><div contenteditable="true" id="composer">用户未发送的草稿</div></div></main>`;
   const server = createServer((_, res) => { res.setHeader("content-type", "text/html;charset=utf-8"); res.end(html); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const browser = spawn(executable, ["--headless=new", "--no-sandbox", "--no-first-run", "--no-default-browser-check",
@@ -44,7 +44,7 @@ test("reset notice fits header, opens once, updates locally, and never rewrites 
   await client.evaluate(`window.__clock=${initialNow};Date.now=()=>window.__clock;window.__notifyClicks=0;document.getElementById('notify').onclick=()=>window.__notifyClicks++;`);
   const usage = { available: true, text: "本周剩余 94%", remainingPercent: 94, tone: "normal", ariaLabel: "本周剩余 94%",
     resetNotice: { checkStatus: "ok", lastSuccessAt: new Date(initialNow).toISOString(), lastCheckAt: new Date(initialNow).toISOString(),
-      confidence: { value: 84, band: "高", reasons: ["RSS 已核验"] }, analysis: { counts: { total: 2 }, latestCompletedAt: null, summary: "已记录 2 条公开信号。" }, active: {
+      probability: {value:90,reason:"作者已预告重置",stale:false}, confidence: { value: 84, band: "高", reasons: ["RSS 已核验"] }, analysis: { counts: { total: 2 }, latestCompletedAt: null, summary: "已记录 2 条公开信号。" }, active: {
       status: "scheduled", verification: "rss", precision: "exact", targetAt: "2026-09-14T12:00:00Z", scope: "所有付费用户",
       summary: '<img src=x onerror="window.__unsafe=true">', sourceUrl: "https://x.com/thsottiaux/status/2099000000000000001",
     } } };
@@ -62,9 +62,11 @@ test("reset notice fits header, opens once, updates locally, and never rewrites 
   }
   await click("#aiyoucodex-reset-notice");
   assert.equal(await client.evaluate("document.getElementById('aiyoucodex-reset-dialog').open"), true);
-  assert.equal(await client.evaluate("document.querySelector('[data-reset-hero-value]').textContent"), "1天 02:00");
+  assert.equal(await client.evaluate("document.getElementById('aiyoucodex-reset-dialog').tagName"), "SECTION");
+  assert.equal(await client.evaluate("(()=>{const chat=document.getElementById('chat').getBoundingClientRect(),p=document.getElementById('aiyoucodex-reset-dialog').getBoundingClientRect();return chat.right<=p.left+.5})()"), true);
+  assert.equal(await client.evaluate("document.querySelector('[data-reset-hero-value]').textContent"), "90%");
   assert.match(await client.evaluate("document.querySelector('[data-reset-hero-confidence]').textContent"), /84%/);
-  assert.match(await client.evaluate("document.querySelector('[data-reset-hero-delivery]').textContent"), /到账状态：未确认 · 直接重置/);
+  assert.match(await client.evaluate("document.querySelector('[data-reset-hero-delivery]').textContent"), /根据 Tibo 帖子与回复估计/);
   assert.match(await client.evaluate("document.querySelector('[data-reset-history-summary]').textContent"), /2 条/);
   assert.equal(await client.evaluate("document.querySelector('[data-reset-feed-list] [data-reset-signal]').textContent"), "暂无已记录的重置信号。");
   assert.equal(await client.evaluate("document.querySelector('#aiyoucodex-reset-dialog details').open"), false);
@@ -73,6 +75,7 @@ test("reset notice fits header, opens once, updates locally, and never rewrites 
   assert.equal(await client.evaluate("document.querySelectorAll('[data-reset-history-cell]').length"), 84);
   assert.match(await client.evaluate("document.querySelector('[data-reset-history-caption]').textContent"), /最近 12 周/);
   assert.match(await client.evaluate("document.querySelector('[data-reset-local-time]').textContent"), /\d/);
+  await client.evaluate("document.querySelector('#aiyoucodex-reset-dialog details').open=true");
   await click("[data-reset-time-mode='relative']");
   const modeState = await client.evaluate("JSON.stringify([...document.querySelectorAll('[data-reset-time-mode]')].map(node=>({mode:node.dataset.resetTimeMode,pressed:node.getAttribute('aria-pressed')})))");
   assert.match(modeState, /relative/);
@@ -82,11 +85,12 @@ test("reset notice fits header, opens once, updates locally, and never rewrites 
   await click("[aria-label='关闭重置公告']");
   assert.equal(await client.evaluate("document.getElementById('aiyoucodex-reset-dialog').open"), false);
   usage.resetNotice.active = { ...usage.resetNotice.active, status: "tentative", resetType: "banked", deliveryStatus: "delivered" };
+  usage.resetNotice.probability = {value:null,reason:"最近重置已完成"};
   usage.resetNotice.accountReset = { source: "codex-rate-limits", directCount: 0, bankedCount: 2, totalCount: 2 };
   await client.evaluate(`${api}.setUsage(${JSON.stringify(usage)});${api}.refresh()`);
-  assert.match(await client.evaluate("document.getElementById('aiyoucodex-reset-notice').textContent"), /暂无可信预告/);
+  assert.match(await client.evaluate("document.getElementById('aiyoucodex-reset-notice').textContent"), /待估计/);
   await click("#aiyoucodex-reset-notice");
-  assert.equal(await client.evaluate("document.querySelector('[data-reset-hero-value]').textContent"), "暂无可信的下次重置预告");
+  assert.equal(await client.evaluate("document.querySelector('[data-reset-hero-value]').textContent"), "待估计");
   assert.match(await client.evaluate("document.querySelector('[data-reset-hero-confidence]').textContent"), /非账号重置概率|历史信号不代表重置概率/);
   await click("[aria-label='关闭重置公告']");
   usage.resetNotice.accountReset = null;
@@ -97,18 +101,18 @@ test("reset notice fits header, opens once, updates locally, and never rewrites 
     await client.evaluate(`window.__clock=${Date.parse(usage.resetNotice.active.targetAt)}-${remainingHours}*3600000;document.dispatchEvent(new Event('visibilitychange'))`);
     colors.push(await client.evaluate("document.getElementById('aiyoucodex-reset-notice').style.color"));
   }
-  assert.ok(new Set(colors).size >= 2, `Threshold colors should remain distinguishable: ${JSON.stringify(colors)}`);
-  assert.match(await client.evaluate("document.getElementById('aiyoucodex-reset-notice').textContent"), /已到时 · 待核验/);
+  assert.equal(new Set(colors).size, 1, `Threshold colors should remain distinguishable: ${JSON.stringify(colors)}`);
+  assert.match(await client.evaluate("document.getElementById('aiyoucodex-reset-notice').textContent"), /待估计/);
   assert.equal(await client.evaluate("document.querySelector('.codex-conversation-usage-value').textContent"), "94%");
   await click("#notify");
   assert.equal(await client.evaluate("window.__notifyClicks"), 1);
   assert.equal(await client.evaluate("document.getElementById('composer').textContent"), "用户未发送的草稿");
   usage.resetNotice.active = { status: "tentative", verification: "rss", targetAt: null };
   await client.evaluate(`${api}.setUsage(${JSON.stringify(usage)});${api}.refresh()`);
-  assert.match(await client.evaluate("document.getElementById('aiyoucodex-reset-notice').textContent"), /时间待确认/);
+  assert.match(await client.evaluate("document.getElementById('aiyoucodex-reset-notice').textContent"), /待估计/);
   const completed = {...usage, resetNotice: {...usage.resetNotice, monitor:{enabled:true,running:true,intervalMinutes:1}, active:{status:"completed",verification:"rss",resetType:"direct",publishedAt:"2026-09-13T02:17:54Z",sourceUrl:"https://x.com/thsottiaux/status/2103911959544610829",summary:"作者宣布重置完成"}}};
   await client.evaluate(`window.__clock=${initialNow};${api}.setUsage(${JSON.stringify(completed)});${api}.refresh()`);
-  assert.equal(await client.evaluate("document.querySelector('#aiyoucodex-reset-notice strong').textContent"), "暂无可信预告");
+  assert.equal(await client.evaluate("document.querySelector('#aiyoucodex-reset-notice strong').textContent"), "待估计");
   assert.equal(await client.evaluate("document.querySelector('#aiyoucodex-reset-notice').dataset.alertLevel"), "none");
   assert.match(await client.evaluate("document.querySelector('#aiyoucodex-reset-notice').title"), /最近检查：.*每 1 分钟/);
   await click("#aiyoucodex-reset-notice");

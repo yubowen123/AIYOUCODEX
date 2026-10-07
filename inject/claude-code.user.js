@@ -22,7 +22,7 @@
   style.id = "aiyoucodex-claude-style";
   style.textContent = `
     [data-aiyou-dot-source]{display:none!important}
-    body[data-aiyou-claude-active] [data-aiyou-dot-header],body[data-aiyou-claude-active] [data-aiyou-dot-header] *{visibility:hidden!important;pointer-events:none!important}
+
     body[data-aiyou-claude-active] [data-aiyou-claude-host]{position:relative!important}
     #${ENTRY}{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin:8px 0 12px;-webkit-app-region:no-drag}
     #${ENTRY} button{display:flex!important;align-items:center;justify-content:center;gap:8px;width:100%!important;min-width:0;height:44px!important;min-height:44px;border:1px solid #80808015!important;border-radius:12px;padding:10px!important;color:#595959!important;background:color-mix(in srgb,Canvas 94%,transparent)!important;font:500 12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important;letter-spacing:0;text-align:center;cursor:pointer;box-shadow:0 2px 6px #00000008,0 1px 2px #00000004;transition:box-shadow .15s,transform .15s,background .15s;-webkit-app-region:no-drag}

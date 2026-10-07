@@ -2,7 +2,7 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
-  const RUNTIME_VERSION = "2026-10-05.1";
+  const RUNTIME_VERSION = "2026-10-07.3";
   const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
@@ -2989,8 +2989,193 @@
     return Math.max(420, Math.min(value, Math.max(420, window.innerWidth - 360)));
   }
 
+  function ensureWorkspaceDockStyle() {
+    if (document.getElementById("aiyou-workspace-dock-style")) return;
+    const style = document.createElement("style"); style.id = "aiyou-workspace-dock-style";
+    style.textContent = `
+      [data-aiyou-workspace-dock]:has(> [data-codex-workspace-side-panel]:not([hidden])) { display:flex!important; flex-direction:row!important; min-width:0!important; max-width:100%!important; max-height:100%!important; }
+      [data-aiyou-workspace-dock]:has(> [data-codex-workspace-side-panel]:not([hidden])) > [data-aiyou-workspace-chat] { flex:1 1 0!important; width:0!important; min-width:0!important; overflow:hidden; }
+      [data-aiyou-workspace-dock] > [data-codex-workspace-side-panel]:not([hidden]) { position:relative!important; inset:auto!important; flex:0 0 min(var(--codex-workspace-panel-width,560px),var(--aiyou-workspace-panel-limit,60%))!important; width:min(var(--codex-workspace-panel-width,560px),var(--aiyou-workspace-panel-limit,60%))!important; min-width:0!important; max-width:var(--aiyou-workspace-panel-limit,60%)!important; height:100%!important; max-height:100%!important; margin:0!important; border-radius:0!important; overflow:auto; box-sizing:border-box; border:0; border-left:1px solid var(--color-border-default,#8995a633); background:var(--color-background-surface,Canvas); color:var(--color-text-primary,CanvasText); box-shadow:none!important; }
+      [data-codex-workspace-side-panel][hidden] { display:none!important; }
+      #${RESET_DIALOG_ID} [data-reset-meta], #${RESET_DIALOG_ID} [data-reset-history], #${RESET_DIALOG_ID} [data-reset-scope], #${RESET_DIALOG_ID} [data-reset-time], #${RESET_DIALOG_ID} [data-reset-hero-confidence] { display:none; }
+      #aiyoucodex-skill-details:not([hidden]) { display:grid; grid-template-rows:auto minmax(0,1fr) auto; }
+      #aiyou-conversation-settings[data-codex-workspace-side-panel] {
+        --conversation-ink:var(--aiyou-text,var(--color-text-primary,CanvasText));
+        --conversation-muted:var(--aiyou-muted,var(--color-text-secondary,color-mix(in srgb,CanvasText 70%,Canvas)));
+        --conversation-line:var(--aiyou-card-border,var(--color-border-default,color-mix(in srgb,CanvasText 16%,Canvas)));
+        --conversation-accent:var(--aiyou-accent,var(--color-text-info,var(--color-text-primary,CanvasText)));
+        --conversation-control:var(--aiyou-fill-control,var(--color-background-control-opaque,color-mix(in srgb,CanvasText 4%,Canvas)));
+        background:var(--aiyou-fill-panel,var(--aiyou-surface,var(--color-background-panel,Canvas)));
+        color:var(--conversation-ink); border-left-color:var(--conversation-line);
+        font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+        -webkit-app-region:no-drag; scrollbar-gutter:stable;
+      }
+      #aiyou-conversation-settings *, #aiyou-conversation-menu * { box-sizing:border-box; }
+      #aiyou-conversation-settings .conversation-header { display:flex;align-items:center;justify-content:space-between;gap:16px;padding:22px 24px;border-bottom:1px solid var(--conversation-line); }
+      #aiyou-conversation-settings h2 { margin:0;font-size:18px;line-height:1.4;font-weight:650;letter-spacing:.02em;color:var(--conversation-ink); }
+      #aiyou-conversation-settings button, #aiyou-conversation-settings select { font:inherit;color:var(--conversation-ink);cursor:pointer; }
+      #aiyou-conversation-settings svg { width:20px;height:20px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;pointer-events:none; }
+      #aiyou-conversation-settings [data-conversation-close] { display:grid;place-items:center;width:34px;height:34px;flex-shrink:0;padding:0;border:1px solid var(--conversation-line);border-radius:var(--aiyou-radius-button,10px);background:var(--conversation-control);color:var(--conversation-muted); }
+      #aiyou-conversation-settings .conversation-body { display:grid;gap:28px;padding:24px; }
+      #aiyou-conversation-settings .conversation-target { display:grid;grid-template-columns:42px minmax(0,1fr);align-items:start;gap:14px;padding:18px;border:1px solid var(--conversation-line);border-radius:var(--aiyou-radius-card,14px);background:var(--aiyou-fill-card,var(--conversation-control));box-shadow:var(--aiyou-custom-shadow,none); }
+      #aiyou-conversation-settings .conversation-icon { display:grid;place-items:center;width:40px;height:40px;border-radius:var(--aiyou-radius-button,10px);background:color-mix(in srgb,var(--conversation-accent) 10%,transparent);color:var(--conversation-accent);border:1px solid color-mix(in srgb,var(--conversation-accent) 24%,transparent); }
+      #aiyou-conversation-settings .conversation-caption { display:block;font-size:12px;color:var(--conversation-muted);margin:0 0 5px; }
+      #aiyou-conversation-settings [data-conversation-title] { display:block;font-size:16px;font-weight:600;line-height:1.5;overflow-wrap:anywhere; }
+      #aiyou-conversation-settings .conversation-project-tag { display:inline-flex;align-items:center;gap:6px;max-width:100%;margin-top:10px;color:var(--conversation-muted);font-size:12px; }
+      #aiyou-conversation-settings .conversation-project-tag svg { width:14px;height:14px; }
+      #aiyou-conversation-settings h3 { margin:0 0 12px;font-size:13px;font-weight:600;color:var(--conversation-muted); }
+      #aiyou-conversation-settings .conversation-actions { display:grid;gap:10px; }
+      #aiyou-conversation-settings .conversation-action { display:grid;grid-template-columns:22px minmax(0,1fr) 16px;align-items:center;gap:14px;width:100%;min-height:78px;padding:15px 16px;text-align:left;border:1px solid var(--conversation-line);border-radius:var(--aiyou-radius-card,12px);background:var(--conversation-control);transition:border-color .15s,background-color .15s; }
+      #aiyou-conversation-settings .conversation-action > svg:first-child { color:var(--conversation-accent); }
+      #aiyou-conversation-settings .conversation-action > svg:last-child { width:16px;height:16px;color:var(--conversation-muted); }
+      #aiyou-conversation-settings .conversation-action strong { display:block;font-weight:600; }
+      #aiyou-conversation-settings .conversation-action small { display:block;margin-top:4px;font-size:12px;line-height:1.5;color:var(--conversation-muted); }
+      #aiyou-conversation-settings .conversation-move-section { border-top:1px solid var(--conversation-line);padding-top:24px; }
+      #aiyou-conversation-settings label { display:block;margin-bottom:9px;font-size:14px;font-weight:600; }
+      #aiyou-conversation-settings .conversation-select { position:relative; }
+      #aiyou-conversation-settings .conversation-select > svg { position:absolute;right:14px;top:15px;width:16px;height:16px;color:var(--conversation-muted); }
+      #aiyou-conversation-settings select { display:block;appearance:none;width:100%;min-height:46px;padding:10px 42px 10px 14px;border:1px solid var(--conversation-line);border-radius:var(--aiyou-radius-button,10px);background:var(--conversation-control); }
+      #aiyou-conversation-settings option { background:var(--aiyou-elevated,Canvas);color:var(--conversation-ink); }
+      #aiyou-conversation-settings .conversation-hint { margin:10px 0 18px;font-size:12px;color:var(--conversation-muted); }
+      #aiyou-conversation-settings [data-conversation-move] { display:flex;align-items:center;justify-content:center;gap:10px;width:100%;min-height:46px;padding:10px 16px;border:1px solid var(--conversation-accent);border-radius:var(--aiyou-radius-button,10px);background:color-mix(in srgb,var(--conversation-accent) 12%,var(--conversation-control));font-weight:600; }
+      #aiyou-conversation-settings button:hover:not(:disabled), #aiyou-conversation-settings select:hover:not(:disabled) { border-color:var(--conversation-accent);background-color:color-mix(in srgb,var(--conversation-accent) 8%,var(--conversation-control)); }
+      #aiyou-conversation-settings :is(button,select):focus-visible { outline:2px solid var(--aiyou-focus,var(--conversation-accent));outline-offset:3px; }
+      #aiyou-conversation-settings :disabled { cursor:default;color:var(--conversation-muted);border-color:var(--conversation-line); }
+      #aiyou-conversation-settings [data-conversation-status] { margin:0;padding:12px 14px;border:1px solid var(--conversation-line);border-radius:var(--aiyou-radius-button,10px);background:var(--conversation-control);font-size:13px;overflow-wrap:anywhere; }
+      #aiyou-conversation-settings [data-conversation-status]:empty { display:none; }
+      #aiyou-conversation-menu { background:var(--aiyou-fill-menu,var(--aiyou-surface,var(--color-background-panel,Canvas)))!important;color:var(--aiyou-text,var(--color-text-primary,CanvasText))!important;border-color:var(--aiyou-card-border,var(--color-border-default,#8886))!important;box-shadow:var(--aiyou-custom-shadow,0 8px 24px #0002);backdrop-filter:blur(18px); }
+      #aiyou-conversation-menu button { display:block;min-height:36px;padding:8px 12px;text-align:left;border:0;border-radius:7px;background:transparent;color:inherit;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer; }
+      #aiyou-conversation-menu button:hover, #aiyou-conversation-menu button:focus-visible { background:var(--aiyou-fill-control,var(--color-background-control-opaque,color-mix(in srgb,CanvasText 8%,Canvas))); }
+      @media(prefers-reduced-motion:reduce) { #aiyou-conversation-settings .conversation-action { transition:none; } }
+    `;
+    document.head.append(style);
+  }
+
+  let localProjectCatalog = new Map();
+  let conversationSettingsTarget = null;
+  let conversationMenu = null;
+  let nativeProjectHostPromise = null;
+
+  async function nativeProjectHost() {
+    if (!nativeProjectHostPromise) nativeProjectHostPromise = (async () => {
+      const url = [...document.querySelectorAll('link[rel="modulepreload"]')].map(n => n.href)
+        .concat(performance.getEntriesByType("resource").map(n => n.name))
+        .find(url => /\/app-shared-[a-f0-9]+\.js$/.test(url));
+      if (!url) throw new Error("原生项目服务尚未加载");
+      const module = await import(url);
+      const host = Object.values(module).find(value => value && typeof value === "object"
+        && typeof value.threadProjectAssignments?.setMembership === "function" && value.projects);
+      if (!host) throw new Error("当前 Codex 没有可用的项目移动服务");
+      return host;
+    })().catch(error => { nativeProjectHostPromise = null; throw error; });
+    return nativeProjectHostPromise;
+  }
+
+  function conversationTarget(row) {
+    const threadId = normalizedThreadId(row?.getAttribute("data-app-action-sidebar-thread-id") || "");
+    const entry = searchCatalogByThread.get(threadId) || recentCatalog.find(e => normalizedThreadId(e.threadId) === threadId);
+    return entry || {threadId, title: row?.getAttribute("data-app-action-sidebar-thread-title") || "对话"};
+  }
+
+  function showConversationSettings(target) {
+    if (!target?.threadId || !conversationRoute(target)) return false;
+    conversationSettingsTarget = target;
+    let panel = document.getElementById("aiyou-conversation-settings");
+    if (!panel) {
+      panel = createWorkspaceSection("aiyou-conversation-settings", "conversation-settings");
+      const icon = paths => `<svg viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+      const folderIcon = icon('<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3Z"/>');
+      const chevron = icon('<path d="m9 6 6 6-6 6"/>');
+      panel.setAttribute("aria-labelledby", "conversation-settings-heading");
+      panel.innerHTML = `<header class="conversation-header"><h2 id="conversation-settings-heading">对话设置</h2><button type="button" data-conversation-close aria-label="关闭对话设置">${icon('<path d="m6 6 12 12M18 6 6 18"/>')}</button></header>
+        <div class="conversation-body">
+          <div class="conversation-target"><span class="conversation-icon">${icon('<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-1 1v-8.5A8.5 8.5 0 0 1 11.5 4H21Z"/><path d="M7 10h10M7 14h6"/>')}</span><div><span class="conversation-caption">当前对话</span><strong data-conversation-title></strong><span class="conversation-project-tag">${folderIcon}<span data-conversation-current-project></span></span></div></div>
+          <section><h3>偏好与上下文</h3><div class="conversation-actions">
+            <button type="button" class="conversation-action" data-conversation-output>${icon('<path d="M4 7h16M4 17h16M8 4v6M16 14v6"/>')}<span><strong>输出偏好与默认 Skills</strong><small>调整回复方式与常用技能</small></span>${chevron}</button>
+            <button type="button" class="conversation-action" data-conversation-context>${icon('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/>')}<span><strong>任务上下文</strong><small>管理目标、进展与关联资料</small></span>${chevron}</button>
+          </div></section>
+          <section class="conversation-move-section"><h3>项目归属</h3><label for="conversation-project-select">移动到指定项目</label><div class="conversation-select"><select id="conversation-project-select" data-conversation-project></select>${icon('<path d="m6 9 6 6 6-6"/>')}</div><p class="conversation-hint">选择目标项目，将这条对话归入其中。</p><button type="button" data-conversation-move>${folderIcon}<span>移动到所选项目</span></button></section>
+          <p role="status" aria-live="polite" data-conversation-status></p>
+        </div>`;
+      panel.querySelector("[data-conversation-close]").onclick = () => panel.close();
+      for (const [selector, view] of [["[data-conversation-output]","settings"],["[data-conversation-context]","context"]]) {
+        panel.querySelector(selector).onclick = async () => {
+          const selected = conversationSettingsTarget;
+          if (!selected) return;
+          openAllProject(selected);
+          const id = normalizedThreadId(selected.threadId);
+          for (let attempt = 0; attempt < 60; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            if (destroyed || conversationSettingsTarget !== selected) return;
+            if (normalizedThreadId(efficiencySnapshot?.threadId || currentCodexTaskContext().threadId) === id) {
+              if (view === "settings") efficiencyScope = "thread";
+              openEfficiencyPanel(view); return;
+            }
+          }
+          panel.querySelector("[data-conversation-status]").textContent = "对话切换尚未确认，请重新打开设置。";
+        };
+      }
+      panel.querySelector("[data-conversation-move]").onclick = async () => {
+        const selected = conversationSettingsTarget, select = panel.querySelector("[data-conversation-project]"), button = panel.querySelector("[data-conversation-move]"), status = panel.querySelector("[data-conversation-status]");
+        const project = localProjectCatalog.get(select.value) || remoteProjectCatalog.get(select.value);
+        if (!selected || !project) return;
+        button.disabled = true; status.textContent = "正在保存项目归属…";
+        try {
+          const host = await nativeProjectHost();
+          await host.threadProjectAssignments.setMembership({ threadId: selected.nativeThreadId || normalizedThreadId(selected.threadId),
+            assignment: {projectKind: selected.remote ? "remote" : "local", projectId: project.nativeProjectId || project.id, ...(selected.remote ? {hostId:selected.hostId} : {})},
+            projectless: false, ...(selected.remote ? {hostId:selected.hostId} : {}) });
+          if (conversationSettingsTarget !== selected || destroyed) return;
+          // Wait for the backend catalog's native persistence readback. Never optimistically move a card.
+          for (let attempt = 0; attempt < 80; attempt++) {
+            const readback = searchCatalogByThread.get(normalizedThreadId(selected.threadId));
+            if (readback?.projectId === project.id) { status.textContent = `已移动到“${project.label}”`; return; }
+            await new Promise(resolve => setTimeout(resolve,100));
+            if (conversationSettingsTarget !== selected || destroyed) return;
+          }
+          status.textContent = "原生服务已返回，列表归属尚未读回；请刷新核对，不会自动重试。";
+        } catch (error) { status.textContent = `移动失败：${error.message}`; }
+        finally { if (conversationSettingsTarget === selected) button.disabled = false; }
+      };
+    }
+    panel.querySelector("[data-conversation-title]").textContent = target.title || "对话";
+    panel.querySelector("[data-conversation-current-project]").textContent = target.projectName || localProjectCatalog.get(target.projectId)?.label || remoteProjectCatalog.get(target.projectId)?.label || "未归入项目";
+    panel.querySelector("[data-conversation-status]").textContent = "";
+    const projects = target.remote ? [...remoteProjectCatalog.values()].filter(p => p.hostId === target.hostId) : [...localProjectCatalog.values()];
+    const select = panel.querySelector("[data-conversation-project]");
+    select.replaceChildren(...projects.filter(p => p.id !== target.projectId).map(project => {
+      const option = document.createElement("option"); option.value = project.id; option.textContent = project.label; return option;
+    }));
+    panel.querySelector("[data-conversation-move]").disabled = !select.options.length;
+    select.disabled = !select.options.length;
+    return showWorkspaceSection(panel);
+  }
+
+  function handleConversationContextMenu(event) {
+    const row = event.target.closest?.(ROW_SELECTOR);
+    if (!row) return;
+    const target = conversationTarget(row);
+    if (!conversationRoute(target)) return;
+    event.preventDefault(); event.stopPropagation();
+    conversationMenu?.remove();
+    const menu = document.createElement("div"); conversationMenu = menu;
+    menu.id = "aiyou-conversation-menu"; menu.setAttribute("role", "menu");
+    menu.style.cssText = `position:fixed;z-index:2147483000;left:${Math.min(event.clientX,innerWidth-190)}px;top:${Math.min(event.clientY,innerHeight-90)}px;padding:6px;border:1px solid var(--color-border-default,#8886);border-radius:10px;background:var(--color-background-surface,Canvas);color:var(--color-text-primary,CanvasText);display:grid;gap:4px;min-width:180px`;
+    for (const title of ["对话设置", "移动到指定项目…"]) {
+      const button = document.createElement("button"); button.type = "button"; button.setAttribute("role","menuitem"); button.textContent = title;
+      button.onclick = () => { menu.remove(); showConversationSettings(target); }; menu.append(button);
+    }
+    document.body.append(menu); menu.firstElementChild.focus();
+  }
+
+  function closeConversationMenu(event) {
+    if (event.type === "keydown" && event.key !== "Escape") return;
+    if (!conversationMenu?.contains(event.target)) { conversationMenu?.remove(); conversationMenu = null; }
+  }
+
   function initializeWorkspacePanel(page, panelName) {
     page.setAttribute(WORKSPACE_PANEL_ATTRIBUTE, panelName);
+    ensureWorkspaceDockStyle();
     page.style.setProperty("--codex-workspace-panel-width", `${savedWorkspacePanelWidth()}px`);
     page.addEventListener("pointerdown", (event) => {
       const rect = page.getBoundingClientRect();
@@ -3017,51 +3202,71 @@
     return page;
   }
 
+  function createWorkspaceSection(id, name) {
+    const section = initializeWorkspacePanel(document.createElement("section"), name);
+    section.id = id; section.hidden = true; section.open = false;
+    section.setAttribute("role", "region");
+    section.close = () => { section.open = false; section.hidden = true; section.removeAttribute("open"); };
+    return section;
+  }
+
+  function showWorkspaceSection(section) {
+    const mount = findCustomShortcutPageMount();
+    if (!mount) { showNativeShortcutNotice("右侧面板暂不可用，请先打开一个对话。"); return false; }
+    mount.surface.append(section);
+    closeOtherWorkspacePanels(section.getAttribute(WORKSPACE_PANEL_ATTRIBUTE));
+    section.open = true; section.hidden = false; section.setAttribute("open", "");
+    return true;
+  }
+
   function announceWorkspacePanel(panel) {
     window.postMessage({ type: WORKSPACE_PANEL_EVENT, panel }, window.location.origin);
   }
 
-  function closeOtherWorkspacePanels(panel) {
+  function closeOtherWorkspacePanels(panel, notify = true) {
     if (panel !== "claude") window.__aiyouClaudeInjection__?.close?.();
     if (panel !== "custom") closeCustomShortcutPanel(false);
     if (panel !== "asset") closeAssetConsolePanel({ notify: false, restoreFocus: false });
-    if (panel !== "skills") closeSkillsGrouping(false);
+    if (panel !== "skills") closeSkillsGrouping(false, panel === "skill-details");
     if (panel !== "efficiency") closeEfficiencyPanel(false);
     if (panel !== "taskboard") window.__codexTaskboardInjection__?.close?.(false);
-    announceWorkspacePanel(panel);
+    if (panel !== "skill-details") closeSkillDetails(false);
+    for (const id of [RESET_DIALOG_ID, SHORTCUT_SETTINGS_ID, "aiyou-conversation-settings"]) {
+      const section = document.getElementById(id);
+      if (section?.open && section.getAttribute(WORKSPACE_PANEL_ATTRIBUTE) !== panel) section.close();
+    }
+    if (notify) announceWorkspacePanel(panel);
   }
 
   function findCustomShortcutPageMount() {
-    const active = (node) => {
-      if (!node || node.closest('[data-app-shell-active-page="false"]')) return false;
-      for (let parent = node; parent; parent = parent.parentElement) {
-        const style = getComputedStyle(parent);
-        if (parent.hidden || style.display === "none" || style.visibility === "hidden") return false;
-      }
-      return true;
-    };
     const visible = (node) => {
-      if (!active(node)) return false;
-      const rect = node.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden";
+      if (!node || node.closest('[hidden],[aria-hidden="true"],[data-app-shell-active-page="false"]')) return false;
+      const r = node.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && getComputedStyle(node).visibility !== "hidden";
     };
-    let frameHost = Array.from(document.querySelectorAll(".app-shell-main-content-frame")).find(visible);
-    if (!frameHost?.closest?.("[data-app-shell-main-content-layout]")) {
-      const viewport = Array.from(document.querySelectorAll("[data-app-shell-main-content-layout]")).find(visible);
-      if (viewport) {
-        const viewportRect = viewport.getBoundingClientRect();
-        frameHost = Array.from(viewport.children).find((candidate) => {
-          const rect = candidate.getBoundingClientRect();
-          return rect.width >= viewportRect.width * 0.8
-            && rect.height >= viewportRect.height * 0.7;
-        }) || null;
-      }
+    const main = [...document.querySelectorAll('main,[role="main"]')].find(visible);
+    if (!main) {
+      // Native layout names can change. A direct body child containing the
+      // composer is a safe dock fallback; never reparent or rewrite its content.
+      const frameHost = [...document.body.children].find(node => visible(node)
+        && !node.matches('aside,nav,dialog,[data-codex-workspace-side-panel]')
+        && !node.querySelector('aside,[data-app-navigation-rail]')
+        && node.querySelector('[data-composer-input],[contenteditable="true"]'));
+      if (!frameHost) return null;
+      document.body.setAttribute("data-aiyou-workspace-dock", "true");
+      document.body.style.setProperty("--aiyou-workspace-panel-limit", `max(0px,calc((100vw - ${Math.max(0,frameHost.getBoundingClientRect().left)}px) * .6))`);
+      frameHost.setAttribute("data-aiyou-workspace-chat", "true");
+      return {surface:document.body,frameHost};
     }
-    const viewport = frameHost?.closest?.("[data-app-shell-main-content-layout]");
-    const surface = viewport?.parentElement
-      || Array.from(document.querySelectorAll('main,[role="main"]')).find(active);
-    if (!surface || surface.closest("aside")) return null;
-    return { surface };
+    if (main.closest("aside")) return null;
+    document.body.style.removeProperty("--aiyou-workspace-panel-limit");
+    const workspace = [...main.querySelectorAll('[class*="_WorkspaceContent_"], [data-app-shell-main-content-layout]')].find(visible);
+    const surface = workspace?.className?.includes("_WorkspaceContent_") ? workspace : workspace?.parentElement || main;
+    surface.setAttribute("data-aiyou-workspace-dock", "true");
+    const candidates = [...surface.children].filter(n => !n.hasAttribute(WORKSPACE_PANEL_ATTRIBUTE));
+    const frameHost = candidates.find(n => !["fixed","absolute"].includes(getComputedStyle(n).position)) || candidates[0];
+    frameHost?.setAttribute("data-aiyou-workspace-chat", "true");
+    return { surface, frameHost };
   }
 
   function createCustomShortcutPage() {
@@ -4216,6 +4421,8 @@
     skillDetailsEntry = null; skillDetailsReturnFocus = null;
     if (skillDetailsDialog?.open) skillDetailsDialog.close();
     if (restoreFocus && !destroyed) {
+      const shell = document.getElementById(SKILL_ORGANIZER_ID), mount = findCustomShortcutPageMount();
+      if (shell?.hidden && mount) { closeOtherWorkspacePanels("skills"); mount.surface.append(shell); shell.hidden = false; updateSkillsGroupingShortcutState(); }
       const row = [...document.querySelectorAll(`#${SKILL_ORGANIZER_ID} [data-skill-id]`)].find((node) => node.dataset.skillId === id);
       (origin?.isConnected ? origin : row || document.querySelector(`#${SKILL_ORGANIZER_ID} input`))?.focus();
     }
@@ -4226,7 +4433,7 @@
     skillDetailsEntry = entry; skillDetailsReturnFocus = origin;
     const generation = skillDetailsGeneration;
     if (!skillDetailsDialog) {
-      const dialog = document.createElement("dialog"); dialog.id = "aiyoucodex-skill-details";
+      const dialog = createWorkspaceSection("aiyoucodex-skill-details", "skill-details");
       dialog.setAttribute("aria-labelledby", "aiyoucodex-skill-details-title");
       dialog.innerHTML = '<header><div><h2 id="aiyoucodex-skill-details-title"></h2><p>使用方法与适用场景 · 本地说明</p></div><button type="button" data-skill-detail-close aria-label="关闭 Skill 介绍">×</button></header><div data-skill-detail-body></div><footer><p role="status" data-skill-detail-status></p><button type="button" data-skill-detail-use>添加到对话</button><button type="button" data-skill-detail-reveal>打开所在文件</button><button type="button" data-skill-detail-retry>重新读取</button></footer>';
       dialog.querySelector("[data-skill-detail-close]").onclick = () => closeSkillDetails();
@@ -4255,7 +4462,7 @@
         const result = await requestSkillOrganization("revealSkill", { skillId: selected.id });
         if (revision === skillDetailsGeneration) dialog.querySelector("[data-skill-detail-status]").textContent = result?.revealResult?.message || skillOrganizationMessage || "定位未确认，请刷新目录后重试。";
       };
-      document.body.appendChild(dialog); skillDetailsDialog = dialog;
+      skillDetailsDialog = dialog;
     }
     const dialog = skillDetailsDialog, body = dialog.querySelector("[data-skill-detail-body]");
     dialog.querySelector("h2").textContent = entry.title;
@@ -4266,7 +4473,7 @@
     dialog.querySelector("[data-skill-detail-reveal]").disabled = !available;
     const status = dialog.querySelector("[data-skill-detail-status]");
     status.textContent = available ? "正在读取此 Skill 的说明…" : "尚无准确的本地文件来源，请刷新目录后重试。";
-    dialog.showModal(); dialog.querySelector("[data-skill-detail-close]").focus();
+    showWorkspaceSection(dialog); dialog.querySelector("[data-skill-detail-close]").focus();
     if (!available) return;
     const requestId = `skill-details-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const timer = setTimeout(() => resolveSkillDetailsRequest({ requestId, ok: false, error: "读取超时，请重新读取。" }), 20_000);
@@ -4398,9 +4605,9 @@
     return initializeWorkspacePanel(shell, "skills");
   }
 
-  function closeSkillsGrouping(restoreFocus = true) {
+  function closeSkillsGrouping(restoreFocus = true, preserveDetails = false) {
     skillTraceGeneration += 1;
-    closeSkillDetails(false);
+    if (!preserveDetails) closeSkillDetails(false);
     const shell = document.getElementById(SKILL_ORGANIZER_ID);
     if (shell) shell.hidden = true;
     closeSkillContextMenu();
@@ -4960,64 +5167,12 @@
   }
 
   function constrainEfficiencyPanelToViewport() {
-    if (!efficiencyPanel || efficiencyPanel.hidden || !efficiencyPanel.isConnected) return;
-    if (!efficiencyMountSurface?.isConnected) {
-      efficiencyMountSurface = findEfficiencyPanelMount()?.surface || null;
-      watchEfficiencyPanelLayout();
-    }
-    const host = efficiencyMountSurface;
-    if (!host) return;
-    const viewport = window.visualViewport;
-    const view = { left: viewport?.offsetLeft || 0, top: viewport?.offsetTop || 0,
-      right: (viewport?.offsetLeft || 0) + (viewport?.width || window.innerWidth),
-      bottom: (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight) };
-    const hostRect = host.getBoundingClientRect();
-    const visible = { left: Math.max(view.left, hostRect.left), top: Math.max(view.top, hostRect.top),
-      right: Math.min(view.right, hostRect.right), bottom: Math.min(view.bottom, hostRect.bottom) };
-    // Nested native clips/transforms can differ from the nominal main content
-    // width. Use only their visible intersection; never rewrite native flex items.
-    for (let ancestor = host.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
-      const rect = ancestor.getBoundingClientRect();
-      const style = getComputedStyle(ancestor);
-      if (style.display === "contents") continue;
-      if (/(hidden|clip|auto|scroll)/u.test(style.overflowX)) {
-        visible.left = Math.max(visible.left, rect.left); visible.right = Math.min(visible.right, rect.right);
-      }
-      if (/(hidden|clip|auto|scroll)/u.test(style.overflowY)) {
-        visible.top = Math.max(visible.top, rect.top); visible.bottom = Math.min(visible.bottom, rect.bottom);
-      }
-    }
-    if (visible.right - visible.left < 120) { visible.left = view.left; visible.right = view.right; }
-    if (visible.bottom - visible.top < 64) { visible.top = view.top; visible.bottom = view.bottom; }
-    const rect = efficiencyPanel.getBoundingClientRect();
-    const needsOverlay = host === document.body || efficiencyPanel.dataset.efficiencyViewportOverlay === "true"
-      || rect.width < Math.min(320, visible.right - visible.left)
-      || rect.right > visible.right + .5 || rect.left < visible.left - .5
-      || rect.top < visible.top - .5 || rect.bottom > visible.bottom + .5;
-    if (!needsOverlay) return;
-    const desired = Number.parseFloat(efficiencyPanel.style.getPropertyValue("--codex-workspace-panel-width")) || 560;
-    const width = Math.max(1, Math.min(desired, 840, visible.right - visible.left));
-    const properties = { left: visible.right - width, top: visible.top, width, height: visible.bottom - visible.top };
-    for (const [key, value] of Object.entries(properties)) {
-      const name = `--aiyou-efficiency-${key}`;
-      const pixels = `${Math.round(value * 100) / 100}px`;
-      if (efficiencyPanel.style.getPropertyValue(name) !== pixels) efficiencyPanel.style.setProperty(name, pixels);
-    }
-    // Only this new panel may use a viewport portal when a native min-width
-    // would clip its close button. Other modules and conversation DOM stay intact.
-    if (efficiencyPanel.parentElement !== document.body) {
-      const focused = document.activeElement;
-      const restoreFocus = focused && efficiencyPanel.contains(focused);
-      const selection = restoreFocus && typeof focused.selectionStart === "number"
-        ? [focused.selectionStart, focused.selectionEnd] : null;
-      setWorkspacePanelHostLayer(efficiencyPanel, false);
-      document.body.appendChild(efficiencyPanel);
-      if (restoreFocus) {
-        focused.focus?.({ preventScroll: true });
-        if (selection) focused.setSelectionRange?.(...selection);
-      }
-    }
-    if (efficiencyPanel.dataset.efficiencyViewportOverlay !== "true") efficiencyPanel.dataset.efficiencyViewportOverlay = "true";
+    if (!efficiencyPanel || efficiencyPanel.hidden) return;
+    const mount = findCustomShortcutPageMount();
+    if (!mount) return;
+    efficiencyMountSurface = mount.surface;
+    if (efficiencyPanel.parentElement !== mount.surface) mount.surface.append(efficiencyPanel);
+    efficiencyPanel.removeAttribute("data-efficiency-viewport-overlay");
   }
 
   function watchEfficiencyPanelLayout() {
@@ -5314,9 +5469,8 @@
   }
 
   function findEfficiencyPanelMount() {
-    // Global preferences must remain accessible on home/new native layouts that
-    // do not expose a conversation mount. Only this panel uses the body fallback.
-    return findCustomShortcutPageMount() || (document.body ? { surface: document.body } : null);
+    // Global preferences share the same non-overlapping dock as all extensions.
+    return findCustomShortcutPageMount();
   }
 
   function openEfficiencyPanel(view = "settings") {
@@ -5328,12 +5482,12 @@
     }
     const mount = findEfficiencyPanelMount();
     if (!mount) return false;
-    closeOtherWorkspacePanels("efficiency");
     if (!efficiencyPanel) efficiencyPanel = createEfficiencyPanel();
     efficiencyView = nextView;
     efficiencyMountSurface = mount.surface;
     efficiencyPanel.removeAttribute("data-efficiency-viewport-overlay");
     if (efficiencyPanel.parentElement !== mount.surface) mount.surface.appendChild(efficiencyPanel);
+    closeOtherWorkspacePanels("efficiency");
     efficiencyReturnFocus = document.activeElement;
     efficiencyPanel.hidden = false;
     if (mount.surface !== document.body) setWorkspacePanelHostLayer(efficiencyPanel, true);
@@ -5341,6 +5495,7 @@
     constrainEfficiencyPanelToViewport();
     watchEfficiencyPanelLayout();
     ensureTaskContextButton(); maybeSummarizeTaskContext();
+    efficiencyPanel.querySelector("[data-efficiency-close]")?.focus({preventScroll:true});
     return true;
   }
 
@@ -5436,8 +5591,7 @@
   }
 
   function createShortcutSettingsDialog() {
-    const dialog = document.createElement("dialog");
-    dialog.id = SHORTCUT_SETTINGS_ID;
+    const dialog = createWorkspaceSection(SHORTCUT_SETTINGS_ID, "settings");
     dialog.innerHTML = `
       <div class="codex-shortcut-settings-shell">
         <header class="codex-shortcut-settings-header">
@@ -5546,7 +5700,7 @@
     updateViewState();
     if (!dialog.open) {
       resetMonitorDirty = false;
-      dialog.showModal();
+      showWorkspaceSection(dialog);
       renderResetMonitorSettings(true);
       requestResetMonitor("snapshot");
     }
@@ -5864,6 +6018,7 @@
         if (shortcutPanelIsOpen(item)) closeCustomShortcutPanel();
         else openCustomShortcutPanel(item);
       }
+      else if (item.name === "新对话") void handleCurrentFolderNewChat(event);
       else findNativeShortcutButton(item.name)?.click();
     };
     wrap.appendChild(button);
@@ -6650,13 +6805,14 @@
   function virtualFolderSourceItems(excludedIds = new Set(), sourceIndexOffset = 0) {
     let sourceIndex = sourceIndexOffset;
     const projects = new Map(searchCatalogByProject);
+    for (const [id] of localProjectCatalog) if (!projects.has(id)) projects.set(id, []);
     for (const [id] of remoteProjectCatalog) if (!projects.has(id)) projects.set(id, []);
     return Array.from(projects, ([id, sourceEntries]) => {
       if (excludedIds.has(id)) return null;
       const { entries: catalogEntries } = dedupeFolderCatalogEntries(sourceEntries
         .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId))));
       const remote = remoteProjectCatalog.get(id);
-      const label = remote?.label || sourceEntries.find((entry) => entry.projectName)?.projectName || id;
+      const label = remote?.label || localProjectCatalog.get(id)?.label || sourceEntries.find((entry) => entry.projectName)?.projectName || id;
       const lastUsed = catalogEntries.reduce((latest, entry) => {
         const time = Date.parse(entry.updatedAt || "");
         return Number.isFinite(time) && time > latest ? time : latest;
@@ -7013,6 +7169,8 @@
 
   function currentFolderWorkspaceRoot(item) {
     if (!item?.id || item.id === ALL_FOLDER_ID || item.remote) return "";
+    const known = localProjectCatalog.get(item.id)?.rootPaths;
+    if (known?.length === 1) return known[0];
     const entries = searchCatalogByProject.get(item.id) || [];
     const roots = new Set(entries.map((entry) => String(entry.projectRootPath || "").trim()).filter(Boolean));
     if (roots.size !== 1) return "";
@@ -7024,10 +7182,11 @@
     const buttons = document.querySelectorAll(`#${SECTION_TABS_ID} [data-codex-sidebar-current-folder-new-chat], #${FOLDER_SWITCHER_ID} [data-codex-sidebar-folder-new-chat]`);
     if (!buttons.length) return;
     const source = currentFolderChatSource(item);
-    const workspaceRoot = !source?.isConnected && currentFolderWorkspaceRoot(item);
+    const workspaceRoot = currentFolderWorkspaceRoot(item);
     const workspaceAvailable = Boolean(workspaceRoot && typeof window.electronBridge?.sendMessageFromView === "function");
     const globalAvailable = (!item || activeSectionTab !== "项目") && typeof window.electronBridge?.sendMessageFromView === "function";
-    const available = source?.isConnected || workspaceAvailable || globalAvailable;
+    const projectAvailable = Boolean(item && activeSectionTab === "项目" && (localProjectCatalog.has(item.id) || item.remote) && typeof window.electronBridge?.sendMessageFromView === "function");
+    const available = source?.isConnected || workspaceAvailable || globalAvailable || projectAvailable;
     for (const button of buttons) {
       // Keep both action rows stable; unavailable native actions stay visible
       // and disabled instead of removing the entire group.
@@ -7054,17 +7213,18 @@
     if (folderNewChatPending) return;
     const item = nativeFolderSources()?.items.find((candidate) => candidate.id === activeFolderId) || folderSources.get(activeFolderId);
     const source = currentFolderChatSource(item);
-    if (source?.isConnected && !source.disabled && source.getAttribute("aria-disabled") !== "true") {
+    const workspaceRoot = currentFolderWorkspaceRoot(item);
+    const knownProject = activeSectionTab === "项目" && item && (localProjectCatalog.has(item.id) || item.remote);
+    if (!workspaceRoot && !knownProject && source?.isConnected && !source.disabled && source.getAttribute("aria-disabled") !== "true") {
       source.click();
       return;
     }
-    const workspaceRoot = !source?.isConnected && currentFolderWorkspaceRoot(item);
     const bridge = window.electronBridge;
     if ((!item || activeSectionTab !== "项目") && typeof bridge?.sendMessageFromView === "function") {
       window.postMessage({ type: "navigate-to-route", path: "/", state: { focusComposerNonce: Date.now() } }, window.location.origin);
       return;
     }
-    if (!workspaceRoot || typeof bridge?.sendMessageFromView !== "function") {
+    if ((!workspaceRoot && !knownProject) || typeof bridge?.sendMessageFromView !== "function") {
       syncCurrentFolderNewChatButton(item);
       scheduleSync();
       return;
@@ -7074,8 +7234,13 @@
     try {
       // The existing Taskboard integration uses the same native bridge and
       // blank route when Codex no longer renders per-project chat buttons.
-      await bridge.sendMessageFromView({ type: "electron-set-active-workspace-root", root: workspaceRoot });
-      if (!destroyed) window.postMessage({ type: "navigate-to-route", path: "/", state: { focusComposerNonce: Date.now() } }, window.location.origin);
+      if (workspaceRoot) await bridge.sendMessageFromView({ type: "electron-set-active-workspace-root", root: workspaceRoot });
+      if (!destroyed) window.postMessage({ type: "navigate-to-route", path: "/", state: {
+        project: { type: item.remote ? "remote" : "local", projectId: item.nativeProjectId || item.id },
+        ...(item.remote ? {remoteExecutionHostId:item.hostId} : {}),
+        ...(workspaceRoot ? {existingWorkspace:{projectId:item.id,workspaceRoot}} : {}),
+        prefillComposerMode: "local", focusComposerNonce: Date.now(),
+      } }, window.location.origin);
     } catch {
       showNativeShortcutNotice("未能打开新对话；工作区切换失败，请使用 Codex 原生“新对话”入口。");
     } finally {
@@ -7921,6 +8086,10 @@
     if (notice.monitor?.enabled === false) label = "下次重置 · 监控暂停";
     else if (notice.monitor?.running === false) label = "下次重置 · 后台未连接";
     else if (stale && !label.includes("待复核")) label += " · 待更新";
+    const forecast = notice.probability;
+    label = "24h 重置概率";
+    value = forecast?.value != null ? `${forecast.stale ? "≈ " : ""}${forecast.value}%` : "待估计";
+    color = "var(--color-text-primary, CanvasText)";
     return { label, value, color, stale, score, alertLevel };
   }
 
@@ -8073,10 +8242,14 @@
       ? (alertLevel === "none" ? "未达到 70% 预警阈值" : view.value)
       : event?.status === "tentative" ? "有预告 · 时间待确认" : "暂无可信的下次重置预告";
     const heroSummary = event?.summary || (notice.checkStatus === "error" ? "本次采集未完成，保留历史记录；无法确认是否有新预告。" : "最近检查没有发现可信的下一次重置预告；已完成公告保留在历史信号中。");
-    set("[data-reset-hero-status]", heroStatus);
-    set("[data-reset-hero-value]", heroValue);
-    set("[data-reset-hero-summary]", heroSummary);
-    set("[data-reset-hero-delivery]", delivery.text);
+    const forecast = notice.probability;
+    const done = forecast?.latestCompleted || completed;
+    const today = done && new Date(done.publishedAt).toLocaleDateString("en-CA", {timeZone: "Asia/Shanghai"}) === new Date().toLocaleDateString("en-CA", {timeZone: "Asia/Shanghai"});
+    set("[data-reset-hero-status]", today ? `今日已重置 · ${resetLocalTime(done.publishedAt)}` : "未来 24 小时重置概率");
+    set("[data-reset-hero-value]", view.value);
+    set("[data-reset-hero-summary]", forecast?.reason || heroSummary);
+    set("[data-reset-hero-question]", "未来 24 小时会再次重置吗？");
+    set("[data-reset-hero-delivery]", today ? "作者已宣布处理完成；当前账号是否到账仍以实际额度为准。" : "根据 Tibo 帖子与回复估计；概率未经统计校准。");
     set("[data-reset-hero-confidence]", confidence?.value != null ? `证据置信度 ${confidence.value}% · ${alertLevel === "red" ? "红色预警" : alertLevel === "yellow" ? "黄色预警" : "低于 70% 不预警"}（非账号重置概率）` : "下一次预告：暂无可预警证据；历史信号不代表重置概率");
     const confidenceNode = dialog.querySelector("[data-reset-hero-confidence]");
     if (confidenceNode) confidenceNode.style.color = alertLevel === "red" ? "#c0392b" : alertLevel === "yellow" ? "#c17b12" : "#667085";
@@ -8127,6 +8300,8 @@
       `检查频率：${resetMonitorIntervalLabel(notice.monitor || notice)}；时间展示：${timeMode === "relative" ? "相对时间" : "本机绝对时间"}。RSS 转发可能有缓存延迟，非 X 实时推送。`,
       confidence ? `证据置信度：${confidence.value}%（${confidence.alertLevel === "red" ? "红色预警" : confidence.alertLevel === "yellow" ? "黄色预警" : "低于70%不预警"}）\n评分依据：${confidence.reasons.join("、")}` : "证据置信度：暂无足够记录",
       analysis.summary ? `历史通盘分析：${analysis.summary}` : "",
+      notice.probability?.method || "公开信号规则估计，未经统计校准",
+      "采集维度：Tibo 原帖与回复；转发与其他作者不计入。",
       notice.checkMessage || "等待自动检查。",
       event?.timeBasis ? `时间依据：${event.timeBasis}` : "",
       event?.evidence ? `当前公告原文摘要：${event.evidence}` : "",
@@ -8138,16 +8313,16 @@
     ].filter(Boolean).join("\n");
     set("[data-reset-details]", diagnostics);
     const link = dialog.querySelector("a");
-    const source = /^https:\/\/x\.com\/thsottiaux\/status\/\d{16,22}$/.test(event?.sourceUrl || "") ? event.sourceUrl : "https://x.com/thsottiaux";
+    const source = /^https:\/\/x\.com\/thsottiaux\/status\/\d{16,22}$/.test((event || done)?.sourceUrl || "") ? (event || done).sourceUrl : "https://x.com/thsottiaux";
     if (link.href !== source) link.href = source;
-    setTextIfChanged(link, event ? "查看原始公告 ↗" : "查看 @thsottiaux 主页 ↗");
-    set("[data-reset-footer] span", event?.targetAt && alertLevel !== "none" ? `公告时间：${range}` : event?.publishedAt ? `已记录：${resetLocalTime(event.publishedAt)}` : "达到 70% 且有明确时间后才展示倒计时");
+    setTextIfChanged(link, event || done ? "查看原始公告 ↗" : "查看 @thsottiaux 主页 ↗");
+    set("[data-reset-footer] span", event?.targetAt && alertLevel !== "none" ? `公告时间：${range}` : event?.publishedAt ? `已记录：${resetLocalTime(event.publishedAt)}` : "规则估计 · 未经统计校准");
   }
 
   function openResetNotice() {
     let dialog = document.getElementById(RESET_DIALOG_ID);
     if (!dialog) {
-      dialog = document.createElement("dialog"); dialog.id = RESET_DIALOG_ID;
+      dialog = createWorkspaceSection(RESET_DIALOG_ID, "reset");
       dialog.setAttribute("aria-labelledby", "aiyoucodex-reset-dialog-title");
       dialog.innerHTML = '<div data-reset-shell><header><div><p data-reset-eyebrow>CODEX RESET MONITOR</p><h2 id="aiyoucodex-reset-dialog-title">重置公告</h2></div><button type="button" data-reset-close aria-label="关闭重置公告">×</button></header><section data-reset-hero><div data-reset-hero-status></div><strong data-reset-hero-value></strong><div data-reset-hero-summary></div><div data-reset-hero-delivery></div><div data-reset-hero-confidence></div><div data-reset-scope></div><div data-reset-time></div></section><section data-reset-meta><div data-reset-meta-card="history"><small>历史信号</small><strong></strong></div><div data-reset-meta-card="completed"><small>最近完成</small><strong></strong></div><div data-reset-meta-card="checked"><small>最近检查</small><strong></strong></div><div data-reset-meta-card="schedule"><small>监控频率</small><strong></strong></div></section><section data-reset-feed><div data-reset-section-title>最近信号<span>按发布时间倒序</span></div><div data-reset-history-summary></div><div data-reset-feed-list></div></section><details><summary>查看采集状态与口径</summary><div data-reset-details></div></details><footer data-reset-footer><a target="_blank" rel="noopener noreferrer"></a><span></span></footer></div>';
       dialog.querySelector("[data-reset-hero]")?.insertAdjacentHTML("afterbegin", '<div data-reset-hero-question>接下来会有 Codex 重置吗？</div>');
@@ -8157,12 +8332,16 @@
       dialog.querySelectorAll("[data-reset-time-mode]").forEach((button) => {
         button.onclick = () => { dialog.dataset.resetTimeMode = button.dataset.resetTimeMode || "absolute"; renderResetNoticeDetails(dialog); };
       });
+      const archive = document.createElement("details");
+      archive.innerHTML = "<summary>历史信号与原文</summary>";
+      archive.append(dialog.querySelector("[data-reset-feed]"));
+      dialog.querySelector("[data-reset-shell]").insertBefore(archive, dialog.querySelector("[data-reset-footer]"));
       dialog.querySelector("[data-reset-close]").onclick = () => dialog.close();
       document.body.appendChild(dialog);
     }
     if (dialog.open) { dialog.close(); return; }
     renderResetNoticeDetails(dialog);
-    dialog.showModal();
+    showWorkspaceSection(dialog);
   }
 
   function ensureResetNotice(host, status) {
@@ -8588,6 +8767,7 @@
 
   function setSnapshot(snapshot = {}) {
     const setters = { previews: setPreviews, usage: setUsage, searchCatalog: setSearchCatalog,
+      localProjects: items => { localProjectCatalog = new Map((Array.isArray(items) ? items : []).map(p => [p.id,p])); scheduleSync(); },
       remoteProjects: setRemoteProjectCatalog,
       recentCatalog: setRecentCatalog, interruptedCatalog: setInterruptedCatalog,
       pinnedThreads: setPinnedThreads, activeProjectThreads: setActiveProjectThreads,
@@ -8637,6 +8817,10 @@
     if (event.key === "Escape" && skillManager) {
       event.preventDefault(); skillManager.hidden = true;
       document.querySelector(`#${SKILL_ORGANIZER_ID} [data-skill-manage]`)?.focus(); return;
+    }
+    if (event.key === "Escape") {
+      const section = [RESET_DIALOG_ID, SHORTCUT_SETTINGS_ID, "aiyou-conversation-settings"].map(id => document.getElementById(id)).find(panel => panel?.open);
+      if (section) { event.preventDefault(); section.close(); return; }
     }
     if (handleWorkspaceFolderKeydown(event)) return;
     if (event.key === "Escape" && efficiencyPanel && !efficiencyPanel.hidden) {
@@ -8713,10 +8897,7 @@
       // postMessage is asynchronous: a previous open may arrive after the user
       // has already closed Taskboard or switched to another shortcut.
       if (!document.documentElement.hasAttribute("data-codex-taskboard-open")) return;
-      closeEfficiencyPanel(false);
-      closeCustomShortcutPanel(false);
-      closeAssetConsolePanel({ notify: false, restoreFocus: false });
-      closeSkillsGrouping(false);
+      closeOtherWorkspacePanels("taskboard", false);
     }
   }
 
@@ -8792,6 +8973,9 @@
     document.addEventListener("keydown", handleExecutionCardClick, true);
     document.addEventListener("keydown", handleWorkspaceEnhancementKeydown, true);
     document.addEventListener("click", handleWorkspaceCommandClick, true);
+    document.addEventListener("contextmenu", handleConversationContextMenu, true);
+    document.addEventListener("pointerdown", closeConversationMenu, true);
+    document.addEventListener("keydown", closeConversationMenu, true);
     window.addEventListener("message", handleAssetConsoleMessage);
     window.addEventListener("message", handleWorkspacePanelMessage);
     window.addEventListener("message", handleNativeShortcutMessage);
@@ -8837,6 +9021,13 @@
     document.removeEventListener("keydown", handleExecutionCardClick, true);
     document.removeEventListener("keydown", handleWorkspaceEnhancementKeydown, true);
     document.removeEventListener("click", handleWorkspaceCommandClick, true);
+    document.removeEventListener("contextmenu", handleConversationContextMenu, true);
+    document.removeEventListener("pointerdown", closeConversationMenu, true);
+    document.removeEventListener("keydown", closeConversationMenu, true);
+    conversationMenu?.remove(); document.getElementById("aiyou-conversation-settings")?.remove();
+    document.getElementById("aiyou-workspace-dock-style")?.remove();
+    document.querySelectorAll("[data-aiyou-workspace-dock],[data-aiyou-workspace-chat]").forEach(n => { n.removeAttribute("data-aiyou-workspace-dock"); n.removeAttribute("data-aiyou-workspace-chat"); });
+    document.body.style.removeProperty("--aiyou-workspace-panel-limit");
     window.removeEventListener("message", handleAssetConsoleMessage);
     window.removeEventListener("message", handleWorkspacePanelMessage);
     window.removeEventListener("message", handleNativeShortcutMessage);
@@ -8947,6 +9138,7 @@
     setLayaSearchData,
     resolveResetMonitorRequest,
     resolveClaudeRequest: (response) => window.__aiyouClaudeInjection__?.resolve?.(response),
+    getWorkspacePanelMount: findCustomShortcutPageMount,
     prepareClaudePanel: () => { closeOtherWorkspacePanels("claude"); return findCustomShortcutPageMount(); },
     initializeClaudePanel: (page) => {
       if (!page.dataset.aiyouClaudeInitialized) { initializeWorkspacePanel(page, "claude"); page.dataset.aiyouClaudeInitialized = "true"; }

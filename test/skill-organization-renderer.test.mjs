@@ -140,9 +140,10 @@ test("Skills UI: all by default, real single clicks, persistent custom groups, e
   await waitForBrowserState(client, `document.querySelector('${dialog} [data-skill-detail-body]').textContent.includes('原文件未单列适用场景')`, "Missing sections are not fabricated");
   releaseDetail(); await delay(100);
   assert.equal(await client.evaluate(`document.querySelector('${dialog} h2').textContent`), other.title);
-  // Backdrop closes without touching the composer.
+  // The chat remains interactive beside the detail panel; no backdrop consumes clicks.
   for (const type of ["mousePressed", "mouseReleased"]) await client.send("Input.dispatchMouseEvent", { type, x: 1, y: 1, button: "left", clickCount: 1 });
-  assert.equal(await client.evaluate(`!document.querySelector('${dialog}').open`), true);
+  assert.equal(await client.evaluate(`document.querySelector('${dialog}').open`), true);
+  await click("[data-skill-detail-close]");
   await click(selectVisual);
   await client.evaluate("window.__routes=[];window.addEventListener('message',event=>{if(event.data?.type==='navigate-to-route')window.__routes.push(event.data.path)})");
   await click(row, "right"); await click("[data-skill-menu-trace]");
