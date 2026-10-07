@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "0.6.12";
+  const VERSION = "0.6.13";
   const SOURCE_HASH = window.__CODEX_TASKBOARD_SOURCE_HASH__;
   const SENTINEL_KEY = "__codexTaskboardInjection__";
   const DEFAULT_TASKBOARD_URL = "http://127.0.0.1:47823/?host=codex";
@@ -401,6 +401,8 @@
   }
 
   function findPageMount() {
+    const shared = window.__codexConversationPreviewInjection__?.getWorkspacePanelMount?.();
+    if (shared) return shared;
     const frameHost = findPageHost();
     const viewport = frameHost?.closest?.("[data-app-shell-main-content-layout]");
     const surface = viewport?.parentElement;
@@ -941,6 +943,7 @@
   function createPage() {
     const section = document.createElement("section");
     section.id = PAGE_ID;
+    section.setAttribute("data-codex-workspace-side-panel", "taskboard");
     section.hidden = true;
     section.setAttribute(OWNED_ATTRIBUTE, "true");
     section.setAttribute("role", "region");
@@ -949,7 +952,7 @@
     try { panelWidth = Number(localStorage.getItem(PANEL_WIDTH_KEY)) || panelWidth; } catch (_) {}
     panelWidth = Math.max(420, Math.min(panelWidth, Math.max(420, window.innerWidth - 360)));
     section.style.setProperty("--codex-taskboard-panel-width", `${panelWidth}px`);
-    section.addEventListener("pointerdown", (event) => {
+    if (!window.__codexConversationPreviewInjection__?.initializeWorkspacePanel) section.addEventListener("pointerdown", (event) => {
       const rect = section.getBoundingClientRect();
       if (event.button !== 0 || Math.abs(event.clientX - rect.left) > 8) return;
       event.preventDefault();
@@ -1012,7 +1015,7 @@
     noDragRight.setAttribute(OWNED_ATTRIBUTE, "true");
     noDragRight.setAttribute("aria-hidden", "true");
     section.appendChild(noDragRight);
-    return section;
+    return window.__codexConversationPreviewInjection__?.initializeWorkspacePanel?.(section,"taskboard") || section;
   }
 
   function showLoading() {

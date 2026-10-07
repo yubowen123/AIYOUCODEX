@@ -46,8 +46,8 @@ if [[ -z "${NODE_PATH}" ]]; then
 fi
 [[ -x "${NODE_PATH}" ]] || fail "Node.js 22+ was not found; install Node.js or the Codex desktop app first"
 
-NODE_MAJOR="$(${NODE_PATH} -p 'Number(process.versions.node.split(".")[0])')"
-NODE_MINOR="$(${NODE_PATH} -p 'Number(process.versions.node.split(".")[1])')"
+NODE_MAJOR="$("${NODE_PATH}" -p 'Number(process.versions.node.split(".")[0])')"
+NODE_MINOR="$("${NODE_PATH}" -p 'Number(process.versions.node.split(".")[1])')"
 if [[ "${NODE_MAJOR}" -lt 22 || ( "${NODE_MAJOR}" -eq 22 && "${NODE_MINOR}" -lt 5 ) ]]; then
   fail "Node.js 22.5 or newer is required"
 fi
@@ -67,6 +67,14 @@ fi
 [[ -f "${SOURCE_DIR}/vendor/codex-workspace-enhancer/asset-browser/server.js" ]] || fail "bundled Asset Console service is missing"
 [[ -f "${SOURCE_DIR}/vendor/codex-workspace-enhancer/asset-console/public/index.html" ]] || fail "bundled Asset Console web build is missing"
 
+# The offline archive contains a relocatable Node binary and locked dependencies.
+# Verify every shipped file before copying; no npm or source download is needed.
+PREBUNDLED="${CODEX_SIDEBAR_PREBUNDLED:-0}"
+if [[ "${PREBUNDLED}" == "1" ]]; then
+  [[ -f "${SOURCE_DIR}/SHA256SUMS" && -x "${SOURCE_DIR}/runtime/node/bin/node" ]] || fail "offline bundle is incomplete"
+  (cd "${SOURCE_DIR}" && /usr/bin/shasum -a 256 -c SHA256SUMS >/dev/null) || fail "offline bundle checksum failed"
+fi
+
 INSTALL_PARENT="$(dirname "${INSTALL_DIR}")"
 mkdir -p "${INSTALL_PARENT}"
 STAGING_DIR="${INSTALL_PARENT}/.codex-sidebar-enhancer-new-$$"
@@ -79,6 +87,10 @@ mkdir -p "${STAGING_DIR}"
   --exclude '/*.png' \
   "${SOURCE_DIR}/" "${STAGING_DIR}/"
 
+if [[ "${PREBUNDLED}" == "1" ]]; then
+  /usr/bin/rsync -a "${SOURCE_DIR}/node_modules/" "${STAGING_DIR}/node_modules/"
+fi
+
 # Preserve the installed theme catalog, packages and personal local media.
 # New public source does not replace the user's selected skin or theme settings.
 if [[ -d "${INSTALL_DIR}/themes" ]]; then
@@ -88,7 +100,7 @@ fi
 
 # Validate the staged package before replacing a usable installation. This is
 # package validation only; --strict performs the separate live renderer check.
-"${NODE_PATH}" "${STAGING_DIR}/scripts/setup-claude-dependencies.mjs" \
+CODEX_SIDEBAR_PREBUNDLED="${PREBUNDLED}" "${NODE_PATH}" "${STAGING_DIR}/scripts/setup-claude-dependencies.mjs" \
   || fail "Claude dependency installation failed; previous installation preserved"
 "${NODE_PATH}" "${STAGING_DIR}/scripts/doctor.mjs" --json --port "${DEBUG_PORT}" >/dev/null \
   || fail "staged package validation failed; previous installation preserved"
@@ -98,6 +110,10 @@ if [[ -e "${INSTALL_DIR}" ]]; then
 fi
 mv "${STAGING_DIR}" "${INSTALL_DIR}"
 STAGING_DIR=""
+
+if [[ "${PREBUNDLED}" == "1" ]]; then
+  NODE_PATH="${INSTALL_DIR}/runtime/node/bin/node"
+fi
 
 ACTIVATE_ARGS=(
   "${INSTALL_DIR}/scripts/install.mjs"
@@ -129,6 +145,13 @@ if ! "${NODE_PATH}" "${INSTALL_DIR}/scripts/setup-efficiency-hooks.mjs" --apply 
   printf 'Conversation output hooks could not be configured; review docs/CONVERSATION-FOLDERS.md.\n' >&2
 fi
 printf 'For new hook definitions, review and trust the AIYOUCODEX handlers in native Codex /hooks.\n'
+
+THEME_SKILL_SOURCE="${INSTALL_DIR}/skills/aiyoucodex-theme-builder"
+THEME_SKILL_DEST="${CODEX_HOME:-${HOME}/.codex}/skills/aiyoucodex-theme-builder"
+if [[ -f "${THEME_SKILL_SOURCE}/SKILL.md" && ! -e "${THEME_SKILL_DEST}" ]]; then
+  mkdir -p "$(dirname "${THEME_SKILL_DEST}")"
+  /usr/bin/rsync -a "${THEME_SKILL_SOURCE}/" "${THEME_SKILL_DEST}/"
+fi
 
 if [[ "${CODEX_SIDEBAR_SKIP_OPEN:-0}" != "1" ]]; then
   /usr/bin/open "${HOME}/Applications/AIYOUcodex.app"

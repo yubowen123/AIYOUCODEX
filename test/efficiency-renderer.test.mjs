@@ -9,6 +9,7 @@ import test from "node:test";
 import vm from "node:vm";
 import { connectFixtureBrowser, waitForBrowserState } from "./helpers/browser-state.mjs";
 import { presentTokenUsage } from "../lib/usage-data.mjs";
+import { buildThemePaletteCss, createThemeCustomization } from "../lib/theme-package.mjs";
 
 const source = await readFile(new URL("../inject/conversation-preview.user.js", import.meta.url), "utf8");
 const candidates = [process.env.AIYOUCODEX_TEST_BROWSER,
@@ -49,7 +50,7 @@ test("isolated browser: efficiency single click, scope safety, independent draft
 }, async (t) => {
   assert.ok(executable, "Required Chrome/Chromium browser must be present");
   const profile = await mkdtemp(path.join(tmpdir(), "aiyoucodex-efficiency-ui-"));
-  const server = createServer((_request, response) => { response.setHeader("content-type", "text/html;charset=utf-8"); response.end("<title>Efficiency fixture</title>"); });
+  const server = createServer((_request, response) => { response.setHeader("content-type", "text/html;charset=utf-8"); if (_request.url === "/assets/app-shared-deadbeef.js") { response.setHeader("content-type","text/javascript"); response.end(`export const host={projects:{},threadProjectAssignments:{async setMembership(payload){window.__membershipCalls.push(payload);window.__codexConversationPreviewInjection__.setSearchCatalog([{threadId:payload.threadId,title:"Same title",projectId:payload.assignment.projectId,projectName:"Project B"}]);}}};`); } else response.end("<title>Efficiency fixture</title>"); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   const browser = spawn(executable, ["--headless=new", "--no-sandbox", "--no-first-run", "--no-default-browser-check",
@@ -80,8 +81,8 @@ test("isolated browser: efficiency single click, scope safety, independent draft
     await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...rect, button: "left", clickCount: 1 });
   }
   await click("[data-aiyou-efficiency-open]");
-  assert.equal(await client.evaluate(`${api}.getEfficiencyState().open`), true, `One genuine click opens the panel: ${JSON.stringify(await client.evaluate("({errors:window.__fixtureErrors,dialog:document.querySelector('dialog').open,panels:[...document.querySelectorAll('[data-codex-workspace-side-panel]')].map(e=>[e.id,e.hidden])})"))}`);
-  assert.equal(await client.evaluate("document.querySelector('dialog').open"), false);
+  assert.equal(await client.evaluate(`${api}.getEfficiencyState().open`), true, `One genuine click opens the panel: ${JSON.stringify(await client.evaluate("({errors:window.__fixtureErrors,dialog:document.querySelector('[data-codex-workspace-side-panel=settings]').open,panels:[...document.querySelectorAll('[data-codex-workspace-side-panel]')].map(e=>[e.id,e.hidden])})"))}`);
+  assert.equal(await client.evaluate("document.querySelector('[data-codex-workspace-side-panel=settings]').open"), false);
   assert.match(await client.evaluate("document.querySelector('[data-efficiency-effective]').textContent"), /不可用/);
   assert.equal(await client.evaluate("document.querySelector('[data-efficiency-request=saveScope]').disabled"), true);
   assert.equal(await client.evaluate("document.getElementById('composer').textContent"), "保留的聊天草稿");
@@ -192,6 +193,41 @@ test("isolated browser: efficiency single click, scope safety, independent draft
   assert.equal(await client.evaluate(`${api}.getEfficiencyState().open`), false);
   await client.evaluate(`${api}.openEfficiencyPanel();${api}.openSkillsGrouping()`);
   assert.equal(await client.evaluate(`${api}.getEfficiencyState().open`), false, "Workspace panels remain mutually exclusive");
+  await client.evaluate(`(()=>{const preload=document.createElement('link');preload.rel='modulepreload';preload.href=location.origin+'/assets/app-shared-deadbeef.js';document.head.append(preload);window.__membershipCalls=[];
+    const row=document.createElement('button');row.id='context-target';row.textContent='Same title';row.setAttribute('data-app-action-sidebar-thread-row','');row.setAttribute('data-app-action-sidebar-thread-id','local:22222222-2222-4222-8222-222222222222');row.setAttribute('data-app-action-sidebar-thread-title','Same title');document.querySelector('#chat').append(row);
+    ${api}.setSnapshot({localProjects:[{id:'pa',label:'Project A',rootPaths:['/a']},{id:'pb',label:'Project B',rootPaths:['/b']}],searchCatalog:[{threadId:'11111111-1111-4111-8111-111111111111',title:'Same title',projectId:'pa',projectName:'Project A'},{threadId:'22222222-2222-4222-8222-222222222222',title:'Same title',projectId:'pa',projectName:'Project A'}]});})()`);
+  await client.evaluate(`document.getElementById('context-target').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:400,clientY:150}))`);
+  await click('#aiyou-conversation-menu button');
+  assert.equal(await client.evaluate("document.getElementById('aiyou-conversation-settings').open"),true,"Right click opens a nonmodal conversation settings panel");
+  assert.equal(await client.evaluate("document.querySelector('[data-conversation-project]').options[0].textContent"),"Project B");
+  // Apply the shipped palettes plus live customization CSS, then switch back to native defaults.
+  // No theme may change the target chat, selected destination, draft or button hit areas.
+  for (const theme of ["mecha-control", "pink-candy", null]) {
+    let css = "";
+    if (theme) {
+      const root = new URL(`../themes/${theme}/`, import.meta.url);
+      const palette = JSON.parse(await readFile(new URL("colors.json", root), "utf8"));
+      const preset = JSON.parse(await readFile(new URL("controls.json", root), "utf8")).defaults;
+      const role = k => palette.primitives[palette.semantic[k]];
+      const controls = createThemeCustomization({ id: theme, mode: palette.mode, primary: role("text"), secondary: role("muted"), base: role("bg"), surface: role("elevated"), alphaDefaults: preset.alpha, colorDefaults: preset.colors });
+      css = (await Promise.all(["tokens.css", "theme.css", "customization.css"].map(file => readFile(new URL(file, root), "utf8")))).join("\n") + "\n" + buildThemePaletteCss(palette, theme) + "\n" + controls.css(preset);
+    }
+    await client.evaluate(`(()=>{document.getElementById('fixture-theme')?.remove();const s=document.createElement('style');s.id='fixture-theme';s.textContent=${JSON.stringify(css)};document.head.append(s);${theme ? `document.documentElement.dataset.aiyouTheme=${JSON.stringify(theme)}` : "delete document.documentElement.dataset.aiyouTheme"};})()`);
+    const result = await client.evaluate(`(()=>{const p=document.getElementById('aiyou-conversation-settings');const r=p.getBoundingClientRect(),chat=document.getElementById('chat').getBoundingClientRect();const selectors=['[data-conversation-close]','[data-conversation-output]','[data-conversation-context]','[data-conversation-project]','[data-conversation-move]'];return{background:getComputedStyle(p).backgroundColor,ink:getComputedStyle(p).color,title:p.querySelector('[data-conversation-title]').textContent,destination:p.querySelector('select').value,draft:document.getElementById('composer').textContent,overlap:chat.right>r.left+1,controls:selectors.map(selector=>{const e=p.querySelector(selector),b=e.getBoundingClientRect();return{selector,width:b.width,height:b.height,fits:b.left>=r.left&&b.right<=r.right+1,hit:e.contains(document.elementFromPoint(b.left+b.width/2,b.top+b.height/2))}})}})()`);
+    assert.equal(result.title, "Same title");
+    assert.equal(result.destination, "pb");
+    assert.equal(result.draft, "保留的聊天草稿");
+    assert.equal(result.overlap, false, `${theme || "default"}: settings do not cover the chat`);
+    assert.ok(result.controls.every(c => c.fits && c.hit && c.height >= 34), `${theme || "default"}: all controls fit and receive real input: ${JSON.stringify(result.controls)}`);
+    if (theme) {
+      assert.match(result.background, /(?:rgba|color\(srgb)/, "Theme panel retains a translucent surface");
+      assert.notEqual(result.background, "rgb(17, 17, 17)", "Theme must not fall back to the native opaque black panel");
+      assert.notEqual(result.ink, "rgb(0, 0, 0)");
+    }
+  }
+  await click('[data-conversation-move]');
+  await waitForBrowserState(client,"document.querySelector('[data-conversation-status]').textContent.includes('已移动到')","Move is reported only after catalog persistence readback");
+  assert.deepEqual(await client.evaluate("window.__membershipCalls"),[{threadId:'22222222-2222-4222-8222-222222222222',assignment:{projectKind:'local',projectId:'pb'},projectless:false}],"Native membership receives the clicked exact ID, never the active or same-title chat");
   await client.evaluate(`${api}.openEfficiencyPanel();${api}.destroy()`);
   assert.equal(await client.evaluate("document.getElementById('aiyoucodex-efficiency-panel')===null"), true);
   await client.evaluate(source);

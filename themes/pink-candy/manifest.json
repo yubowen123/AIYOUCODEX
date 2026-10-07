@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "pink-candy",
   "name": "粉嫩软糖",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "renderer": "aiyoucodex-theme-v1",
   "palette": "colors.json",
   "design": "design.json",

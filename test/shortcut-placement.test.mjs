@@ -116,7 +116,7 @@ test("shortcut grid stays above conversations with optional quick chat, rerender
   await client.evaluate(`document.querySelector('[data-codex-sidebar-shortcut-name="项目管理"]').click()`);
   assert.equal(await client.evaluate("document.documentElement.hasAttribute('data-codex-taskboard-open')"), false);
   await client.evaluate(`document.querySelector('[data-codex-sidebar-shortcut-settings]').scrollIntoView();document.querySelector('[data-codex-sidebar-shortcut-settings]').click()`);
-  assert.equal(await client.evaluate("document.querySelector('#codex-conversation-view-toggle').closest('dialog').open"), true);
+  assert.equal(await client.evaluate("document.querySelector('#codex-conversation-view-toggle').closest('[data-codex-workspace-side-panel]').open"), true);
   const view = await client.evaluate("document.documentElement.getAttribute('data-codex-conversation-view')");
   await client.evaluate("document.getElementById('codex-conversation-view-toggle').click()");
   assert.notEqual(await client.evaluate("document.documentElement.getAttribute('data-codex-conversation-view')"), view);
@@ -162,7 +162,7 @@ test("shortcut grid stays above conversations with optional quick chat, rerender
   await client.evaluate(`${grid}.querySelector('[data-codex-sidebar-shortcut-name="新对话"]').click()`);
   assert.equal(await client.evaluate('window.chatClicks'), 2);
   await client.evaluate(`${grid}.querySelector('[data-codex-sidebar-shortcut-settings]').scrollIntoView();${grid}.querySelector('[data-codex-sidebar-shortcut-settings]').click()`);
-  assert.equal(await client.evaluate("document.querySelector('#codex-conversation-view-toggle').closest('dialog').open"), true);
+  assert.equal(await client.evaluate("document.querySelector('#codex-conversation-view-toggle').closest('[data-codex-workspace-side-panel]').open"), true);
   await client.evaluate("document.querySelector('[data-codex-shortcut-settings-close]').click()");
   await client.evaluate(`${grid}.querySelector('[data-codex-sidebar-shortcut-name="模型竞技场"]').remove()`);
   await waitForBrowserState(client, `!!${grid}?.querySelector('[data-codex-sidebar-shortcut-name="模型竞技场"]')`, 'Partial rail removal self-heals');

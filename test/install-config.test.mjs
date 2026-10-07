@@ -8,6 +8,15 @@ import { createInstallPlan } from "../lib/install-config.mjs";
 
 const macOnly = { skip: process.platform !== "darwin" };
 
+async function activationFixture(home) {
+  const installDir = path.join(home, "runtime");
+  for (const file of ["scripts/runtime.mjs", "scripts/reset-monitor-worker.mjs", "vendor/codex-taskboard/dist/web/index.html"]) {
+    const target = path.join(installDir, file); await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, "fixture");
+  }
+  return installDir;
+}
+
 test("launcher passes the existing profile as one literal shell argument", macOnly, () => {
   const testHome = "/tmp/AIYOU profile 'quotes' $AIYOU_TEST_VALUE";
   const { launcherScript } = createInstallPlan({ home: testHome });
@@ -57,6 +66,7 @@ test("installer dry-run renders portable user paths and XML-safe launch configur
 test("installer activation writes a loadable user LaunchAgent without invoking launchctl in test mode", macOnly, async () => {
   const testHome = await mkdtemp(path.join(os.tmpdir(), "codex-sidebar-activate-"));
   try {
+    const installDir = await activationFixture(testHome);
     const launchAgentsDir = path.join(testHome, "Library", "LaunchAgents");
     const legacyPlistPath = path.join(launchAgentsDir, "com.yubowen.codex-conversation-preview.plist");
     const legacyLauncherPath = path.join(testHome, "Applications", "Codex Sidebar Enhancer.app");
@@ -69,7 +79,7 @@ test("installer activation writes a loadable user LaunchAgent without invoking l
       "--activate",
       "--skip-launchctl",
       "--home", testHome,
-      "--install-dir", path.resolve("."),
+      "--install-dir", installDir,
       "--node-path", process.execPath,
     ], { cwd: path.resolve("."), encoding: "utf8" });
 
@@ -114,12 +124,13 @@ test("installer explicitly kickstarts the registered LaunchAgent after bootstrap
   const fakeLaunchctl = path.join(testHome, "launchctl");
   const launchctlLog = path.join(testHome, "launchctl.log");
   try {
+    const installDir = await activationFixture(testHome);
     await writeFile(fakeLaunchctl, "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$CODEX_TEST_LAUNCHCTL_LOG\"\n", { mode: 0o755 });
     const result = spawnSync(process.execPath, [
       "scripts/install.mjs",
       "--activate",
       "--home", testHome,
-      "--install-dir", path.resolve("."),
+      "--install-dir", installDir,
       "--node-path", process.execPath,
       "--launchctl-path", fakeLaunchctl,
     ], {

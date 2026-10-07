@@ -1,4 +1,24 @@
-# 主题、动效与自动恢复
+# 主题独立下载与配置
+
+| 主题 | 标记 / 署名 | 独立下载 |
+|---|---|---|
+| 机甲控制舱 v1.4.3 | 内置主题 | [下载 ZIP](https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-mecha-control-v1.4.3.zip) |
+| 粉嫩软糖 v1.0.4 | 内置主题 | [下载 ZIP](https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-pink-candy-v1.0.4.zip) |
+| 海边度假·浠浠 v1.2.0 | ⭐ 社区共创 · 特别鸣谢浠浠（xixi），主题设计 | [下载 ZIP](https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-beach-vacation-xixi-v1.2.0.zip) |
+
+更新 AIYOUcodex v1.5.1 后可安装任意独立主题。主题包包含源文件与必要素材，不包含账号、对话或个人媒体。主题名下方链接直接下载 GitHub Release 附件；源文件各自位于 `themes/` 的独立目录。
+
+## 对话卡片颜色与流光
+
+在「主题与动效」找到「对话卡片颜色与流光」。动态模式分别设置执行中、已完成、执行中断、待执行 / 空闲；静态模式统一所有卡片。每组支持背景色、边框色、边框粗细（0–8px）、流光颜色与开关。背景沿用卡片与整体底色透明度；边框 / 流光沿用边框透明度。文字独立。
+
+预览可取消恢复；保存后持久化。已读 / 未读完成共用完成颜色，错误 / 中断共用中断颜色；不改变原有执行状态。减少动态或关闭播放动效时停止流光动画。新增控件通过隔离浏览器验证，原生人工验收仍待完成。
+
+## ⭐ 特别鸣谢
+
+浠浠（xixi）：海边度假主题设计 / 社区贡献者。主题设置、下载页和 manifest 保留署名与特别标记。素材许可说明见 [ASSET-NOTICE](../themes/beach-vacation/ASSET-NOTICE.md)。
+
+## 既有主题、动效与自动恢复
 
 AIYOUcodex v1.5.0 将主题作为独立可安装组件。机甲控制舱 v1.4.2 与粉嫩软糖 v1.0.2 可以同时存在，通过「主题与动效」选择，设置分别保存；安装新皮肤不删除旧皮肤。系统默认选项移除皮肤并恢复原生界面。
 

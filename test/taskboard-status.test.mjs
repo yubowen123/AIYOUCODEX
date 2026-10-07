@@ -6,6 +6,25 @@ import test from "node:test";
 
 import { readActiveTaskThreads, trustedTaskboardRuntimeBaseUrl } from "../lib/taskboard-status.mjs";
 
+test('recovery serializes shared repository lookups and rejects malformed successful responses', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'aiyou-status-'));
+  const runtimeFile = path.join(directory, 'runtime.json');
+  await writeFile(runtimeFile, JSON.stringify({url: 'http://127.0.0.1:47823/private-token-1234'}));
+  try {
+    let checking = false;
+    const status = await readActiveTaskThreads({runtimeFile,
+      fetchImpl: async () => new Response(JSON.stringify({tasks: ['a','b'].map(threadId => ({threadId,status:'in_progress'}))})),
+      isThreadIdle: async () => {
+        assert.equal(checking, false); checking = true;
+        await new Promise(resolve => setImmediate(resolve)); checking = false; return false;
+      }});
+    assert.deepEqual(status.activeThreadIds, ['a','b']);
+    assert.deepEqual(await readActiveTaskThreads({runtimeFile,
+      fetchImpl: async () => new Response(JSON.stringify({error: 'not a task snapshot'}))}),
+      {available: false, activeThreadIds: []});
+  } finally { await rm(directory, {recursive: true,force: true}); }
+});
+
 test("Taskboard status uses the authenticated runtime URL and returns active thread ids", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codex-sidebar-taskboard-runtime-"));
   const runtimeFile = path.join(directory, "runtime.json");

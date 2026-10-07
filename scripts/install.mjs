@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { activateLaunchAgent } from "../lib/launch-agent.mjs";
 import { installResetMonitorService } from "../lib/reset-monitor-service.mjs";
+import { installBundledThemes } from "../lib/bundled-theme-install.mjs";
 
 function parseArgs(argv) {
   const options = { dryRun: false, activate: false, skipLaunchctl: false, launchctlPath: "launchctl" };
@@ -39,6 +40,7 @@ if (options.dryRun) {
   await writeFile(plan.loginPlistPath, plan.loginPlist, { mode: 0o644 });
   await writeFile(path.join(plan.launcherContentsDir, "Info.plist"), plan.launcherInfoPlist, { mode: 0o644 });
   await writeFile(plan.launcherExecutablePath, plan.launcherScript, { mode: 0o755 });
+  const themes = await installBundledThemes({ home: plan.home, installDir: plan.installDir, nodePath: plan.nodePath });
   const resetMonitor = await installResetMonitorService({ ...options, home: plan.home, installDir: plan.installDir, nodePath: plan.nodePath });
   const legacyPlistPath = path.join(plan.launchAgentsDir, "com.yubowen.codex-conversation-preview.plist");
   if (!options.skipLaunchctl) {
@@ -75,6 +77,7 @@ if (options.dryRun) {
   }
   process.stdout.write(`${JSON.stringify({
     activated: true,
+    themes,
     resetMonitor,
     launchctlSkipped: options.skipLaunchctl,
     label: plan.label,

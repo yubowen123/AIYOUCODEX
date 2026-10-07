@@ -1,4 +1,5 @@
-import { access, realpath } from "node:fs/promises";
+import { access, realpath, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +24,19 @@ export async function findNpmCli({ nodePath = process.execPath, env = process.en
 }
 
 export async function installClaudeDependencies({ root, nodePath = process.execPath, env = process.env, run = spawnSync } = {}) {
+  if (env.CODEX_SIDEBAR_PREBUNDLED === "1") {
+    const bundled = JSON.parse(await readFile(path.join(root, "bundled-dependencies.json"), "utf8"));
+    const lockHash = createHash("sha256").update(await readFile(path.join(root, "package-lock.json"))).digest("hex");
+    if (bundled.platform !== process.platform || bundled.arch !== process.arch || bundled.lockSha256 !== lockHash) {
+      throw new Error("Offline dependency bundle does not match this platform or package lock.");
+    }
+    for (const name of ["@anthropic-ai/claude-agent-sdk", "smol-toml"]) {
+      const installed = JSON.parse(await readFile(path.join(root, "node_modules", name, "package.json"), "utf8"));
+      if (installed.version !== bundled.versions[name]) throw new Error("Offline dependency version mismatch: " + name);
+    }
+    await access(path.join(root, "node_modules", `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`, process.platform === "win32" ? "claude.exe" : "claude"));
+    return true;
+  }
   const npm = await findNpmCli({ nodePath, env });
   if (!npm) return false; // Core enhancement remains usable with the host's Node-only runtime.
   const result = run(nodePath, [npm, "ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
