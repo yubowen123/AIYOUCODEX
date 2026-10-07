@@ -65,8 +65,17 @@ html[data-aiyou-theme="pink-candy"] {
 html[data-aiyou-theme="pink-candy"] #aiyoucodex-agent-launchers button {
   background:linear-gradient(160deg,var(--aiyou-fill-control),color-mix(in srgb,var(--aiyou-user-bg) calc(var(--aiyou-alpha-control) * 60%),transparent))!important;
 }
-html[data-aiyou-theme="pink-candy"] [data-aiyou-theme-host] :is([data-markdown-text-style="assistant-message"],#aiyoucodex-claude-panel article:not([data-welcome])) {
-  box-shadow:none!important;
+/* Both native message roles share the sent bubble's geometry. Keep the native
+   reading column and turn spacing; only the bubble owns padding and surface. */
+html[data-aiyou-theme="pink-candy"] [data-aiyou-theme-host] :is([data-markdown-text-style="assistant-message"],[data-user-message-bubble]) {
+  box-sizing:border-box;
+  min-width:0;
+  padding:10px var(--thread-content-margin,16px)!important;
+  border-radius:var(--aiyou-radius-message)!important;
+  box-shadow:var(--aiyou-custom-shadow)!important;
+}
+html[data-aiyou-theme="pink-candy"] #aiyoucodex-claude-panel article:not([data-welcome]) {
+  box-shadow:var(--aiyou-custom-shadow)!important;
 }
 html[data-aiyou-theme="pink-candy"] :is([data-composer-body],#aiyoucodex-claude-panel [data-claude-compose]) {
   background-image:linear-gradient(165deg,transparent,color-mix(in srgb,var(--aiyou-user-bg) calc(var(--aiyou-alpha-composer) * 60%),transparent))!important;

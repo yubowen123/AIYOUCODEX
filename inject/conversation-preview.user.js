@@ -2,7 +2,7 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
-  const RUNTIME_VERSION = "2026-10-07.3";
+  const RUNTIME_VERSION = "2026-10-07.4";
   const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
@@ -2539,6 +2539,12 @@
     const threadId = normalizedThreadId(row.getAttribute("data-app-action-sidebar-thread-id"));
     const execution = cardExecution(threadId, preview);
     row.setAttribute("data-codex-execution-state", execution.state);
+    // Appearance metadata only: preserve the existing execution/read contract.
+    const nativeExecution = threadExecutionStates.get(threadId);
+    const appearanceState = execution.state === "running" ? "running"
+      : execution.state === "error" || nativeExecution?.turnStatus === "interrupted" ? "interrupted"
+      : ["read", "completed-unread"].includes(execution.state) ? "completed" : "pending";
+    row.setAttribute("data-codex-card-appearance-state", appearanceState);
     if (execution.state === "running") row.setAttribute("data-codex-project-running", "true");
     else row.removeAttribute("data-codex-project-running");
     if (preview && !preview.catalogOnly && preview.updatedAt) {
@@ -2995,8 +3001,20 @@
     style.textContent = `
       [data-aiyou-workspace-dock]:has(> [data-codex-workspace-side-panel]:not([hidden])) { display:flex!important; flex-direction:row!important; min-width:0!important; max-width:100%!important; max-height:100%!important; }
       [data-aiyou-workspace-dock]:has(> [data-codex-workspace-side-panel]:not([hidden])) > [data-aiyou-workspace-chat] { flex:1 1 0!important; width:0!important; min-width:0!important; overflow:hidden; }
-      [data-aiyou-workspace-dock] > [data-codex-workspace-side-panel]:not([hidden]) { position:relative!important; inset:auto!important; flex:0 0 min(var(--codex-workspace-panel-width,560px),var(--aiyou-workspace-panel-limit,60%))!important; width:min(var(--codex-workspace-panel-width,560px),var(--aiyou-workspace-panel-limit,60%))!important; min-width:0!important; max-width:var(--aiyou-workspace-panel-limit,60%)!important; height:100%!important; max-height:100%!important; margin:0!important; border-radius:0!important; overflow:auto; box-sizing:border-box; border:0; border-left:1px solid var(--color-border-default,#8995a633); background:var(--color-background-surface,Canvas); color:var(--color-text-primary,CanvasText); box-shadow:none!important; }
+      [data-aiyou-workspace-dock] > [data-codex-workspace-side-panel]:not([hidden]) { position:relative!important; inset:auto!important; flex:0 0 min(var(--codex-workspace-panel-width,560px),var(--aiyou-workspace-panel-limit,calc(100% - min(240px,35%))))!important; width:min(var(--codex-workspace-panel-width,560px),var(--aiyou-workspace-panel-limit,calc(100% - min(240px,35%))))!important; min-width:0!important; max-width:var(--aiyou-workspace-panel-limit,calc(100% - min(240px,35%)))!important; height:100%!important; max-height:100%!important; margin:0!important; border-radius:0!important; overflow:auto; box-sizing:border-box; border:0; border-left:1px solid var(--color-border-default,#8995a633); background:var(--color-background-surface,Canvas); color:var(--color-text-primary,CanvasText); box-shadow:none!important; }
+      [data-aiyou-workspace-dock] > #codex-taskboard-page:not([hidden]) { margin-top:var(--codex-taskboard-header-inset,0px)!important;height:calc(100% - var(--codex-taskboard-header-inset,0px))!important;max-height:calc(100% - var(--codex-taskboard-header-inset,0px))!important; }
       [data-codex-workspace-side-panel][hidden] { display:none!important; }
+      [data-aiyou-workspace-dock]:has(> [data-codex-workspace-side-panel][data-aiyou-panel-expanded="true"]:not([hidden])) > [data-aiyou-workspace-chat] { flex:0 0 0!important;width:0!important;visibility:hidden!important; }
+      [data-aiyou-workspace-dock] > [data-codex-workspace-side-panel][data-aiyou-panel-expanded="true"]:not([hidden]) { flex:0 0 100%!important;width:100%!important;max-width:100%!important;border-left:0!important; }
+      [data-codex-workspace-side-panel] [data-aiyou-panel-expand] { display:inline-grid!important;place-items:center;flex:0 0 34px!important;width:34px!important;min-width:34px!important;height:34px!important;min-height:34px!important;margin:0!important;padding:0!important;border:1px solid var(--aiyou-card-border,var(--color-border-default,#8995a633))!important;border-radius:var(--aiyou-radius-button,8px)!important;background:var(--aiyou-fill-control,var(--color-background-control-opaque,Canvas))!important;color:var(--aiyou-text,var(--color-text-primary,CanvasText))!important;cursor:pointer;-webkit-app-region:no-drag; }
+      [data-aiyou-panel-header-actions] { display:flex;align-items:center;gap:8px;margin-left:auto;flex:none; }
+      [data-aiyou-panel-expand] svg { width:18px!important;height:18px!important;fill:none;stroke:currentColor;stroke-width:1.7;pointer-events:none; }
+      [data-codex-workspace-side-panel] [data-aiyou-panel-resize] { position:absolute!important;inset:0 auto 0 0!important;width:8px!important;z-index:50!important;cursor:ew-resize;touch-action:none;-webkit-app-region:no-drag; }
+      [data-aiyou-panel-resize]:hover,[data-aiyou-panel-resize]:focus-visible { background:color-mix(in srgb,var(--aiyou-brand,var(--color-text-info,#328bfa)) 25%,transparent);outline:none; }
+      [data-codex-workspace-side-panel][data-aiyou-panel-expanded="true"] [data-aiyou-panel-resize] { display:none!important; }
+      html[data-aiyou-panel-resizing] { cursor:ew-resize!important;user-select:none!important; }
+      html[data-aiyou-panel-resizing] iframe { pointer-events:none!important; }
+
       #${RESET_DIALOG_ID} [data-reset-meta], #${RESET_DIALOG_ID} [data-reset-history], #${RESET_DIALOG_ID} [data-reset-scope], #${RESET_DIALOG_ID} [data-reset-time], #${RESET_DIALOG_ID} [data-reset-hero-confidence] { display:none; }
       #aiyoucodex-skill-details:not([hidden]) { display:grid; grid-template-rows:auto minmax(0,1fr) auto; }
       #aiyou-conversation-settings[data-codex-workspace-side-panel] {
@@ -3173,37 +3191,89 @@
     if (!conversationMenu?.contains(event.target)) { conversationMenu?.remove(); conversationMenu = null; }
   }
 
+  function workspacePanelBounds(page) {
+    const host = page.parentElement?.getBoundingClientRect();
+    const available = Math.max(0, Math.min(host?.width || innerWidth, innerWidth - Math.max(0,host?.left || 0)));
+    const max = Math.max(0,available - Math.min(240,available * .35));
+    return {min:Math.min(320,max),max};
+  }
+
+  function ensureWorkspacePanelControls(page) {
+    const header = page.querySelector('header,.codex-skill-organizer-head,[data-claude-head]');
+    if (!header || header.querySelector('[data-aiyou-panel-expand]')) return;
+    const close = header.querySelector('button[aria-label^="关闭"],button[aria-label^="Close"]');
+    const expand = document.createElement("button"); expand.type = "button";
+    expand.dataset.aiyouPanelExpand = "true";
+    const update = () => {
+      const expanded = page.dataset.aiyouPanelExpanded === "true";
+      expand.setAttribute("aria-label", expanded ? "还原侧栏" : "展开面板");
+      expand.title = expanded ? "还原侧栏宽度" : "展开至整个工作区";
+      expand.setAttribute("aria-pressed", String(expanded));
+      expand.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${expanded ? 'M8 3v5H3m18 0h-5V3M3 16h5v5m8 0v-5h5' : 'M3 9V3h6m6 0h6v6M3 15v6h6m6 0h6v-6'}"/></svg>`;
+    };
+    expand.onclick = () => {
+      const expanded = page.dataset.aiyouPanelExpanded === "true";
+      if (expanded) page.removeAttribute("data-aiyou-panel-expanded");
+      else page.dataset.aiyouPanelExpanded = "true";
+      update(); window.dispatchEvent(new Event("resize"));
+    };
+    update();
+    if (close) {
+      if (close.parentElement === header) {
+        const actions = document.createElement("div");actions.dataset.aiyouPanelHeaderActions = "true";
+        close.before(actions);actions.append(expand,close);
+      } else close.before(expand);
+    } else header.append(expand);
+  }
+
   function initializeWorkspacePanel(page, panelName) {
     page.setAttribute(WORKSPACE_PANEL_ATTRIBUTE, panelName);
-    ensureWorkspaceDockStyle();
+    ensureWorkspaceDockStyle(); ensureWorkspacePanelControls(page);
+    if (page.dataset.aiyouPanelInitialized === "true") return page;
+    page.dataset.aiyouPanelInitialized = "true";
     page.style.setProperty("--codex-workspace-panel-width", `${savedWorkspacePanelWidth()}px`);
-    page.addEventListener("pointerdown", (event) => {
-      const rect = page.getBoundingClientRect();
-      if (event.button !== 0 || Math.abs(event.clientX - rect.left) > 8) return;
-      event.preventDefault();
-      const startX = event.clientX;
-      const startWidth = rect.width;
-      const move = (moveEvent) => {
-        const width = Math.max(420, Math.min(startWidth + startX - moveEvent.clientX, Math.max(420, window.innerWidth - 360)));
-        page.style.setProperty("--codex-workspace-panel-width", `${width}px`);
+    const handle = document.createElement("div");handle.dataset.aiyouPanelResize = "true";
+    handle.setAttribute("role","separator");handle.setAttribute("aria-orientation","vertical");
+    handle.setAttribute("aria-label","调整面板宽度");handle.tabIndex = 0;
+    page.append(handle);
+    const setWidth = value => {
+      const bounds = workspacePanelBounds(page),width = Math.max(bounds.min,Math.min(value,bounds.max));
+      page.style.setProperty("--codex-workspace-panel-width", `${width}px`);
+      handle.setAttribute("aria-valuemin",String(Math.round(bounds.min)));
+      handle.setAttribute("aria-valuemax",String(Math.round(bounds.max)));
+      handle.setAttribute("aria-valuenow",String(Math.round(width)));
+      return width;
+    };
+    const saveWidth = () => { if (!destroyed) { try { localStorage.setItem(WORKSPACE_PANEL_WIDTH_KEY,String(Math.round(page.getBoundingClientRect().width))); } catch {} } };
+    handle.onkeydown = event => {
+      if (!["ArrowLeft","ArrowRight","Home","End"].includes(event.key)) return;
+      event.preventDefault();const bounds=workspacePanelBounds(page);
+      setWidth(event.key === "Home" ? bounds.min : event.key === "End" ? bounds.max : page.getBoundingClientRect().width + (event.key === "ArrowLeft" ? 24 : -24));saveWidth();
+    };
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || page.dataset.aiyouPanelExpanded === "true") return;
+      event.preventDefault(); event.stopPropagation();
+      const startX=event.clientX,startWidth=page.getBoundingClientRect().width;
+      handle.setPointerCapture?.(event.pointerId);
+      document.documentElement.setAttribute("data-aiyou-panel-resizing", "true");
+      const move = e => setWidth(startWidth + startX - e.clientX);
+      const finish = () => {
+        document.removeEventListener("pointermove",move,true);
+        document.removeEventListener("pointerup",finish,true);
+        document.removeEventListener("pointercancel",finish,true);
+        document.documentElement.removeAttribute("data-aiyou-panel-resizing");
+        if (handle.hasPointerCapture?.(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+        workspaceResizeCleanups.delete(finish);saveWidth();
       };
-      const up = () => {
-        document.removeEventListener("pointermove", move, true);
-        document.removeEventListener("pointerup", up, true);
-        workspaceResizeCleanups.delete(up);
-        if (destroyed) return;
-        const width = Math.round(page.getBoundingClientRect().width);
-        try { localStorage.setItem(WORKSPACE_PANEL_WIDTH_KEY, String(width)); } catch {}
-      };
-      document.addEventListener("pointermove", move, true);
-      document.addEventListener("pointerup", up, true);
-      workspaceResizeCleanups.add(up);
-    }, true);
+      document.addEventListener("pointermove",move,true);document.addEventListener("pointerup",finish,true);
+      document.addEventListener("pointercancel",finish,true);workspaceResizeCleanups.add(finish);
+    });
     return page;
   }
 
   function createWorkspaceSection(id, name) {
-    const section = initializeWorkspacePanel(document.createElement("section"), name);
+    const section = document.createElement("section");
+    section.setAttribute(WORKSPACE_PANEL_ATTRIBUTE, name);
     section.id = id; section.hidden = true; section.open = false;
     section.setAttribute("role", "region");
     section.close = () => { section.open = false; section.hidden = true; section.removeAttribute("open"); };
@@ -3213,6 +3283,7 @@
   function showWorkspaceSection(section) {
     const mount = findCustomShortcutPageMount();
     if (!mount) { showNativeShortcutNotice("右侧面板暂不可用，请先打开一个对话。"); return false; }
+    initializeWorkspacePanel(section, section.getAttribute(WORKSPACE_PANEL_ATTRIBUTE));
     mount.surface.append(section);
     closeOtherWorkspacePanels(section.getAttribute(WORKSPACE_PANEL_ATTRIBUTE));
     section.open = true; section.hidden = false; section.setAttribute("open", "");
@@ -3254,7 +3325,7 @@
         && node.querySelector('[data-composer-input],[contenteditable="true"]'));
       if (!frameHost) return null;
       document.body.setAttribute("data-aiyou-workspace-dock", "true");
-      document.body.style.setProperty("--aiyou-workspace-panel-limit", `max(0px,calc((100vw - ${Math.max(0,frameHost.getBoundingClientRect().left)}px) * .6))`);
+      document.body.style.setProperty("--aiyou-workspace-panel-limit", `max(0px,calc(100vw - ${Math.max(0,frameHost.getBoundingClientRect().left)}px - 240px))`);
       frameHost.setAttribute("data-aiyou-workspace-chat", "true");
       return {surface:document.body,frameHost};
     }
@@ -8806,6 +8877,10 @@
   }
 
   function handleWorkspaceEnhancementKeydown(event) {
+    if (event.key === "Escape") {
+      const expanded = document.querySelector('[data-codex-workspace-side-panel][data-aiyou-panel-expanded="true"]:not([hidden]) [data-aiyou-panel-expand]');
+      if (expanded) { event.preventDefault();event.stopImmediatePropagation();expanded.click();return; }
+    }
     if (event.key === "Escape" && skillDetailsDialog?.open) {
       event.preventDefault(); closeSkillDetails(); return;
     }
@@ -8985,6 +9060,7 @@
     window.visualViewport?.addEventListener("scroll", scheduleEfficiencyPanelLayout);
     document.addEventListener("scroll", scheduleEfficiencyPanelLayout, true);
     sync();
+    document.querySelectorAll(`[${WORKSPACE_PANEL_ATTRIBUTE}]`).forEach(page => initializeWorkspacePanel(page,page.getAttribute(WORKSPACE_PANEL_ATTRIBUTE)));
   }
 
   function destroy() {
@@ -9026,6 +9102,8 @@
     document.removeEventListener("keydown", closeConversationMenu, true);
     conversationMenu?.remove(); document.getElementById("aiyou-conversation-settings")?.remove();
     document.getElementById("aiyou-workspace-dock-style")?.remove();
+    document.querySelectorAll('[data-aiyou-panel-expand],[data-aiyou-panel-resize]').forEach(node => node.remove());
+    document.querySelectorAll('[data-aiyou-panel-initialized]').forEach(node => node.removeAttribute('data-aiyou-panel-initialized'));
     document.querySelectorAll("[data-aiyou-workspace-dock],[data-aiyou-workspace-chat]").forEach(n => { n.removeAttribute("data-aiyou-workspace-dock"); n.removeAttribute("data-aiyou-workspace-chat"); });
     document.body.style.removeProperty("--aiyou-workspace-panel-limit");
     window.removeEventListener("message", handleAssetConsoleMessage);
@@ -9086,6 +9164,7 @@
       row.removeAttribute("data-codex-conversation-preview-enhanced");
       row.removeAttribute("data-codex-project-running");
       row.removeAttribute("data-codex-execution-state");
+      row.removeAttribute("data-codex-card-appearance-state");
     });
     document.querySelectorAll('[data-codex-conversation-preview-title="true"]').forEach((node) => {
       node.removeAttribute("data-codex-conversation-preview-title");
@@ -9139,6 +9218,7 @@
     resolveResetMonitorRequest,
     resolveClaudeRequest: (response) => window.__aiyouClaudeInjection__?.resolve?.(response),
     getWorkspacePanelMount: findCustomShortcutPageMount,
+    initializeWorkspacePanel,
     prepareClaudePanel: () => { closeOtherWorkspacePanels("claude"); return findCustomShortcutPageMount(); },
     initializeClaudePanel: (page) => {
       if (!page.dataset.aiyouClaudeInitialized) { initializeWorkspacePanel(page, "claude"); page.dataset.aiyouClaudeInitialized = "true"; }

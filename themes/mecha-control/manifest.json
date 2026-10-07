@@ -2,11 +2,14 @@
   "schemaVersion": 1,
   "id": "mecha-control",
   "name": "机甲控制舱",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "palette": "colors.json",
   "design": "design.json",
   "controls": "controls.json",
-  "decorations": {"wordmark":"assets/wordmark.svg","corner":"assets/armor-corner.svg"},
+  "decorations": {
+    "wordmark": "assets/wordmark.svg",
+    "corner": "assets/armor-corner.svg"
+  },
   "renderer": "aiyoucodex-theme-v1",
   "videoModel": "seedance-2.5",
   "poster": "assets/poster.png",
@@ -22,7 +25,13 @@
       "error": "assets/error.mp4"
     }
   },
-  "transitions": {"mode":"shared-anchor","switchAt":"clip-boundary","pendingPolicy":"latest-wins","anchor":"assets/poster.png","neutralHoldFrames":3},
+  "transitions": {
+    "mode": "shared-anchor",
+    "switchAt": "clip-boundary",
+    "pendingPolicy": "latest-wins",
+    "anchor": "assets/poster.png",
+    "neutralHoldFrames": 3
+  },
   "motion": {
     "enter": {
       "file": "assets/enter.gif",

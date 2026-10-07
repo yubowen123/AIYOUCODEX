@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "storageKey": "aiyoucodex.theme.beach-vacation.v1",
+  "defaults": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "motion": true,
+    "alpha": {
+      "overall": 1,
+      "chrome": 0.9,
+      "sidebar": 0.98,
+      "chat": 0,
+      "panel": 0.98,
+      "card": 0.9,
+      "message": 0.97,
+      "composer": 0.98,
+      "control": 0.96,
+      "menu": 0.98,
+      "text": 1,
+      "border": 0.65,
+      "shadow": 1,
+      "decoration": 0.9,
+      "image": 0.9,
+      "composer-area": 0
+    },
+    "colors": {
+      "primary": "#283e4b",
+      "secondary": "#506371",
+      "link": "#175e7b",
+      "success": "#30653c",
+      "danger": "#ad3d46",
+      "warning": "#884657",
+      "inverse": "#fffdf9"
+    },
+    "background": {
+      "fit": "cover",
+      "x": 75,
+      "y": 50,
+      "type": "video",
+      "source": "builtin",
+      "custom": null,
+      "customStates": {}
+    }
+  },
+  "defaultReadability": {
+    "minimum": 5.01,
+    "passes": true
+  },
+  "source": "createThemeCustomization"
+}

@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "id": "beach-vacation",
+  "name": "海边度假·浠浠 ⭐",
+  "version": "1.2.0",
+  "renderer": "aiyoucodex-theme-v1",
+  "palette": "colors.json",
+  "design": "design.json",
+  "controls": "controls.json",
+  "poster": "assets/beach-scene.png",
+  "decorations": {
+    "wordmark": "assets/wordmark.svg",
+    "corner": "assets/beach-corner.svg"
+  },
+  "motion": {
+    "enter": {
+      "file": "assets/beach-scene.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "click": {
+      "file": "assets/beach-scene.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "send": {
+      "file": "assets/beach-scene.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "running": {
+      "file": "assets/beach-scene.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "complete": {
+      "file": "assets/beach-scene.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "error": {
+      "file": "assets/beach-scene.png",
+      "durationMs": 1200,
+      "loop": false
+    }
+  },
+  "defaults": {
+    "enabled": true,
+    "motion": true,
+    "backgroundType": "video",
+    "backgroundOpacity": 0.9
+  },
+  "limits": {
+    "maxAssetBytes": 10000000,
+    "maxBundleBytes": 30000000
+  },
+  "events": {
+    "chatEntry": "enter",
+    "interaction": "click",
+    "sendAccepted": "send",
+    "running": "running",
+    "completed-unread": "complete",
+    "error": "error",
+    "read": "poster"
+  },
+  "author": "浠浠",
+  "description": "七位度假角色、小螃蟹蟹钳开合、海浪与棕榈叶组成的循环动态壁纸。",
+  "license": "MIT (code); see ASSET-NOTICE.md",
+  "tags": [
+    "beach",
+    "vacation",
+    "sunset",
+    "ocean",
+    "cartoon",
+    "animated",
+    "light"
+  ],
+  "background": {
+    "image": "assets/beach-scene.png",
+    "defaultType": "video",
+    "videos": {
+      "enter": "assets/beach-loop.mp4",
+      "click": "assets/beach-loop.mp4",
+      "send": "assets/beach-loop.mp4",
+      "running": "assets/beach-loop.mp4",
+      "complete": "assets/beach-loop.mp4",
+      "error": "assets/beach-loop.mp4"
+    }
+  },
+  "ambientLoop": true,
+  "credits": [
+    {
+      "name": "浠浠（xixi）",
+      "role": "主题设计 / 社区贡献者"
+    }
+  ],
+  "badge": "社区共创 · 特别鸣谢"
+}

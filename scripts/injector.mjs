@@ -19,6 +19,7 @@ import {
 } from "../lib/injector-state.mjs";
 import { createDesktopAppRuntime } from "../lib/desktop-runtime.mjs";
 import { readActiveTaskThreads } from "../lib/taskboard-status.mjs";
+import { isHostReplyIdle } from "../lib/host-reply-state.mjs";
 import { AssetConsoleBridge } from "../lib/asset-console-bridge.mjs";
 import { readInstalledSkillCatalog } from "../lib/skill-catalog.mjs";
 import { createSkillOrganizationStore, createSkillOrganizationController, SkillOrganizationBridge } from "../lib/skill-organization.mjs";
@@ -98,6 +99,8 @@ const skillProvenance = createSkillProvenanceIndex({ listSessions: async () => {
 let discoveryFailures = 0;
 const desktopAppRecovery = new DesktopAppRecovery();
 const desktopAppRuntime = createDesktopAppRuntime();
+let recoveryWaitSignature = '';
+let recoveryHost = null;
 const assetConsoleOptions = {
   staticRoot: process.env.CODEX_ASSET_CONSOLE_STATIC_ROOT
     || path.join(root, "vendor", "codex-workspace-enhancer", "asset-console", "public"),
@@ -305,9 +308,20 @@ async function reconcileTargets() {
       && process.env.CODEX_SIDEBAR_ALLOW_HOST_RESTART === "1") {
     let app = null;
     try { app = await desktopAppRuntime.readProcess(); } catch {}
+    if (app && recoveryHost?.pid !== app.pid) {
+      recoveryHost = {pid: app.pid, startedAt: await desktopAppRuntime.readStartedAt(app)};
+    }
+    // Preserve the same activity boundary between quit and launch.
+    const hostStartedAt = recoveryHost?.startedAt;
     const taskStatus = await readActiveTaskThreads({
-      isThreadIdle: (id) => repository.isConversationIdle(id),
+      isThreadIdle: (id) => isHostReplyIdle(repository, id, hostStartedAt),
     });
+    const waitSignature = !taskStatus.available ? 'task-state-unavailable'
+      : taskStatus.activeThreadIds.length ? `pending-replies:${taskStatus.activeThreadIds.length}` : '';
+    if (waitSignature && waitSignature !== recoveryWaitSignature) {
+      process.stdout.write(`[${new Date().toISOString()}] automatic recovery waiting: ${waitSignature}\n`);
+    }
+    recoveryWaitSignature = waitSignature;
     const action = desktopAppRecovery.next({ targetAvailable: false, app,
       recoveryAllowed: process.env.CODEX_SIDEBAR_ALLOW_HOST_RESTART === "1"
         && taskStatus.available && taskStatus.activeThreadIds.length === 0 });

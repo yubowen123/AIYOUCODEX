@@ -38,6 +38,7 @@ fi
 
 # Remove only owned native handlers before removing their runtime. Preserve outputs/state.
 HOOK_NODE="${CODEX_SIDEBAR_NODE:-}"
+if [[ -z "${HOOK_NODE}" && -x "${INSTALL_DIR}/runtime/node/bin/node" ]]; then HOOK_NODE="${INSTALL_DIR}/runtime/node/bin/node"; fi
 if [[ -z "${HOOK_NODE}" ]] && command -v node >/dev/null 2>&1; then HOOK_NODE="$(command -v node)"; fi
 if [[ -n "${HOOK_NODE}" && -f "${INSTALL_DIR}/scripts/setup-efficiency-hooks.mjs" ]]; then
   "${HOOK_NODE}" "${INSTALL_DIR}/scripts/setup-efficiency-hooks.mjs" --remove --apply --config "${CODEX_HOME:-${HOME}/.codex}/hooks.json" \
