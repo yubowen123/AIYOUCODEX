@@ -40,7 +40,7 @@ export async function installClaudeDependencies({ root, nodePath = process.execP
   const npm = await findNpmCli({ nodePath, env });
   if (!npm) return false; // Core enhancement remains usable with the host's Node-only runtime.
   const result = run(nodePath, [npm, "ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
-    { cwd: root, env, stdio: "ignore", timeout: 120000, windowsHide: true });
+    { cwd: root, env, stdio: "ignore", timeout: 120000, killSignal: "SIGKILL", windowsHide: true });
   if (result.status !== 0) throw new Error("Claude dependencies could not be installed; previous runtime preserved. Check npm/network and retry.");
   await access(path.join(root, "node_modules/@anthropic-ai/claude-agent-sdk/package.json"));
   await access(path.join(root, "node_modules/smol-toml/package.json"));
