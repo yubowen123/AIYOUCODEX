@@ -2,7 +2,7 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
-  const RUNTIME_VERSION = "2026-10-07.4";
+  const RUNTIME_VERSION = "2026-10-08.1";
   const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
@@ -266,6 +266,8 @@
   let searchCatalogByThread = new Map();
   let recentCatalog = [];
   let recentCatalogByThread = new Map();
+  let nativeRecentCatalog = new Map();
+  let recentVisibleCount = RECENT_VISIBLE_LIMIT;
   let interruptedCatalog = [];
   let interruptedCatalogByThread = new Map();
   let pinnedThreadIds = new Set();
@@ -435,11 +437,24 @@
       .${CARD_CONTENT_CLASS} {
         display: none;
       }
+      html[data-codex-conversation-view] [data-app-action-sidebar-scroll]:has([data-codex-sidebar-section-panel]) {
+        box-sizing: border-box !important;
+        padding-inline: 8px !important;
+      }
       html[data-codex-conversation-view="card"] [data-codex-conversation-card-grid="true"] {
         display: grid !important;
         grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
         align-items: stretch;
         gap: 10px 8px !important;
+        box-sizing: border-box !important;
+        min-width: 0 !important;
+        padding: 8px !important;
+      }
+      [data-codex-sidebar-section-panel] { min-width: 0; max-width: 100%; }
+      [data-codex-sidebar-recent-more] {
+        grid-column: 1 / -1; margin: 4px 8px 12px; padding: 8px 12px;
+        border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+        border-radius: 10px; background: transparent; color: inherit; cursor: pointer;
       }
       [data-codex-sidebar-pinned-outside-hidden="true"] {
         display: none !important;
@@ -2328,8 +2343,8 @@
 
   function catalogPreviewForRow(row) {
     const threadId = normalizedThreadId(row.getAttribute("data-app-action-sidebar-thread-id"));
-    const entry = searchCatalogByThread.get(threadId)
-      || recentCatalogByThread.get(threadId)
+    const entry = recentCatalogByThread.get(threadId)
+      || searchCatalogByThread.get(threadId)
       || interruptedCatalogByThread.get(threadId);
     if (!entry) return null;
     const title = entry.title || row.getAttribute("data-app-action-sidebar-thread-title") || "未命名对话";
@@ -2351,7 +2366,11 @@
   }
 
   function previewForRow(row) {
-    const preview = previews.get(rowKey(row)) || catalogPreviewForRow(row);
+    let preview = previews.get(rowKey(row)) || catalogPreviewForRow(row);
+    const time = threadActivityTime(row.getAttribute("data-app-action-sidebar-thread-id"));
+    if (preview && time > (Date.parse(preview.updatedAt || "") || 0)) {
+      preview = { ...preview, updatedAt: new Date(time).toISOString(), lastCommunication: formatCatalogCommunication(time) };
+    }
     if (!preview || !row.hasAttribute("data-codex-sidebar-interrupted-row")) return preview;
     const entry = interruptedCatalogByThread.get(normalizedThreadId(row.getAttribute("data-app-action-sidebar-thread-id")));
     if (!entry?.interruptionLabel) return preview;
@@ -2536,6 +2555,7 @@
     const titleHost = row.querySelector("[data-thread-title-trigger=\"true\"]");
     if (!titleHost) return;
     row.setAttribute("data-codex-conversation-preview-enhanced", "true");
+    row.dataset.codexSidebarActivityAt = String(threadActivityTime(row.getAttribute("data-app-action-sidebar-thread-id")));
     const threadId = normalizedThreadId(row.getAttribute("data-app-action-sidebar-thread-id"));
     const execution = cardExecution(threadId, preview);
     row.setAttribute("data-codex-execution-state", execution.state);
@@ -6711,9 +6731,10 @@
     const recent = sectionSources.get("最近");
     const container = recent?.virtual ? recent.section : recent?.heading?.parentElement;
     if (!recent?.section?.isConnected || !container) return;
-    const entries = recentCatalog
+    const available = recentCatalog
       .filter((entry) => !pinnedThreadIds.has(normalizedThreadId(entry.threadId)))
-      .slice(0, RECENT_VISIBLE_LIMIT);
+      .sort((a, b) => threadActivityTime(b.threadId, b.updatedAt) - threadActivityTime(a.threadId, a.updatedAt));
+    const entries = available.slice(0, recentVisibleCount);
     let list = document.getElementById(RECENT_LIST_ID);
     if (!entries.length) {
       list?.remove();
@@ -6735,7 +6756,7 @@
       list.className = "flex flex-col";
       container.appendChild(list);
     }
-    const signature = entries.map((entry) => `${entry.threadId}:${entry.updatedAt || ""}:${entry.title}`).join("\n");
+    const signature = `${available.length}:` + entries.map((entry) => `${entry.threadId}:${threadActivityTime(entry.threadId, entry.updatedAt)}:${entry.title}`).join("\n");
     const currentOrder = Array.from(list.querySelectorAll("[data-codex-sidebar-recent-row]"))
       .map((row) => normalizedThreadId(row.getAttribute("data-app-action-sidebar-thread-id")))
       .join("\n");
@@ -6743,6 +6764,14 @@
     if (list.dataset.signature !== signature || currentOrder !== expectedOrder) {
       list.dataset.signature = signature;
       list.replaceChildren(...entries.map((entry) => createCatalogThreadRow(entry, "recent")));
+      if (available.length > entries.length) {
+        const more = document.createElement("button");
+        more.type = "button";
+        more.dataset.codexSidebarRecentMore = "true";
+        more.textContent = `加载更多对话 · 已显示 ${entries.length} / ${available.length}`;
+        more.onclick = () => { recentVisibleCount += RECENT_VISIBLE_LIMIT; scheduleSync(); };
+        list.appendChild(more);
+      }
     }
   }
 
@@ -6759,17 +6788,17 @@
       list = document.createElement("div");
       list.dataset.codexSidebarVirtualPinnedList = "true";
       list.setAttribute("role", "list");
-      list.setAttribute("aria-label", "置顶对话，最新置顶优先");
+      list.setAttribute("aria-label", "置顶对话，按最近对话时间排序");
       list.className = "flex flex-col";
       panel.appendChild(list);
     }
     const entries = Array.from(pinnedThreadIds, (threadId) => {
-      const entry = searchCatalogByThread.get(threadId)
-        || recentCatalogByThread.get(threadId)
+      const entry = recentCatalogByThread.get(threadId)
+        || searchCatalogByThread.get(threadId)
         || interruptedCatalogByThread.get(threadId);
-      return entry ? { ...entry, threadId, pinnedAt: pinnedAtForThread(threadId) } : null;
-    }).filter(Boolean).sort((left, right) => right.pinnedAt - left.pinnedAt);
-    const signature = entries.map((entry) => `${entry.threadId}:${entry.pinnedAt}:${entry.title}`).join("\n");
+      return entry ? { ...entry, threadId, activityAt: threadActivityTime(threadId, entry.updatedAt) } : null;
+    }).filter(Boolean).sort((left, right) => right.activityAt - left.activityAt);
+    const signature = entries.map((entry) => `${entry.threadId}:${entry.activityAt}:${entry.title}`).join("\n");
     if (list.dataset.signature === signature) return;
     list.dataset.signature = signature;
     if (entries.length) list.replaceChildren(...entries.map((entry) => createCatalogThreadRow(entry, "pinned")));
@@ -6833,11 +6862,11 @@
       const list = listItem?.parentElement;
       if (!listItem || list?.getAttribute("role") !== "list") continue;
       const entries = rowsByList.get(list) || [];
-      entries.push({ item: listItem, pinnedAt: pinnedAtForThread(row.getAttribute("data-app-action-sidebar-thread-id")) });
+      entries.push({ item: listItem, activityAt: threadActivityTime(row.getAttribute("data-app-action-sidebar-thread-id")) });
       rowsByList.set(list, entries);
     }
     for (const [list, entries] of rowsByList) {
-      const sorted = [...entries].sort((left, right) => right.pinnedAt - left.pinnedAt);
+      const sorted = [...entries].sort((left, right) => right.activityAt - left.activityAt);
       if (entries.every((entry, index) => entry.item === sorted[index].item)) continue;
       for (const entry of sorted) list.appendChild(entry.item);
     }
@@ -8677,10 +8706,10 @@
         })
       : null;
     syncFeature("cards", () => {
-      for (const row of rows) applySummary(row, previewForRow(row));
       ensureVirtualPinnedRows();
       ensureGlobalRecentRows();
       ensureInterruptedRows();
+      for (const row of visibleRows()) applySummary(row, previewForRow(row));
       sortNativePinnedRows();
     });
     if (anchor) {
@@ -8721,18 +8750,29 @@
 
   function setRecentCatalog(items) {
     const newestByThread = new Map();
-    for (const entry of Array.isArray(items) ? items : []) {
+    for (const entry of [...(Array.isArray(items) ? items : []), ...nativeRecentCatalog.values()]) {
       const threadId = normalizedThreadId(entry?.threadId);
       const time = Date.parse(entry?.updatedAt || "");
-      if (!threadId || typeof entry?.title !== "string" || !Number.isFinite(time)) continue;
+      if (!threadId || typeof entry?.title !== "string") continue;
+      const activityAt = Number.isFinite(time) ? time : 0;
       const current = newestByThread.get(threadId);
-      if (!current || time > current.time) newestByThread.set(threadId, { ...entry, threadId, time });
+      if (!current || activityAt >= current.time) newestByThread.set(threadId, { ...current, ...entry, threadId, time: activityAt });
     }
     recentCatalog = Array.from(newestByThread.values())
       .sort((left, right) => right.time - left.time)
       .map(({ time, ...entry }) => entry);
     recentCatalogByThread = new Map(recentCatalog.map((entry) => [normalizedThreadId(entry.threadId), entry]));
     scheduleSync();
+  }
+
+  function threadActivityTime(rawId, fallback = "") {
+    const id = normalizedThreadId(rawId);
+    const entry = recentCatalogByThread.get(id) || searchCatalogByThread.get(id);
+    let time = Math.max(Date.parse(fallback) || 0, Date.parse(entry?.updatedAt || "") || 0);
+    for (const preview of previews.values()) {
+      if (normalizedThreadId(preview.threadId) === id) time = Math.max(time, Date.parse(preview.updatedAt || "") || 0);
+    }
+    return time;
   }
 
   function setInterruptedCatalog(items) {
@@ -8793,10 +8833,17 @@
           const managers = node.store.get(atom.resolve(node, scopes));
           if (!Array.isArray(managers)) return;
           const items = [];
+          const liveEntries = new Map();
           for (const manager of managers) {
             const host = manager.getHostId?.();
             if (!host || host === "durable" || typeof manager.getThreadSummaries !== "function") continue;
             for (const thread of manager.getThreadSummaries().slice(0, 512)) {
+              const nativeId = host === "local" ? thread.conversationId : `remote:${host}:${thread.conversationId}`;
+              const date = new Date(thread.updatedAt ?? NaN);
+              const previous = recentCatalogByThread.get(normalizedThreadId(nativeId));
+              if (Number.isFinite(date.getTime())) liveEntries.set(normalizedThreadId(nativeId), {
+                ...previous, threadId: nativeId, title: thread.title?.trim() || previous?.title || "未命名对话", updatedAt: date.toISOString(),
+              });
               const conversation = manager.getConversation?.(thread.conversationId);
               const turns = Object.values(conversation?.turnHistory?.history?.entitiesByKey || {})
                 .concat(conversation?.turns || []).filter(turn => turn?.status);
@@ -8805,6 +8852,10 @@
                 runtimeStatus: thread.threadRuntimeStatus?.type, unread: thread.hasUnreadTurn,
                 revision: String(thread.updatedAt || ""), turnStatus: turn?.status, turnId: turn?.turnId, turnError: Boolean(turn?.error) });
             }
+          }
+          if (JSON.stringify([...liveEntries]) !== JSON.stringify([...nativeRecentCatalog])) {
+            nativeRecentCatalog = liveEntries;
+            setRecentCatalog(recentCatalog);
           }
           if (JSON.stringify(items) !== JSON.stringify([...threadExecutionStates.values()])) setThreadExecutionStates(items);
           return;
@@ -9162,6 +9213,7 @@
     document.querySelectorAll(`.${STATUS_BUTTON_CLASS}`).forEach((node) => node.remove());
     document.querySelectorAll('[data-codex-conversation-preview-enhanced="true"]').forEach((row) => {
       row.removeAttribute("data-codex-conversation-preview-enhanced");
+      row.removeAttribute("data-codex-sidebar-activity-at");
       row.removeAttribute("data-codex-project-running");
       row.removeAttribute("data-codex-execution-state");
       row.removeAttribute("data-codex-card-appearance-state");

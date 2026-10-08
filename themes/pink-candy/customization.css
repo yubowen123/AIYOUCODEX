@@ -40,7 +40,7 @@ html[data-aiyou-theme="pink-candy"] [data-aiyou-workspace] :is(input,textarea,se
 html[data-aiyou-theme="pink-candy"] :is([data-composer-body],#aiyoucodex-claude-panel [data-claude-compose],.thread-pane .composer) {background:var(--aiyou-fill-composer)!important}
 html[data-aiyou-theme="pink-candy"] :is([data-composer-body],#aiyoucodex-claude-panel [data-claude-compose],.thread-pane .composer) {background-image:none!important}
 html[data-aiyou-theme="pink-candy"] :is([data-composer-body],#aiyoucodex-claude-panel [data-claude-compose],.thread-pane .composer) :is(textarea,[contenteditable],[data-composer-input]) {background:transparent!important;background-image:none!important}
-html[data-aiyou-theme="pink-candy"] [data-aiyou-theme-host] [data-markdown-text-style="assistant-message"],
+html[data-aiyou-theme="pink-candy"] [data-markdown-text-style="assistant-message"],
 html[data-aiyou-theme="pink-candy"] :is(.thread-pane .message-bubble,#aiyoucodex-claude-panel article:not([data-welcome]),#aiyoucodex-claude-panel [data-claude-bubble]) {background:var(--aiyou-fill-message)!important}
 html[data-aiyou-theme="pink-candy"] [data-user-message-bubble] {background:color-mix(in srgb,var(--aiyou-surface) calc(var(--aiyou-alpha-message) * 100%),transparent)!important}
 html[data-aiyou-theme="pink-candy"] :is(.thread-pane .message-row.self .message-bubble,#aiyoucodex-claude-panel article[data-role="user"]) {background:color-mix(in srgb,var(--aiyou-user-bg) calc(var(--aiyou-alpha-message) * 100%),transparent)!important}

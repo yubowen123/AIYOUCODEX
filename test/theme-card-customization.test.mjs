@@ -32,6 +32,8 @@ test("card appearance maps native states, preserves alpha, previews and persists
     await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
   ({ client } = await connectFixtureBrowser({ browser, profile, url: `http://127.0.0.1:${server.address().port}` }));
+  // Fix the fixture's motion preference independently of the CI runner's OS settings.
+  await client.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
   const api = "window.__codexConversationPreviewInjection__";
   const row = '[data-app-action-sidebar-thread-row]';
   const previews = [{ key: `local:${id}\nHalo task`, threadId: id, title: "Halo task", summary: "网络问题已修复", updatedAt: "2026-10-04T01:00:00Z" }];
