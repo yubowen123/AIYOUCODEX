@@ -31,6 +31,9 @@ test('compiled pink bubbles keep matched insets and material through streaming, 
   for(const reply of [g.short,g.long]){assert.equal(reply.padding,g.user.padding);assert.equal(reply.radius,g.user.radius);assert.equal(reply.shadow,g.user.shadow);assert.equal(reply.border,g.user.border);assert.equal(reply.opacity,'1');assert.equal(reply.overflow,false);}
   assert.equal(g.user.padding,'10px 16px');assert.notEqual(g.short.shadow,'none');assert.equal(g.tools.padding,'7px');assert.equal(g.draft,'保留草稿');assert.equal(g.bodyOverflow,false);
  }
+ // Native view changes replace the chat host before its background marker.
+ await client.evaluate("document.querySelector('main').removeAttribute('data-aiyou-theme-host')");
+ const remounted=await client.evaluate(geometry);assert.equal(remounted.short.padding,remounted.user.padding);assert.equal(remounted.short.shadow,remounted.user.shadow);
  await client.evaluate(`document.getElementById('assistant').append(Object.assign(document.createElement('p'),{textContent:'流式追加的段落'}))`);
  const streaming=await client.evaluate(geometry);assert.equal(streaming.short.padding,streaming.user.padding);assert.equal(streaming.short.shadow,streaming.user.shadow);
  const hit=await client.evaluate(`(()=>{const e=document.getElementById('send');e.scrollIntoView();const r=e.getBoundingClientRect();return e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))})()`);assert.equal(hit,true);

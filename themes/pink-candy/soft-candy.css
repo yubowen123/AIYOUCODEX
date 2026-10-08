@@ -67,7 +67,7 @@ html[data-aiyou-theme="pink-candy"] #aiyoucodex-agent-launchers button {
 }
 /* Both native message roles share the sent bubble's geometry. Keep the native
    reading column and turn spacing; only the bubble owns padding and surface. */
-html[data-aiyou-theme="pink-candy"] [data-aiyou-theme-host] :is([data-markdown-text-style="assistant-message"],[data-user-message-bubble]) {
+html[data-aiyou-theme="pink-candy"] :is([data-markdown-text-style="assistant-message"],[data-user-message-bubble]) {
   box-sizing:border-box;
   min-width:0;
   padding:10px var(--thread-content-margin,16px)!important;
