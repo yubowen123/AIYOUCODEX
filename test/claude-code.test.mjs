@@ -268,6 +268,12 @@ test("slash dispatch validates SDK catalog before releasing input, preserves exa
   const result = (await f.controller.snapshot({ sessionId: id })).session;
   assert.deepEqual(result.commands.map(c => c.name), ["plugin:lint"]);
   assert.equal(result.messages.filter(m => m.text === "压缩已完成").length, 1);
+  // The in-memory idle state precedes the queued atomic write. Check the
+  // durable catalog before starting a new controller that reads it once.
+  await until(async () => {
+    const stored = JSON.parse(await readFile(path.join(f.options.rootDir, "sessions.private.json"), "utf8"));
+    return stored.sessions.some(s => s.id === id && s.commands.some(c => c.name === "plugin:lint" && c.verified));
+  });
   const restored = createClaudeController(f.options);
   assert.ok((await restored.snapshot({ sessionId: id })).commands.some(c => c.name === "plugin:lint" && c.verified));
   await assert.rejects(f.controller.request({ action: "send", sessionId: id, prompt: "/clear" }), /面板内/);
