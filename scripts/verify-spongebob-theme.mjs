@@ -37,6 +37,12 @@ const evaluatedErrors=[];
 try{
  ({client}=await connectFixtureBrowser({browser,profile,url:`http://127.0.0.1:${server.address().port}`}));
  await client.send('Runtime.enable');
+ report.environment=await client.evaluate("({hidden:document.hidden,reducedMotion:matchMedia('(prefers-reduced-motion: reduce)').matches})");
+ // The runner's accessibility preference must not decide the enabled-motion
+ // assertion. Exercise no-preference first, then explicitly test reduce below.
+ await client.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
+ await client.send('Page.bringToFront');
+ await waitForBrowserState(client,"!document.hidden&&!matchMedia('(prefers-reduced-motion: reduce)').matches",'Visible fixture with normal motion preference');
  await client.send('Emulation.setDeviceMetricsOverride',{width:1400,height:900,deviceScaleFactor:1,mobile:false});
  await client.evaluate("window.__fixtureErrors=[];window.addEventListener('error',e=>window.__fixtureErrors.push(e.message));window.addEventListener('unhandledrejection',e=>window.__fixtureErrors.push(String(e.reason)));window.__codexConversationPreviewInjection__={getActiveTaskContext:()=>({threadId:'fixture'})}");
  await client.evaluate(built.compiled);
@@ -123,6 +129,6 @@ finally{
  await new Promise(r=>server.close(r));await rm(profile,{recursive:true,force:true,maxRetries:5,retryDelay:100});
  report.passed=report.checks.filter(c=>c.passes).length;report.failed=report.checks.filter(c=>!c.passes).length;
  await writeFile(path.join(here,`${label}-results.json`),JSON.stringify(report,null,2)+'\n');
- console.log(JSON.stringify({label,passed:report.passed,failed:report.failed,failures:report.checks.filter(c=>!c.passes).map(c=>c.name),error:report.error}));
+ console.log(JSON.stringify({label,environment:report.environment,passed:report.passed,failed:report.failed,failures:report.checks.filter(c=>!c.passes).map(c=>c.name),error:report.error}));
  if(report.failed&&!args.includes('--baseline'))process.exitCode=1;
 }

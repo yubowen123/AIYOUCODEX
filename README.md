@@ -19,7 +19,7 @@ GitHub 开源地址：[https://github.com/yubowen123/AIYOUCODEX](https://github.
 </tr>
 <tr>
 <td width="50%" align="center"><img src=".github/assets/20261008/beach-vacation-preview.png" alt="海边度假·浠浠主题素材预览，非原生截图" width="100%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-beach-vacation-xixi-v1.2.0.zip"><strong>⭐ 海边度假·浠浠 · v1.2.0 ↓ 独立下载</strong></a><br />社区共创 · 特别鸣谢<br />素材预览，原生安装效果待验证</td>
-<td width="50%" align="center"><img src=".github/assets/20261009/spongebob-theme-fixture.png" alt="海底假日·海绵宝宝 v1.0.2 编译后隔离预览，非 Codex 实机截图" width="100%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-spongebob-beach-motion-xixi-v1.0.2.zip"><strong>⭐ 海底假日·海绵宝宝 · v1.0.2 ↓ 独立下载</strong></a><br />浠浠设计 · 社区共创<br />25 项隔离检查通过；原生效果待验证<br /><a href="docs/THEME-SPONGEBOB-v1.0.2.md">修复说明与验证</a></td>
+<td width="50%" align="center"><img src=".github/assets/20261009/spongebob-theme-fixture.png" alt="海底假日·海绵宝宝 v1.0.2 编译后隔离预览，非 Codex 实机截图" width="100%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-spongebob-beach-motion-xixi-v1.0.2.zip"><strong>⭐ 海底假日·海绵宝宝 · v1.0.2 ↓ 独立下载</strong></a><br />浠浠设计 · 社区共创</td>
 </tr>
 </table>
 
