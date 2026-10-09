@@ -159,6 +159,7 @@ test("shortcut grid stays above conversations with optional quick chat, rerender
   await client.evaluate('window.__codexConversationPreviewInjection__.refresh()');
   await verifyRail();
 
+  await client.evaluate(`document.head.insertAdjacentHTML('beforeend','<style>#rail-scroll::-webkit-scrollbar{width:15px}</style>')`);
   // Source-backed September host shape: labelled sr-only children (NOT
   // aria-label on destination buttons), an inner flexing scroll area and a
   // fixed profile/help footer. Geometry alone cannot identify this rail.

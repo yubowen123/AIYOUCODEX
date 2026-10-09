@@ -2,7 +2,7 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
-  const RUNTIME_VERSION = "2026-10-09.4";
+  const RUNTIME_VERSION = "2026-10-09.5";
   const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
@@ -846,6 +846,7 @@
       }
       #${SHORTCUT_GRID_ID} .${SHORTCUT_ICON_CLASS} img[data-aiyou-brand-logo="moke-aigc"] {
         width: 24px !important;
+        max-width: 100%;
         height: 24px !important;
         object-fit: contain;
         filter: none !important;
@@ -940,11 +941,14 @@
       }
       #${SHORTCUT_GRID_ID}[data-codex-shortcut-layout="rail"] > [data-codex-sidebar-shortcut-card-wrap] {
         flex: 0 0 36px;
-        width: 36px;
+        width: 100%;
+        max-width: 36px;
+        min-width: 0;
         height: 36px;
       }
       #${SHORTCUT_GRID_ID}[data-codex-shortcut-layout="rail"] .${SHORTCUT_CARD_CLASS} {
-        width: 36px;
+        width: 100%;
+        max-width: 36px;
         height: 36px;
         padding: 0;
         border: 0;
@@ -955,6 +959,7 @@
       #${SHORTCUT_GRID_ID}[data-codex-shortcut-layout="rail"] .${SHORTCUT_ICON_CLASS} {
         flex: 0 0 24px;
         width: 24px;
+        max-width: 100%;
         height: 24px;
         background: transparent;
       }
@@ -3459,7 +3464,6 @@
   }
 
   function closeOtherWorkspacePanels(panel, notify = true) {
-    if (panel !== "agent-workspace") window.__aiyouAgentWorkspace__?.close?.();
     if (panel !== "claude") window.__aiyouClaudeInjection__?.close?.();
     if (panel !== "custom") closeCustomShortcutPanel(false);
     if (panel !== "asset") closeAssetConsolePanel({ notify: false, restoreFocus: false });
@@ -6191,7 +6195,6 @@
     const rail = nativeIconRail();
     const managedItems = normalizedManagedShortcuts();
     const enhancementItems = [
-      { id: "agent-workspace", name: "Agent 工作区", kind: "enhancement", icon: "skills", activate: () => window.__aiyouAgentWorkspace__?.open?.() },
       { id: "skills-grouping", name: "Skills 分组", kind: "enhancement", icon: "skills", activate: openSkillsGrouping },
       { id: "asset-console", name: "资产控制台", kind: "enhancement", icon: "assets", activate: openAssetConsolePanel },
       { id: "model-arena", name: "模型竞技场", kind: "enhancement", icon: "arena", activate: () => openAssetConsolePanel({ kind: "arena" }) },
@@ -9509,10 +9512,6 @@
     setLayaSearchData,
     resolveResetMonitorRequest,
     resolveClaudeRequest: (response) => window.__aiyouClaudeInjection__?.resolve?.(response),
-    resolveAgentRequest: (response) => window.__aiyouAgentWorkspace__?.resolve?.(response),
-    prepareAgentPanel: () => { closeOtherWorkspacePanels("agent-workspace"); return findCustomShortcutPageMount(); },
-    initializeAgentPanel: (page) => { initializeWorkspacePanel(page, "agent-workspace"); setWorkspacePanelHostLayer(page, true); },
-    closeAgentPanelLayer: (page) => setWorkspacePanelHostLayer(page, false),
     getWorkspacePanelMount: findCustomShortcutPageMount,
     initializeWorkspacePanel,
     prepareClaudePanel: () => { closeOtherWorkspacePanels("claude"); return findCustomShortcutPageMount(); },
