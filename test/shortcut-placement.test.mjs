@@ -169,14 +169,16 @@ test("shortcut grid stays above conversations with optional quick chat, rerender
     </div><div id="rail-footer" style="flex-shrink:0"><button aria-label="Help" style="width:36px;height:36px">?</button><button aria-label="Profile" style="width:36px;height:36px">P</button></div></nav>`;
   await client.evaluate(`document.getElementById('native-rail').outerHTML=${JSON.stringify(markedRail)}`);
   await waitForBrowserState(client, `${grid}?.dataset.codexShortcutLayout==='rail'&&document.getElementById('rail-scroll').contains(${grid})`, 'Real host semantic rail and scrolling slot are recognized without aria-labelled destinations');
+  // Zoom rounds clientWidth differently across Chromium builds. A fully clipped,
+  // absolutely positioned label is invisible and cannot widen the flex rail.
   async function verifyMarkedRail(label) {
-    const state = await client.evaluate(`(()=>{const g=${grid},rail=document.getElementById('native-rail'),scroll=document.getElementById('rail-scroll'),footer=document.getElementById('rail-footer');const r=rail.getBoundingClientRect(),f=footer.getBoundingClientRect();return{parent:g.parentElement.id,count:document.querySelectorAll('#codex-sidebar-shortcut-grid').length,horizontal:document.querySelectorAll('#app-shell-sidebar #codex-sidebar-shortcut-grid').length,footerVisible:f.bottom<=r.bottom+1&&f.top>=r.top,scrollBottom:scroll.getBoundingClientRect().bottom,footerTop:f.top,railOverflow:rail.scrollHeight>rail.clientHeight+1,buttonFits:[...g.querySelectorAll('[data-codex-sidebar-shortcut-card]')].every(b=>{const q=b.getBoundingClientRect();return q.left>=r.left&&q.right<=r.right}),labelsHidden:[...g.querySelectorAll('.codex-sidebar-shortcut-label')].every(b=>b.clientWidth<=1&&getComputedStyle(b).clipPath==='inset(50%)'),nativeCount:rail.querySelectorAll('[data-sidebar-destination]').length,draft:document.querySelector('[contenteditable]').textContent}})()`);
+    const state = await client.evaluate(`(()=>{const g=${grid},rail=document.getElementById('native-rail'),scroll=document.getElementById('rail-scroll'),footer=document.getElementById('rail-footer');const r=rail.getBoundingClientRect(),f=footer.getBoundingClientRect();return{parent:g.parentElement.id,count:document.querySelectorAll('#codex-sidebar-shortcut-grid').length,horizontal:document.querySelectorAll('#app-shell-sidebar #codex-sidebar-shortcut-grid').length,footerVisible:f.bottom<=r.bottom+1&&f.top>=r.top,scrollBottom:scroll.getBoundingClientRect().bottom,footerTop:f.top,railOverflow:rail.scrollHeight>rail.clientHeight+1,buttonFits:[...g.querySelectorAll('[data-codex-sidebar-shortcut-card]')].every(b=>{const q=b.getBoundingClientRect();return q.left>=r.left&&q.right<=r.right}),labelsHidden:[...g.querySelectorAll('.codex-sidebar-shortcut-label')].every(b=>getComputedStyle(b).position==='absolute'&&getComputedStyle(b).clipPath==='inset(50%)'),nativeCount:rail.querySelectorAll('[data-sidebar-destination]').length,draft:document.querySelector('[contenteditable]').textContent}})()`);
     assert.equal(state.parent, 'rail-scroll', label);
     assert.equal(state.count, 1, label);
     assert.equal(state.horizontal, 0, 'Never leave a duplicate horizontal row');
     assert.ok(state.footerVisible && !state.railOverflow, `${label}: keep account/help anchored ${JSON.stringify(state)}`);
     assert.ok(state.scrollBottom <= state.footerTop + 1, label);
-    assert.ok(state.buttonFits && state.labelsHidden, `${label}: icon-only and no widening`);
+    assert.ok(state.buttonFits && state.labelsHidden, `${label}: icon-only and no widening ${JSON.stringify(state)}`);
     assert.equal(state.nativeCount, 5);
     assert.equal(state.draft, 'Keep my draft');
   }

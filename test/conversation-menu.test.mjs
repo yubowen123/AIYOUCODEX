@@ -10,7 +10,9 @@ import {connectFixtureBrowser,waitForBrowserState} from './helpers/browser-state
 import {buildThemePaletteCss,createThemeCustomization} from '../lib/theme-package.mjs';
 const source=await readFile(new URL('../inject/conversation-preview.user.js',import.meta.url),'utf8');
 let executable;
-for(const p of [process.env.AIYOUCODEX_TEST_BROWSER,'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome','/usr/bin/google-chrome','/usr/bin/chromium'].filter(Boolean)) {
+for(const p of [process.env.AIYOUCODEX_TEST_BROWSER,'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome','/usr/bin/google-chrome','/usr/bin/chromium',
+  ...[process.env.PROGRAMFILES,process.env['PROGRAMFILES(X86)'],process.env.LOCALAPPDATA].filter(Boolean)
+    .map(root=>path.join(root,'Google','Chrome','Application','chrome.exe'))].filter(Boolean)) {
   try {await access(p);executable=p;break;}catch{}
 }
 test('conversation menu uses card theme on its first open, preserves native targets and handles keyboard, clipping and failed writes',{
