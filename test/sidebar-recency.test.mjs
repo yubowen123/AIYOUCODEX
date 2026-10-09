@@ -75,4 +75,26 @@ test("sidebar activity order survives delayed snapshots, missing index entries, 
     [...list.children].reverse().forEach(e=>list.appendChild(e));list.querySelectorAll('[data-codex-sidebar-pinned-project-row]').forEach(e=>e.removeAttribute('data-codex-sidebar-pinned-project-row'));
     ${api}.refresh();})()`);
   assert.equal(await client.evaluate("document.querySelector('#native-pinned-fixture [data-app-action-sidebar-thread-row]').getAttribute('data-app-action-sidebar-thread-id').replace(/^local:/,'')"), ids[1], "Native pinned DOM uses the same activity order as the fallback list");
+  // Native source uses camelCase, disk source uses JSON. Child IDs remain excluded
+  // when an older snapshot lacks source metadata or a manager temporarily vanishes.
+  const child = "33333333-3333-4333-8333-333333333333";
+  const childEntries = [{threadId:child,title:"Child",updatedAt:"2026-10-08T12:00:00Z"},
+    {threadId:`remote:host-a:${child}`,remote:true,hostId:"host-a",nativeThreadId:child,nativeProjectId:"p",title:"Remote human with equal UUID",updatedAt:"2026-10-08T12:00:00Z"}];
+  await client.evaluate(`${api}.setRecentCatalog(${JSON.stringify([...childEntries,...entries])});
+    (()=>{const managers=[{getHostId:()=> 'local',getThreadSummaries:()=>[{conversationId:${JSON.stringify(child)},source:{subAgent:{thread_spawn:{depth:1}}},updatedAt:Date.parse('2026-10-08T12:00:00Z')},
+      {conversationId:${JSON.stringify(missingId)},source:'vscode',forkedFromId:${JSON.stringify(child)},title:'User fork',updatedAt:Date.parse('2026-10-08T11:00:00Z')}]}];
+      document.getElementById('root').__reactContainerFixture.memoizedProps.value.get('fixture').store.get=()=>managers;
+      ${api}.__test.refreshNativeExecutionStates();})()`);
+  await client.evaluate(`document.querySelector('[data-codex-sidebar-section-tab="最近"]').click()`);
+  await waitForBrowserState(client, `${recentIds}.includes(${JSON.stringify(`remote:host-a:${child}`)}) && !${recentIds}.includes(${JSON.stringify(child)})`, "Host-isolated Recent refresh completes and excludes child");
+  assert.ok((await client.evaluate(recentIds)).includes(`remote:host-a:${child}`), "Equal UUID on another host remains a human chat");
+  assert.ok((await client.evaluate(recentIds)).includes(missingId), "User-created forks remain visible");
+  await client.evaluate(`${api}.setRecentCatalog(${JSON.stringify(childEntries)});${api}.__test.refreshNativeExecutionStates();${api}.setRecentCatalog(${JSON.stringify(childEntries)});${api}.refresh()`);
+  assert.ok(!(await client.evaluate(recentIds)).includes(child), "Repeated delayed snapshots never reintroduce a known child");
+  const diskChild = "44444444-4444-4444-8444-444444444444";
+  await client.evaluate(`${api}.setRecentCatalog([{threadId:${JSON.stringify(diskChild)},title:'Disk child',source:'{"subagent":{"other":"guardian"}}',updatedAt:'2026-10-09T00:00:00Z'}]);${api}.refresh()`);
+  assert.ok(!(await client.evaluate(recentIds)).includes(diskChild), "Background and JSON-source children are excluded");
+  await client.evaluate(`document.getElementById('root').__reactContainerFixture.memoizedProps.value.get('fixture').store.get=()=>[];${api}.__test.refreshNativeExecutionStates();${api}.setRecentCatalog([{threadId:${JSON.stringify(child)},title:'Stale child'}]);${api}.refresh()`);
+  assert.equal((await client.evaluate(recentIds)).length,0,"Only-child snapshots leave an empty Recent, without restoring hidden native children");
+
 });

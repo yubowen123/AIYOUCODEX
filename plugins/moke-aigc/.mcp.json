@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "moke": {
+      "url": "https://www.mokeaigc.ai/mcp",
+      "scopes": [
+        "openid",
+        "skill:read",
+        "prompt:read"
+      ],
+      "oauth": {
+        "client_id": "s2sv99pil5qbkz3gajdr0"
+      }
+    }
+  }
+}

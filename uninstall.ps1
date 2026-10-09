@@ -49,6 +49,11 @@ if (Test-Path -LiteralPath $hookSetup -PathType Leaf) {
     $conversationCodexHome = Get-Setting "CODEX_HOME" (Join-Path ([Environment]::GetFolderPath("UserProfile")) ".codex")
     & $runtimeConfig.nodePath $hookSetup --remove --apply --config (Join-Path $conversationCodexHome "hooks.json")
     if ($LASTEXITCODE -ne 0) { Write-Warning "Review AIYOUCODEX handlers in native /hooks." }
+    $pluginSetup = Join-Path $fullInstallDir "scripts\install-bundled-plugins.mjs"
+    if (Test-Path -LiteralPath $pluginSetup -PathType Leaf) {
+      & $runtimeConfig.nodePath $pluginSetup --remove
+      if ($LASTEXITCODE -ne 0) { Write-Warning "Review bundled plugin registration in native Plugins." }
+    }
   } catch { Write-Warning "Could not remove AIYOUCODEX hook handlers; review native /hooks." }
 }
 

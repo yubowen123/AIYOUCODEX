@@ -28,7 +28,7 @@ function Test-Node22([string]$Candidate) {
 function Copy-Package([string]$From, [string]$To) {
   $entries = @(
     "LICENSE", "README.md", "package.json", "package-lock.json",
-    "inject", "lib", "scripts", "vendor", "windows", "themes", "skills", "install.ps1", "uninstall.ps1"
+    "inject", "lib", "scripts", "vendor", "windows", "themes", "skills", "plugins", "install.ps1", "uninstall.ps1"
   )
   foreach ($entry in $entries) {
     $source = Join-Path $From $entry
@@ -227,6 +227,8 @@ try {
   & $nodePath (Join-Path $fullInstallDir "scripts\setup-efficiency-hooks.mjs") --apply --config (Join-Path $conversationCodexHome "hooks.json")
   if ($LASTEXITCODE -ne 0) { Write-Warning "Conversation output hooks could not be configured; see docs/CONVERSATION-FOLDERS.md." }
   Write-Output "Review and trust new AIYOUCODEX handlers in native Codex /hooks. Native trust was not changed."
+  & $nodePath (Join-Path $fullInstallDir "scripts\install-bundled-plugins.mjs")
+  if ($LASTEXITCODE -ne 0) { Write-Warning "Bundled plugins could not be installed; run scripts/install-bundled-plugins.mjs after Codex CLI is available." }
   if ((Get-Setting "CODEX_SIDEBAR_SKIP_OPEN" "0") -ne "1") {
     & $powerShellPath -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $launcherPath
   }
