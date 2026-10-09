@@ -1,0 +1,162 @@
+{
+  "schemaVersion": 1,
+  "mode": "light",
+  "primitives": {
+    "rose-50": "#e5f7fa",
+    "rose-75": "#eefbfc",
+    "milk-25": "#f8feff",
+    "plum-800": "#103a49",
+    "gray-600": "#365a65",
+    "rose-200": "#a8d9df",
+    "rose-500": "#078da0",
+    "rose-650": "#006779",
+    "blue-700": "#075f83",
+    "green-700": "#126d5b",
+    "red-700": "#a93643",
+    "blush-100": "#cdeef1",
+    "blue-500": "#0088ad",
+    "green-500": "#168d70",
+    "red-500": "#d34f58",
+    "white": "#ffffff"
+  },
+  "semantic": {
+    "bg": "rose-50",
+    "surface": "rose-75",
+    "elevated": "milk-25",
+    "text": "plum-800",
+    "muted": "gray-600",
+    "border": "rose-200",
+    "accent": "rose-650",
+    "running": "blue-700",
+    "complete": "green-700",
+    "error": "red-700",
+    "user-bg": "blush-100",
+    "brand": "rose-500",
+    "running-outline": "blue-500",
+    "complete-outline": "green-500",
+    "error-outline": "red-500"
+  },
+  "pairs": [
+    {
+      "role": "body",
+      "foreground": "text",
+      "background": "bg",
+      "minimum": 7
+    },
+    {
+      "role": "panel-body",
+      "foreground": "text",
+      "background": "elevated",
+      "minimum": 7
+    },
+    {
+      "role": "secondary",
+      "foreground": "muted",
+      "background": "elevated",
+      "minimum": 4.5
+    },
+    {
+      "role": "placeholder",
+      "foreground": "muted",
+      "background": "elevated",
+      "minimum": 4.5
+    },
+    {
+      "role": "timestamp",
+      "foreground": "muted",
+      "background": "bg",
+      "minimum": 4.5
+    },
+    {
+      "role": "link",
+      "foreground": "running",
+      "background": "elevated",
+      "minimum": 4.5
+    },
+    {
+      "role": "success",
+      "foreground": "complete",
+      "background": "elevated",
+      "minimum": 4.5
+    },
+    {
+      "role": "error",
+      "foreground": "error",
+      "background": "elevated",
+      "minimum": 4.5
+    },
+    {
+      "role": "warning",
+      "foreground": "accent",
+      "background": "elevated",
+      "minimum": 4.5
+    },
+    {
+      "role": "user-message",
+      "foreground": "text",
+      "background": "user-bg",
+      "minimum": 7,
+      "translucent": true
+    },
+    {
+      "role": "assistant-message",
+      "foreground": "text",
+      "background": "elevated",
+      "minimum": 7,
+      "translucent": true
+    },
+    {
+      "role": "message-link",
+      "foreground": "running",
+      "background": "elevated",
+      "minimum": 4.5,
+      "translucent": true
+    },
+    {
+      "role": "accent-button",
+      "foreground": "elevated",
+      "background": "accent",
+      "minimum": 4.5
+    },
+    {
+      "role": "error-button",
+      "foreground": "elevated",
+      "background": "error",
+      "minimum": 4.5
+    }
+  ],
+  "contexts": [
+    "Codex",
+    "Dot",
+    "Claude",
+    "menus",
+    "inputs",
+    "tool-results",
+    "assets",
+    "arena",
+    "taskboard",
+    "settings",
+    "dialogs",
+    "permissions",
+    "notifications",
+    "search",
+    "skills",
+    "mcp",
+    "terminal",
+    "diff",
+    "media-controls"
+  ],
+  "dynamicBackground": {
+    "textSurfaceMustBeOpaque": false,
+    "textSurfaceAlpha": 0.7568,
+    "textOpacity": 1,
+    "imageOpacityMaximum": 0.48
+  },
+  "states": {
+    "running": "running-outline",
+    "completed-unread": "complete-outline",
+    "error": "error-outline",
+    "read": "border"
+  },
+  "id": "spongebob-beach-motion"
+}

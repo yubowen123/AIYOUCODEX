@@ -1,0 +1,23 @@
+{
+  "id": "spongebob-beach-motion",
+  "name": "海底假日·海绵宝宝",
+  "version": "1.0.2",
+  "author": "浠浠",
+  "summary": "海底度假背景，海绵宝宝与派大星轻摆、水面微光；默认静态，支持自定义媒体与减少动态效果。",
+  "preview": "assets/poster.png",
+  "renderer": "aiyoucodex-theme-v1",
+  "tags": [
+    "underwater",
+    "vacation",
+    "cartoon",
+    "css-motion"
+  ],
+  "codeLicense": "MIT; character permissions subject to ASSET-NOTICE.md",
+  "badge": "社区共创 · 特别鸣谢",
+  "credits": [
+    {
+      "name": "浠浠（xixi）",
+      "role": "主题设计"
+    }
+  ]
+}
