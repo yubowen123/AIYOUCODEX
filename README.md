@@ -8,6 +8,25 @@ GitHub 开源地址：[https://github.com/yubowen123/AIYOUCODEX](https://github.
 
 ![AIYOUcodex 当前原生机甲动态实录](.github/assets/20261006/mecha-native-v1.4.2.gif)
 
+### 主题独立下载 · v1.5.1
+
+每款主题都可独立下载，安装后通过「主题与动效」切换。新增动态 / 静态卡片配色、背景与边框颜色、边框粗细、流光颜色；透明度保持独立调节。浠浠主题以 ⭐ 标记社区共创，并在下方和主题设置页保留特别鸣谢。
+
+<table>
+<tr>
+<td width="50%" align="center"><img src=".github/assets/20261006/mecha-native-v1.4.2.png" alt="机甲控制舱原生截图，2026-10-06" width="100%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-mecha-control-v1.4.3.zip"><strong>机甲控制舱 · v1.4.3 ↓ 独立下载</strong></a><br />原生截图 · 截图早于本次卡片配置更新</td>
+<td width="50%" align="center"><img src=".github/assets/20261006/pink-native-v1.0.2.png" alt="粉嫩软糖原生截图，2026-10-06" width="100%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-pink-candy-v1.0.4.zip"><strong>粉嫩软糖 · v1.0.4 ↓ 独立下载</strong></a><br />原生截图 · 截图早于本次卡片配置更新</td>
+</tr>
+<tr>
+<td width="50%" align="center"><img src=".github/assets/20261008/beach-vacation-preview.png" alt="海边度假·浠浠主题素材预览，非原生截图" width="100%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-beach-vacation-xixi-v1.2.0.zip"><strong>⭐ 海边度假·浠浠 · v1.2.0 ↓ 独立下载</strong></a><br />社区共创 · 特别鸣谢<br />素材预览，原生安装效果待验证</td>
+<td width="50%" align="center"><img src=".github/assets/20261009/spongebob-theme-fixture.png" alt="海底假日·海绵宝宝 v1.0.2 编译后隔离预览，非 Codex 实机截图" width="100%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-spongebob-beach-motion-xixi-v1.0.2.zip"><strong>⭐ 海底假日·海绵宝宝 · v1.0.2 ↓ 独立下载</strong></a><br />浠浠设计 · 社区共创<br />25 项隔离检查通过；原生效果待验证<br /><a href="docs/THEME-SPONGEBOB-v1.0.2.md">修复说明与验证</a></td>
+</tr>
+</table>
+
+⭐ **特别鸣谢 · 浠浠（xixi）**：海边度假与海底假日主题设计 / 社区贡献者。主题说明保留署名与素材权利边界：[海边度假](themes/beach-vacation/README.md) · [海底假日](themes/spongebob-beach-motion/README.md)。
+
+查看[主题安装与配置](docs/THEMES.md)。本次新增控件通过隔离浏览器测试；上述旧原生截图和素材预览不代表新增控件的实机验收。
+
 当前发行版：**v1.5.1**。项目管理、Skills 分组、本地资产库、快捷入口设置及对应的 macOS/Windows 后台运行时会作为同一安装包更新，不需要分别安装。
 
 v1.4.0 将菜单功能统一为不打断对话的右侧面板：可以直接在项目对话里搜索项目、Skills 或资产，并把 Skill 与本地资产安全预填到当前输入框，不会自动发送。
@@ -31,23 +50,6 @@ v1.4.0 将菜单功能统一为不打断对话的右侧面板：可以直接在�
 <img src=".github/assets/20261008/sidebar-recency-update-card.png" alt="AIYOUcodex 侧栏与对话排序更新卡片" width="640" />
 
 卡片使用 Codex Image 生成；其中界面素材来自当前原生 Codex，卡片文案已替换为教程示例。本节为主分支源码更新，发行包版本以 Releases 页面为准。
-
-### 主题独立下载 · v1.5.1
-
-每款主题都可独立下载，安装后通过「主题与动效」切换。新增动态 / 静态卡片配色、背景与边框颜色、边框粗细、流光颜色；透明度保持独立调节。浠浠主题以 ⭐ 标记社区共创，并在下方和主题设置页保留特别鸣谢。
-
-<table>
-<tr>
-<td width="50%" align="center"><img src=".github/assets/20261006/mecha-native-v1.4.2.png" alt="机甲控制舱原生截图，2026-10-06" width="100%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-mecha-control-v1.4.3.zip"><strong>机甲控制舱 · v1.4.3 ↓ 独立下载</strong></a><br />原生截图 · 截图早于本次卡片配置更新</td>
-<td width="50%" align="center"><img src=".github/assets/20261006/pink-native-v1.0.2.png" alt="粉嫩软糖原生截图，2026-10-06" width="100%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-pink-candy-v1.0.4.zip"><strong>粉嫩软糖 · v1.0.4 ↓ 独立下载</strong></a><br />原生截图 · 截图早于本次卡片配置更新</td>
-</tr>
-<tr>
-<td width="50%" align="center"><img src=".github/assets/20261008/beach-vacation-preview.png" alt="海边度假·浠浠主题素材预览，非原生截图" width="100%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-beach-vacation-xixi-v1.2.0.zip"><strong>⭐ 海边度假·浠浠 · v1.2.0 ↓ 独立下载</strong></a><br />社区共创 · 特别鸣谢<br />素材预览，原生安装效果待验证</td>
-<td width="50%" valign="middle"><h3>⭐ 特别鸣谢 · 浠浠（xixi）</h3><p><strong>贡献角色：主题设计 / 社区贡献者</strong></p><p>海边度假主题保留浠浠设计署名，AIYOUcodex 完成主题契约适配与卡片设置接入。感谢为主题库带来海浪、晚霞与卡通度假风格。</p><p><a href="themes/beach-vacation/README.md">主题说明与署名</a> · <a href="https://github.com/yubowen123/AIYOUCODEX/releases/tag/v1.5.1">全部主题下载</a></p></td>
-</tr>
-</table>
-
-查看[主题安装与配置](docs/THEMES.md)。本次新增控件通过隔离浏览器测试；上述旧原生截图和素材预览不代表新增控件的实机验收。
 
 ### main 最新更新 · 侧边面板、对话设置与重置概率 · 2026-10-07
 

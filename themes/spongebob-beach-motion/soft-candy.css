@@ -1,0 +1,177 @@
+/* Component layer. Shapes are decorative; native layout and hit regions own behavior. */
+html[data-aiyou-theme="spongebob-beach-motion"] {
+  --aiyou-gloss:linear-gradient(155deg,var(--aiyou-elevated),var(--aiyou-surface));
+  --aiyou-focus:var(--aiyou-brand);
+  --aiyou-rose-glow:color-mix(in srgb,var(--aiyou-brand) 12%,transparent);
+  --aiyou-milk-gloss:color-mix(in srgb,var(--aiyou-elevated) 95%,transparent);
+  --aiyou-toolbar-icon-color:var(--aiyou-muted);
+}
+html[data-aiyou-theme="spongebob-beach-motion"] :is([data-aiyou-titlebar],[data-aiyou-rail]) {
+  border-color:var(--aiyou-card-border)!important;
+  box-shadow:inset 0 1px var(--aiyou-milk-gloss),0 2px 6px var(--aiyou-rose-glow);
+}
+html[data-aiyou-theme="spongebob-beach-motion"] [data-aiyou-rail] button[data-selected] {
+  background:var(--aiyou-fill-control)!important;
+  border:1px solid var(--aiyou-card-border)!important;
+  border-radius:12px;
+  box-shadow:inset 2px 0 var(--aiyou-brand),var(--aiyou-custom-shadow)!important;
+  color:var(--aiyou-accent)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] #aiyoucodex-agent-launchers button {
+  border:1px solid var(--aiyou-card-border)!important;
+  border-radius:var(--aiyou-radius-control)!important;
+  color:var(--aiyou-text)!important;
+  font-weight:500;
+  box-shadow:var(--aiyou-custom-shadow)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] :is(#aiyoucodex-agent-launchers button,[data-codex-sidebar-folder-tag]) {
+  transition:border-color 140ms ease,box-shadow 140ms ease,background-color 140ms ease;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] #aiyoucodex-agent-launchers button:hover {
+  border-color:var(--aiyou-brand)!important;
+  box-shadow:var(--aiyou-custom-shadow),0 0 0 2px var(--aiyou-rose-glow)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] #codex-sidebar-section-tabs {
+  border:1px solid var(--aiyou-card-border)!important;
+  border-radius:var(--aiyou-radius-card)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] #codex-sidebar-section-tabs [aria-selected="true"],
+html[data-aiyou-theme="spongebob-beach-motion"] [data-codex-sidebar-folder-tag][aria-pressed="true"] {
+  border:1px solid var(--aiyou-card-border)!important;
+  border-radius:12px!important;
+  background:linear-gradient(165deg,var(--aiyou-milk-gloss),var(--aiyou-user-bg))!important;
+  color:var(--aiyou-accent)!important;
+  box-shadow:inset 0 1px var(--aiyou-milk-gloss),inset 0 -2px var(--aiyou-rose-glow),0 2px 5px var(--aiyou-rose-glow)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] [data-codex-sidebar-folder-tag] {border-radius:var(--aiyou-radius-control)!important}
+html[data-aiyou-theme="spongebob-beach-motion"] [data-codex-sidebar-remote-badge] {
+  background:var(--aiyou-user-bg)!important;color:var(--aiyou-accent)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] [data-codex-conversation-preview-enhanced] {
+  border-radius:var(--aiyou-radius-card)!important;
+  border:1px solid var(--aiyou-card-border)!important;
+  box-shadow:var(--aiyou-custom-shadow)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] [data-codex-conversation-preview-enhanced] :is(.codex-conversation-card-title,.codex-conversation-card-summary) {color:var(--aiyou-text)!important}
+html[data-aiyou-theme="spongebob-beach-motion"] [data-codex-conversation-preview-enhanced] :is(.codex-conversation-card-time,.codex-conversation-card-tags) {color:var(--aiyou-muted)!important}
+html[data-aiyou-theme="spongebob-beach-motion"] .codex-conversation-card-tags span {
+  border-color:var(--aiyou-card-border)!important;background:var(--aiyou-fill-control)!important;color:var(--aiyou-muted)!important;
+}
+/* Reference glass tint, retaining every independently editable alpha layer. */
+html[data-aiyou-theme="spongebob-beach-motion"] {
+  --aiyou-fill-sidebar:color-mix(in srgb,var(--aiyou-bg) calc(var(--aiyou-alpha-sidebar) * 100%),transparent)!important;
+  --aiyou-fill-chrome:color-mix(in srgb,var(--aiyou-user-bg) calc(var(--aiyou-alpha-chrome) * 100%),transparent)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] #aiyoucodex-agent-launchers button {
+  background:linear-gradient(160deg,var(--aiyou-fill-control),color-mix(in srgb,var(--aiyou-user-bg) calc(var(--aiyou-alpha-control) * 60%),transparent))!important;
+}
+/* Both native message roles share the sent bubble's geometry. Keep the native
+   reading column and turn spacing; only the bubble owns padding and surface. */
+html[data-aiyou-theme="spongebob-beach-motion"] :is([data-markdown-text-style="assistant-message"],[data-user-message-bubble]) {
+  box-sizing:border-box;
+  min-width:0;
+  padding:10px var(--thread-content-margin,16px)!important;
+  border-radius:var(--aiyou-radius-message)!important;
+  box-shadow:var(--aiyou-custom-shadow)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] #aiyoucodex-claude-panel article:not([data-welcome]) {
+  box-shadow:var(--aiyou-custom-shadow)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] :is([data-composer-body],#aiyoucodex-claude-panel [data-claude-compose]) {
+  background-image:linear-gradient(165deg,transparent,color-mix(in srgb,var(--aiyou-user-bg) calc(var(--aiyou-alpha-composer) * 60%),transparent))!important;
+}
+/* State outlines remain distinct from rose selection and keyboard focus. */
+html[data-aiyou-theme="spongebob-beach-motion"] [data-codex-conversation-preview-enhanced][data-codex-execution-state="running"] {
+  border-color:var(--aiyou-running-outline)!important;
+  box-shadow:var(--aiyou-custom-shadow),0 0 0 1px var(--aiyou-running-outline),0 0 12px color-mix(in srgb,var(--aiyou-running-outline) 14%,transparent)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] [data-codex-conversation-preview-enhanced][data-codex-execution-state="completed-unread"] {
+  border-color:var(--aiyou-complete-outline)!important;
+  box-shadow:var(--aiyou-custom-shadow),0 0 0 1px var(--aiyou-complete-outline),0 0 12px color-mix(in srgb,var(--aiyou-complete-outline) 12%,transparent)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] [data-codex-conversation-preview-enhanced][data-codex-execution-state="error"] {
+  border-color:var(--aiyou-error-outline)!important;
+  box-shadow:var(--aiyou-custom-shadow),0 0 0 1px var(--aiyou-error-outline),0 0 12px color-mix(in srgb,var(--aiyou-error-outline) 14%,transparent)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] .codex-conversation-status-button {
+  background:var(--aiyou-gloss)!important;
+  box-shadow:inset 0 1px var(--aiyou-milk-gloss),0 0 0 1px var(--aiyou-card-border),0 3px 7px var(--aiyou-rose-glow)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] :is([data-markdown-text-style="assistant-message"],[data-user-message-bubble],#aiyoucodex-claude-panel article) {
+  border-color:var(--aiyou-card-border)!important;
+  border-radius:var(--aiyou-radius-message)!important;
+  color:var(--aiyou-text)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] [data-user-message-bubble],
+html[data-aiyou-theme="spongebob-beach-motion"] #aiyoucodex-claude-panel article[data-role="user"] {
+  background:color-mix(in srgb,var(--aiyou-user-bg) calc(var(--aiyou-alpha-message) * 100%),transparent)!important;
+  box-shadow:inset 0 0 0 1px var(--aiyou-card-border),inset 0 1px var(--aiyou-milk-gloss),0 3px 8px var(--aiyou-rose-glow)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] :is([data-composer-body],#aiyoucodex-claude-panel [data-claude-compose]) {
+  position:relative;
+  isolation:isolate;
+  border:1px solid var(--aiyou-card-border)!important;
+  border-radius:var(--aiyou-radius-composer)!important;
+  box-shadow:inset 0 1px 2px var(--aiyou-milk-gloss),0 0 0 4px color-mix(in srgb,var(--aiyou-elevated) 70%,transparent),0 0 0 5px var(--aiyou-card-border),0 7px 20px var(--aiyou-rose-glow)!important;
+  color:var(--aiyou-text)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] :is([data-composer-body],#aiyoucodex-claude-panel [data-claude-compose])::before {
+  content:"";position:absolute;inset:-9px;border:1px solid var(--aiyou-milk-gloss);
+  border-radius:calc(var(--aiyou-radius-composer) + 9px);
+  background:none!important;pointer-events:none!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] [data-composer-body] button:is([aria-label="发送消息"],[aria-label="发送"],[aria-label="Send message"]),
+html[data-aiyou-theme="spongebob-beach-motion"] #aiyoucodex-claude-panel button[data-claude-send] {
+  background:var(--aiyou-brand)!important;color:var(--aiyou-elevated)!important;
+  border:1px solid var(--aiyou-elevated)!important;border-radius:50%!important;
+  box-shadow:inset 0 1px var(--aiyou-milk-gloss),0 0 0 3px var(--aiyou-rose-glow),0 3px 9px var(--aiyou-rose-glow)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] :is([data-execution-output],[data-radix-menu-content],[role="dialog"],dialog,#aiyoucodex-efficiency-panel,#codex-skill-organizer,#aiyoucodex-reset-dialog,#aiyoucodex-workspace-folder-menu,#codex-sidebar-shortcut-settings-dialog) {
+  border-color:var(--aiyou-card-border)!important;border-radius:var(--aiyou-radius-dialog)!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] :is(button,[role="button"],a,input,textarea,[contenteditable]):focus-visible {
+  outline:2px solid var(--aiyou-brand);outline-offset:2px;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] :is(button,[role="button"]):disabled {box-shadow:none!important}
+#aiyou-theme-chassis {
+  position:fixed;inset:0;z-index:45;pointer-events:none!important;user-select:none;
+  border:1px solid var(--aiyou-card-border);border-radius:var(--aiyou-radius-shell);
+  box-shadow:inset 0 0 0 2px var(--aiyou-milk-gloss),inset 0 0 0 4px var(--aiyou-rose-glow);
+}
+#aiyou-theme-chassis::before {content:"";position:absolute;inset:5px;border:1px solid var(--aiyou-milk-gloss);border-radius:calc(var(--aiyou-radius-shell) - 4px);pointer-events:none}
+#aiyou-theme-chassis .aiyou-corner {position:absolute;width:44px;height:44px;pointer-events:none;opacity:.85}
+#aiyou-theme-chassis .aiyou-corner-tl {top:0;left:0}
+#aiyou-theme-chassis .aiyou-corner-tr {top:0;right:0;transform:scaleX(-1)}
+#aiyou-theme-chassis .aiyou-corner-bl {bottom:0;left:0;transform:scaleY(-1)}
+#aiyou-theme-chassis .aiyou-corner-br {bottom:0;right:0;transform:scale(-1)}
+#aiyou-theme-chassis .aiyou-armor-rail {position:absolute;left:7px;bottom:32px;width:3px;height:22%;border-left:1px solid var(--aiyou-card-border);border-right:1px solid var(--aiyou-milk-gloss);pointer-events:none}
+#aiyou-theme-chassis .aiyou-armor-right {left:auto;right:7px;bottom:14%}
+#aiyou-theme-chassis .aiyou-armor-seam {position:absolute;left:var(--aiyou-host-left,36%);right:12px;top:calc(var(--aiyou-titlebar-height,44px) - 1px);height:3px;border-top:1px solid var(--aiyou-card-border);box-shadow:0 1px var(--aiyou-milk-gloss);pointer-events:none}
+#aiyou-theme-chassis .aiyou-armor-footer {position:absolute;bottom:7px;right:20px;color:var(--aiyou-accent);opacity:.45;font:8px/1 -apple-system,sans-serif;letter-spacing:1.6px}
+#aiyou-theme-backdrop .aiyou-brand {position:absolute;left:24px;top:24px;color:var(--aiyou-accent)}
+#aiyou-theme-backdrop .aiyou-wordmark {position:static;display:block;width:210px;height:20px;max-height:none;object-fit:contain;opacity:.7;mask-image:none;pointer-events:none}
+#aiyou-theme-backdrop .aiyou-brand small {display:block;margin-top:5px;color:var(--aiyou-muted);opacity:.8;font:11px/1.5 "PingFang SC",sans-serif;letter-spacing:1px}
+#aiyou-theme-backdrop .aiyou-brand-side {position:absolute;right:18px;top:160px;width:65px;color:var(--aiyou-accent);opacity:.55;font:9px/1.7 -apple-system,sans-serif;letter-spacing:.7px;white-space:pre-line}
+#aiyou-theme-backdrop .aiyou-brand-side strong {display:none}
+/* A long answer is read on its original column; decoration does not own that column. */
+@media(max-width:1100px) {#aiyou-theme-backdrop .aiyou-brand-side{display:none}}
+@media(prefers-reduced-motion:reduce) {html[data-aiyou-theme="spongebob-beach-motion"] *{transition:none!important}}
+
+/* Final paired geometry also applies while a native chat host is replaced. */
+html[data-aiyou-theme="spongebob-beach-motion"] :is([data-markdown-text-style="assistant-message"],[data-user-message-bubble]) {
+  padding:10px var(--thread-content-margin,16px)!important;
+  border:1px solid var(--aiyou-card-border)!important;
+  border-radius:var(--aiyou-radius-message)!important;
+  box-shadow:var(--aiyou-custom-shadow)!important;
+  opacity:1!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] :is([data-markdown-text-style="assistant-message"],[data-user-message-bubble]) > :first-child {margin-top:0}
+html[data-aiyou-theme="spongebob-beach-motion"] :is([data-markdown-text-style="assistant-message"],[data-user-message-bubble]) > :last-child {margin-bottom:0}
+html[data-aiyou-theme="spongebob-beach-motion"] :is([data-markdown-text-style="assistant-message"],[data-user-message-bubble]) :is([data-markdown-text-style="assistant-message"],[data-user-message-bubble]) {
+  padding:0!important;border:0!important;box-shadow:none!important;background:transparent!important;
+}
+html[data-aiyou-theme="spongebob-beach-motion"] [data-markdown-text-style="assistant-message"]:empty {padding:0!important;border:0!important;box-shadow:none!important;background:transparent!important}
+html[data-aiyou-theme="spongebob-beach-motion"] [data-composer-body] button:is([aria-label="发送消息"],[aria-label="发送"],[aria-label="Send message"]),
+html[data-aiyou-theme="spongebob-beach-motion"] #aiyoucodex-claude-panel button[data-claude-send] {
+  background:var(--aiyou-accent)!important;color:var(--aiyou-ink-inverse,var(--aiyou-elevated))!important;
+}

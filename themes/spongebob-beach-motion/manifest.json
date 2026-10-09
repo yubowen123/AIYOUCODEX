@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "id": "spongebob-beach-motion",
+  "name": "海底假日·海绵宝宝",
+  "version": "1.0.2",
+  "renderer": "aiyoucodex-theme-v1",
+  "palette": "colors.json",
+  "design": "design.json",
+  "controls": "controls.json",
+  "poster": "assets/poster.png",
+  "decorations": {},
+  "motion": {
+    "enter": {
+      "file": "assets/poster.png",
+      "durationMs": 1600,
+      "loop": false
+    },
+    "click": {
+      "file": "assets/poster.png",
+      "durationMs": 1600,
+      "loop": false
+    },
+    "send": {
+      "file": "assets/poster.png",
+      "durationMs": 1600,
+      "loop": false
+    },
+    "running": {
+      "file": "assets/poster.png",
+      "durationMs": 5000,
+      "loop": false
+    },
+    "complete": {
+      "file": "assets/poster.png",
+      "durationMs": 1600,
+      "loop": false
+    },
+    "error": {
+      "file": "assets/poster.png",
+      "durationMs": 1600,
+      "loop": false
+    }
+  },
+  "defaults": {
+    "enabled": true,
+    "motion": false,
+    "backgroundType": "image",
+    "backgroundOpacity": 0.46
+  },
+  "limits": {
+    "maxAssetBytes": 10000000,
+    "maxBundleBytes": 20000000
+  },
+  "events": {
+    "chatEntry": "enter",
+    "interaction": "click",
+    "sendAccepted": "send",
+    "running": "running",
+    "completed-unread": "complete",
+    "error": "error",
+    "read": "poster"
+  },
+  "author": "浠浠",
+  "description": "以用户提供的海底度假图为底图，海绵宝宝与派大星以不同节奏轻摆，海面缓慢流光。个人粉丝主题，非官方作品。"
+}

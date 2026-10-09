@@ -5,6 +5,9 @@
 | 机甲控制舱 v1.4.3 | 内置主题 | [下载 ZIP](https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-mecha-control-v1.4.3.zip) |
 | 粉嫩软糖 v1.0.4 | 内置主题 | [下载 ZIP](https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-pink-candy-v1.0.4.zip) |
 | 海边度假·浠浠 v1.2.0 | ⭐ 社区共创 · 特别鸣谢浠浠（xixi），主题设计 | [下载 ZIP](https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-beach-vacation-xixi-v1.2.0.zip) |
+| 海底假日·海绵宝宝 v1.0.2 | ⭐ 社区共创 · 特别鸣谢浠浠（xixi），主题设计 | [下载 ZIP](https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-spongebob-beach-motion-xixi-v1.0.2.zip) |
+
+新增海底假日主题修复了重挂载后的动效失效、自定义背景叠加人物、气泡留白、发送按钮对比度和设置名称。25 项隔离验证通过；原生安装和界面效果尚未实测。[修复记录与隔离预览](THEME-SPONGEBOB-v1.0.2.md)。
 
 更新 AIYOUcodex v1.5.1 后可安装任意独立主题。主题包包含源文件与必要素材，不包含账号、对话或个人媒体。主题名下方链接直接下载 GitHub Release 附件；源文件各自位于 `themes/` 的独立目录。
 
@@ -16,7 +19,7 @@
 
 ## ⭐ 特别鸣谢
 
-浠浠（xixi）：海边度假主题设计 / 社区贡献者。主题设置、下载页和 manifest 保留署名与特别标记。素材许可说明见 [ASSET-NOTICE](../themes/beach-vacation/ASSET-NOTICE.md)。
+浠浠（xixi）：海边度假、海底假日主题设计 / 社区贡献者。主题设置、下载页和 manifest 保留署名与特别标记。素材许可说明见 [海边度假](../themes/beach-vacation/ASSET-NOTICE.md) / [海底假日](../themes/spongebob-beach-motion/ASSET-NOTICE.md)。
 
 ## 既有主题、动效与自动恢复
 

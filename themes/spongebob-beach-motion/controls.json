@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "storageKey": "aiyoucodex.theme.spongebob-beach-motion.v1",
+  "defaults": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "motion": false,
+    "alpha": {
+      "overall": 0.88,
+      "chrome": 0.86,
+      "sidebar": 0.84,
+      "chat": 0.08,
+      "panel": 0.9,
+      "card": 0.92,
+      "message": 0.86,
+      "composer": 0.94,
+      "control": 0.86,
+      "menu": 0.98,
+      "text": 1,
+      "border": 0.65,
+      "shadow": 1,
+      "decoration": 0.9,
+      "image": 0.46,
+      "composer-area": 0.28
+    },
+    "colors": {
+      "primary": "#103a49",
+      "secondary": "#365a65",
+      "link": "#075f83",
+      "success": "#126d5b",
+      "danger": "#a93643",
+      "warning": "#006779",
+      "inverse": "#f8feff"
+    },
+    "background": {
+      "fit": "cover",
+      "x": 75,
+      "y": 50,
+      "type": "image",
+      "source": "builtin",
+      "custom": null,
+      "customStates": {}
+    }
+  },
+  "defaultReadability": {
+    "minimum": 4.99,
+    "passes": true
+  },
+  "source": "createThemeCustomization"
+}
