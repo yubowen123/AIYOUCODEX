@@ -272,7 +272,7 @@ test("slash dispatch validates SDK catalog before releasing input, preserves exa
   // durable catalog before starting a new controller that reads it once.
   await until(async () => {
     const stored = JSON.parse(await readFile(path.join(f.options.rootDir, "sessions.private.json"), "utf8"));
-    return stored.sessions.some(s => s.id === id && s.commands.some(c => c.name === "plugin:lint" && c.verified));
+    return stored.sessions.some(s => s.id === id && s.status === "idle" && s.commands.some(c => c.name === "plugin:lint"));
   });
   const restored = createClaudeController(f.options);
   assert.ok((await restored.snapshot({ sessionId: id })).commands.some(c => c.name === "plugin:lint" && c.verified));
