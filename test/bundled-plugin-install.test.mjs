@@ -1,0 +1,53 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import test from 'node:test';
+import { installBundledPlugins } from '../lib/bundled-plugin-install.mjs';
+const run = promisify(execFile);
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const cli = process.env.CODEX_CLI_PATH || 'codex';
+let cliAvailable = false;
+try { await run(cli, ['plugin', '--help']); cliAvailable = true; } catch {}
+
+test('a real Codex profile discovers the bundled MCP, repeats installation safely and preserves disabled preference', {timeout:60000, skip:!cliAvailable && 'Requires Codex CLI with plugin support'}, async t => {
+  const home = await mkdtemp(path.join(process.env.AIYOUCODEX_TEST_OUTPUT_DIRECTORY || os.tmpdir(), 'moke-plugin-profile-'));
+  t.after(()=>rm(home,{recursive:true,force:true}));
+  const config = path.join(home, '.codex', 'config.toml');
+  await mkdir(path.dirname(config),{recursive:true});
+  const initial = '[mcp_servers.existing]\nurl = "https://example.invalid/mcp"\n\n[plugins."unrelated@other"]\nenabled = false\n';
+  await writeFile(config, initial);
+  const invoke = async args=> JSON.parse((await run(cli,args,{env:{...process.env,CODEX_HOME:path.dirname(config)},timeout:20000})).stdout);
+  const first = await installBundledPlugins({home,installDir:root,codexPath:cli});
+  assert.equal(first.status,'installed');
+  const after = await readFile(config,'utf8');
+  assert.ok(after.includes(initial.trim()));
+  const servers = await invoke(['mcp','list','--json']);
+  const moke = servers.filter(s=>s.name==='moke');
+  assert.equal(moke.length,1);
+  assert.equal(moke[0].transport.url,'https://www.mokeaigc.ai/mcp');
+  assert.equal(moke[0].auth_status,'not_logged_in');
+  const second = await installBundledPlugins({home,installDir:root,codexPath:cli});
+  assert.equal(second.status,'installed');
+  assert.equal(await readFile(config,'utf8'),after,'No redundant config rewrite');
+  // Existing same-name server keeps its exact native config; plugin must not duplicate it.
+  await writeFile(config, after+'\n[mcp_servers.moke]\nurl = "https://www.mokeaigc.ai/mcp"\nscopes = ["openid", "skill:read", "prompt:read"]\n[mcp_servers.moke.oauth]\nclient_id = "s2sv99pil5qbkz3gajdr0"\n');
+  const withServer = await readFile(config,'utf8');
+  await installBundledPlugins({home,installDir:root,codexPath:cli});
+  assert.equal(await readFile(config,'utf8'),withServer);
+  assert.equal((await invoke(['mcp','list','--json'])).filter(s=>s.name==='moke').length,1);
+  const disabled = withServer.replace(/(\[plugins\."moke-aigc@aiyoucodex-bundled"\]\s*enabled = )true/,'$1false');
+  assert.notEqual(disabled,withServer);
+  await writeFile(config,disabled);
+  assert.equal((await installBundledPlugins({home,installDir:root,codexPath:cli})).status,'disabled-by-user');
+  assert.equal(await readFile(config,'utf8'),disabled);
+  assert.equal((await installBundledPlugins({home,installDir:root,codexPath:cli,remove:true})).status,'removed');
+  const removed = await readFile(config,'utf8');
+  assert.ok(removed.includes(initial.trim()), 'Other connections and plugins survive uninstall');
+  assert.ok(removed.includes('[mcp_servers.moke]'), 'Existing MOKE server survives uninstall');
+  assert.ok(!removed.includes('[plugins."moke-aigc@aiyoucodex-bundled"]'));
+  assert.ok(!(await invoke(['plugin','marketplace','list','--json'])).marketplaces.some(m=>m.name==='aiyoucodex-bundled'));
+});

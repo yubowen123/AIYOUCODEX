@@ -12,6 +12,16 @@ GitHub 开源地址：[https://github.com/yubowen123/AIYOUCODEX](https://github.
 
 v1.4.0 将菜单功能统一为不打断对话的右侧面板：可以直接在项目对话里搜索项目、Skills 或资产，并把 Skill 与本地资产安全预填到当前输入框，不会自动发送。
 
+### 对话体验与 MOKE 接入更新 · 2026-10-09
+
+历史消息滚动保持阅读位置；“最近”过滤子 Agent 对话；右键菜单跟随卡片主题，补齐置顶、重命名、归档和移动项目。MOKE 官网 Logo 入口使用原生右侧浏览器，MCP 插件随安装集成。
+
+**验证边界：** MOKE 插件已安装，OAuth 授权兼容仍待解决；原生菜单点击后的页面加载仍待实机确认。Windows 安装与交互以相应 CI 和实机结果为准。[更新详情与验证范围](docs/UPDATE-2026-10-09.md)
+
+<img src=".github/assets/20261009/recent-update-card.png" alt="AIYOUcodex 近期更新知识卡片：对话体验与 MOKE 接入" width="640" />
+
+卡片由 Codex Image 生成，其中真实界面示例来自 10 月 8 日的教程截图；本节为源码更新，既有 v1.5.1 发行包保持原样。
+
 ### 主分支修复更新 · 2026-10-08
 
 侧栏边框与状态光晕完整显示；“最近”接入实时会话目录并自动更新排序，首批 30 条后可加载更多；“置顶”按最新对话时间倒序。粉嫩软糖气泡在聊天区域重建时保持统一留白，主题 Skill 补齐插件展开和拖动边界标准。
@@ -340,6 +350,14 @@ node scripts/verify-complete-history.mjs --thread-id <conversation-uuid> --min-u
 node scripts/verify-asset-console-platform.mjs
 node scripts/verify-local-asset-manager.mjs
 ```
+
+## MOKE AIGC 内置入口与 MCP
+
+左侧菜单默认提供 MOKE AIGC，使用 Codex 原生右侧浏览器打开 [官网](https://www.mokeaigc.ai/)。图标使用官网原始 Logo，按钮适配当前主题，快捷入口设置支持隐藏/显示；点击总是显示网站，由宿主复用或重新打开页面，遵守网站的 iframe 限制。
+
+安装 AIYOUcodex 时，通过 Codex 本地插件安装流程注册 `moke-aigc@aiyoucodex-bundled`。已有同名 `moke` MCP 连接、其他插件及禁用偏好会保留；卸载只移除本集成的插件与市场注册。未找到支持插件的 Codex CLI 时，返回待安装状态，可在 CLI 可用后运行 `node scripts/install-bundled-plugins.mjs`。
+
+[官方接入说明](https://www.mokeaigc.ai/mcp.html)提供 Skills 与提示词的只读 OAuth 接入。首次使用需要 `codex mcp login moke --scopes openid,skill:read,prompt:read`；插件安装不等于账号已授权。源包包含可移植清单和 Codex 兼容清单，详见 [插件说明](plugins/moke-aigc/README.md)。
 
 ## License
 

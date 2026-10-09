@@ -40,6 +40,9 @@ test("public installer copies a portable runtime and activates it under the curr
     assert.ok(hooks.hooks.UserPromptSubmit[0].hooks[0].command.includes(installDir));
     await access(path.join(installDir, "inject", "conversation-preview.user.js"));
     await access(path.join(installDir, "inject", "claude-code.user.js"));
+    await access(path.join(installDir, "plugins", "moke-aigc", ".mcp.json"));
+    const installedConfig = await readFile(path.join(testHome, ".codex", "config.toml"), "utf8");
+    assert.match(installedConfig, /\[plugins\."moke-aigc@aiyoucodex-bundled"\]\s*enabled = true/);
     if (await findNpmCli()) {
       await access(path.join(installDir, "node_modules", "@anthropic-ai", "claude-agent-sdk", "package.json"));
       await access(path.join(installDir, "node_modules", "smol-toml", "package.json"));

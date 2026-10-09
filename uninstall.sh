@@ -44,6 +44,10 @@ if [[ -n "${HOOK_NODE}" && -f "${INSTALL_DIR}/scripts/setup-efficiency-hooks.mjs
   "${HOOK_NODE}" "${INSTALL_DIR}/scripts/setup-efficiency-hooks.mjs" --remove --apply --config "${CODEX_HOME:-${HOME}/.codex}/hooks.json" \
     || printf 'Could not remove AIYOUCODEX hook handlers; review native /hooks.\n' >&2
 fi
+if [[ -n "${HOOK_NODE}" && -f "${INSTALL_DIR}/scripts/install-bundled-plugins.mjs" ]]; then
+  "${HOOK_NODE}" "${INSTALL_DIR}/scripts/install-bundled-plugins.mjs" --remove \
+    || printf 'Could not remove bundled plugin registration; review native Plugins.\n' >&2
+fi
 
 for TARGET in \
   "${PLIST_PATH}" \

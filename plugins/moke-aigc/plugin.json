@@ -1,0 +1,26 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "moke-aigc",
+  "version": "1.0.0",
+  "description": "Connect the official MOKE read-only Skills and prompts MCP to AIYOUcodex.",
+  "author": {
+    "name": "AIYOUcodex"
+  },
+  "homepage": "https://www.mokeaigc.ai/",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "MOKE AIGC",
+        "shortDescription": "检索 MOKE Skills 与提示词",
+        "longDescription": "AIYOUcodex 内置的 MOKE 网站入口与官方远程 MCP 连接。通过 MOKE OAuth 授权后检索 Skills 和提示词。",
+        "developerName": "AIYOUcodex",
+        "category": "Productivity",
+        "websiteURL": "https://www.mokeaigc.ai/",
+        "defaultPrompt": [
+          "搜索 MOKE 中适合当前任务的 Skills",
+          "查找 MOKE 提示词并保留来源"
+        ]
+      }
+    }
+  }
+}

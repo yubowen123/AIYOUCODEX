@@ -27,7 +27,9 @@ test("remote catalog reads only requested native managers and whitelists metadat
   const managers = ["local", "host-a", "host-b"].map(hostId => ({ getHostId: () => hostId,
     getThreadSummaries: () => {
       assert.equal(hostId, "host-a", "Never read an unrequested host's threads");
-      return [{ conversationId: id, title: "真实任务", cwd: "/project", updatedAt: 1791036580000,
+      return [{conversationId:"22222222-2222-4222-8222-222222222222",source:{subAgent:{thread_spawn:{depth:1}}}},
+        {conversationId:"33333333-3333-4333-8333-333333333333",source:'{"subagent":{"other":"guardian"}}'},
+        { conversationId: id, forkedFromId:"a-parent", source:"vscode", title: "真实任务", cwd: "/project", updatedAt: 1791036580000,
         threadRuntimeStatus: { type: "notLoaded" }, canonicalVoiceHistory: "PRIVATE", turns: "PRIVATE" }];
     },
   }));
@@ -37,6 +39,7 @@ test("remote catalog reads only requested native managers and whitelists metadat
   t.after(() => { delete globalThis.window; delete globalThis.document; });
   const snapshot = await readNativeRemoteThreads(["host-a"]);
   assert.equal(snapshot.hosts.length, 1);
+  assert.equal(snapshot.hosts[0].threads.length,1,"Children filtered before remote projection; user forks preserved");
   assert.equal(snapshot.hosts[0].threads[0].nativeThreadId, id);
   assert.equal(snapshot.hosts[0].threads[0].status, "notLoaded");
   assert.ok(!JSON.stringify(snapshot).includes("PRIVATE"));

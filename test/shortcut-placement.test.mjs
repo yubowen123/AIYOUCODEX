@@ -106,17 +106,45 @@ test("shortcut grid stays above conversations with optional quick chat, rerender
     assert.equal(state.parent, 'native-rail', 'Use full-height rail, not inner native group');
     assert.ok(state.bottom <= state.railBottom + 1, JSON.stringify(state));
     assert.equal(state.native, 5, 'Preserve host rail actions');
-    for (const name of ['新对话', 'Private tool', '模型竞技场', 'Skills 分组', '项目管理', '设置']) assert.ok(state.names.includes(name), name);
+    for (const name of ['新对话', 'Private tool', 'MOKE AIGC', '模型竞技场', 'Skills 分组', '项目管理', '设置']) assert.ok(state.names.includes(name), name);
     assert.equal(state.headerControls, 0);
     assert.equal(state.health.components.header, 'ready', 'Settings-only toggle is not a missing header');
   }
   await verifyRail();
+  // A public default uses the native browser even on a fresh private profile.
+  await client.evaluate(`window.__CODEX_SIDEBAR_MANAGED_SHORTCUTS__=[];window.electronBridge={sendMessageFromView(){}};window.mokeMessages=[];window.addEventListener('message',e=>{if(e.data?.type==='toggle-browser-panel')window.mokeMessages.push(e.data)});document.getElementById('project-content').insertAdjacentHTML('beforeend','<a data-app-action-sidebar-thread-id="11111111-1111-4111-8111-111111111111" data-app-action-sidebar-thread-active="true">Active task</a>')`);
+  await waitForBrowserState(client, `!${grid}?.querySelector('[data-codex-sidebar-shortcut-name="Private tool"]')`, 'Private configuration can be empty');
+  await client.evaluate(`document.querySelector('[data-codex-sidebar-shortcut-name="MOKE AIGC"]').click()`);
+  await waitForBrowserState(client, 'window.mokeMessages.length===1', 'MOKE dispatches native browser open');
+  const moke = await client.evaluate(`({messages:window.mokeMessages,frames:[...document.querySelectorAll('iframe')].map(e=>e.src),logo:document.querySelector('[data-codex-sidebar-shortcut-name="MOKE AIGC"] img')?.getAttribute('data-aiyou-brand-logo'),logoLoaded:document.querySelector('[data-codex-sidebar-shortcut-name="MOKE AIGC"] img')?.naturalWidth})`);
+  assert.equal(moke.messages[0].url, 'https://www.mokeaigc.ai/');
+  assert.equal(moke.messages[0].conversationId, '11111111-1111-4111-8111-111111111111');
+  assert.equal(moke.messages[0].presentationIntent, 'split');
+  assert.equal(moke.logo, 'moke-aigc');
+  assert.equal(moke.logoLoaded, 309);
+  assert.equal(moke.frames.some(url=>url.includes('mokeaigc.ai')), false);
+  assert.equal('browserTabId' in moke.messages[0], false, 'Let the native host activate a matching URL');
+  await client.evaluate(`document.querySelector('[data-codex-sidebar-shortcut-name="MOKE AIGC"]').click();document.querySelector('[data-codex-sidebar-shortcut-name="MOKE AIGC"]').click()`);
+  await waitForBrowserState(client, 'window.mokeMessages.length===3', 'Repeated MOKE clicks always open the website');
+  const reveals = await client.evaluate('window.mokeMessages.slice(1)');
+  for (const message of reveals) {
+    assert.equal(message.open, true, 'MOKE must never toggle a loaded panel closed');
+    assert.equal(message.url, 'https://www.mokeaigc.ai/', 'Pass the URL even after a previously opened tab is closed');
+    assert.equal(message.presentationIntent, 'split');
+    assert.equal('browserTabId' in message, false, 'Avoid stale tab identities; host reuses or recreates the URL');
+  }
+  await client.evaluate(`window.__CODEX_SIDEBAR_MANAGED_SHORTCUTS__=[{id:'private-example',name:'Private tool',url:'https://example.test',icon:'tv',openMode:'in-app'}]`);
+  await waitForBrowserState(client, `!!${grid}?.querySelector('[data-codex-sidebar-shortcut-name="Private tool"]')`, 'Private entry preserved');
   await client.evaluate(`document.querySelector('[data-codex-sidebar-shortcut-name="项目管理"]').click()`);
   assert.equal(await client.evaluate("document.documentElement.getAttribute('data-codex-taskboard-open')"), 'true');
   await client.evaluate(`document.querySelector('[data-codex-sidebar-shortcut-name="项目管理"]').click()`);
   assert.equal(await client.evaluate("document.documentElement.hasAttribute('data-codex-taskboard-open')"), false);
   await client.evaluate(`document.querySelector('[data-codex-sidebar-shortcut-settings]').scrollIntoView();document.querySelector('[data-codex-sidebar-shortcut-settings]').click()`);
   assert.equal(await client.evaluate("document.querySelector('#codex-conversation-view-toggle').closest('[data-codex-workspace-side-panel]').open"), true);
+  await client.evaluate(`document.querySelector('[aria-label="显示MOKE AIGC"]').click()`);
+  await waitForBrowserState(client, `!${grid}?.querySelector('[data-codex-sidebar-shortcut-name="MOKE AIGC"]')`, 'MOKE visibility is configurable');
+  await client.evaluate(`document.querySelector('[aria-label="显示MOKE AIGC"]').click()`);
+  await waitForBrowserState(client, `!!${grid}?.querySelector('[data-codex-sidebar-shortcut-name="MOKE AIGC"]')`, 'MOKE can be restored');
   const view = await client.evaluate("document.documentElement.getAttribute('data-codex-conversation-view')");
   await client.evaluate("document.getElementById('codex-conversation-view-toggle').click()");
   assert.notEqual(await client.evaluate("document.documentElement.getAttribute('data-codex-conversation-view')"), view);
