@@ -21,9 +21,12 @@ GitHub 开源地址：[https://github.com/yubowen123/AIYOUCODEX](https://github.
 <td width="50%" align="center"><img src=".github/assets/20261008/beach-vacation-preview.png" alt="海边度假·浠浠主题素材预览，非原生截图" width="100%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-beach-vacation-xixi-v1.2.0.zip"><strong>⭐ 海边度假·浠浠 · v1.2.0 ↓ 独立下载</strong></a><br />社区共创 · 特别鸣谢<br />素材预览，原生安装效果待验证</td>
 <td width="50%" align="center"><img src=".github/assets/20261009/spongebob-theme-fixture.png" alt="海底假日·海绵宝宝 v1.0.2 编译后隔离预览，非 Codex 实机截图" width="100%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-spongebob-beach-motion-xixi-v1.0.2.zip"><strong>⭐ 海底假日·海绵宝宝 · v1.0.2 ↓ 独立下载</strong></a><br />浠浠设计 · 社区共创</td>
 </tr>
+<tr>
+<td colspan="2" align="center"><img src="themes/yoyo-tilt-collection/assets/yoyo-sprite.png" alt="YOYO萌趣歪头·浠浠主题素材预览，非原生截图" width="50%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-yoyo-tilt-collection-xixi-v1.3.2.zip"><strong>⭐ YOYO萌趣歪头·浠浠 · v1.3.2 ↓ 独立下载</strong></a><br />浠浠设计 · 社区共创 · 素材预览</td>
+</tr>
 </table>
 
-⭐ **特别鸣谢 · 浠浠（xixi）**：海边度假与海底假日主题设计 / 社区贡献者。主题说明保留署名与素材权利边界：[海边度假](themes/beach-vacation/README.md) · [海底假日](themes/spongebob-beach-motion/README.md)。
+⭐ **特别鸣谢 · 浠浠（xixi）**：海边度假、海底假日与 YOYO萌趣歪头主题设计 / 社区贡献者。主题说明保留署名与素材权利边界：[海边度假](themes/beach-vacation/README.md) · [海底假日](themes/spongebob-beach-motion/README.md) · [YOYO萌趣歪头](themes/yoyo-tilt-collection/README.md)。
 
 查看[主题安装与配置](docs/THEMES.md)。本次新增控件通过隔离浏览器测试；上述旧原生截图和素材预览不代表新增控件的实机验收。
 

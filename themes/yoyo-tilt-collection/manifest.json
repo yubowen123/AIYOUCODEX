@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "id": "yoyo-tilt-collection",
+  "name": "YOYO萌趣歪头·浠浠",
+  "version": "1.3.2",
+  "renderer": "aiyoucodex-theme-v1",
+  "palette": "colors.json",
+  "design": "design.json",
+  "controls": "controls.json",
+  "poster": "assets/yoyo-sprite.png",
+  "decorations": {
+    "wordmark": "assets/wordmark.svg",
+    "corner": "assets/yoyo-corner.svg"
+  },
+  "motion": {
+    "enter": {
+      "file": "assets/yoyo-sprite.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "click": {
+      "file": "assets/yoyo-sprite.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "send": {
+      "file": "assets/yoyo-sprite.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "running": {
+      "file": "assets/yoyo-sprite.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "complete": {
+      "file": "assets/yoyo-sprite.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "error": {
+      "file": "assets/yoyo-sprite.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "figure-pink": {
+      "file": "assets/yoyo-pink.png",
+      "durationMs": 6400,
+      "loop": true
+    },
+    "figure-blue": {
+      "file": "assets/yoyo-blue.png",
+      "durationMs": 8700,
+      "loop": true
+    },
+    "figure-yellow": {
+      "file": "assets/yoyo-yellow.png",
+      "durationMs": 5800,
+      "loop": true
+    },
+    "figure-white": {
+      "file": "assets/yoyo-white.png",
+      "durationMs": 10200,
+      "loop": true
+    },
+    "figure-pattern": {
+      "file": "assets/yoyo-pattern.png",
+      "durationMs": 7600,
+      "loop": true
+    }
+  },
+  "defaults": {
+    "enabled": true,
+    "motion": true,
+    "backgroundType": "image",
+    "backgroundOpacity": 0.82
+  },
+  "limits": {
+    "maxAssetBytes": 10000000,
+    "maxBundleBytes": 20000000
+  },
+  "events": {
+    "chatEntry": "enter",
+    "interaction": "click",
+    "sendAccepted": "send",
+    "running": "running",
+    "completed-unread": "complete",
+    "error": "error",
+    "read": "poster"
+  },
+  "author": "浠浠",
+  "description": "五款YOYO形象分列专属转台，错速丝滑旋转；奶油白、珊瑚红与浅蓝主题色。",
+  "license": "MIT (theme code); character and generated artwork rights are described in ASSET-NOTICE.md",
+  "tags": [
+    "yoyo",
+    "miniso",
+    "rotating-display",
+    "animated",
+    "pastel"
+  ],
+  "figureSlots": [
+    "figure-pink",
+    "figure-blue",
+    "figure-yellow",
+    "figure-white",
+    "figure-pattern"
+  ]
+}

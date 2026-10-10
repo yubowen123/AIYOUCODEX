@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "yoyo-tilt-collection",
+  "language": "YOYO萌趣歪头：五款形象在珊瑚、浅蓝与奶油白转台上错速旋转",
+  "radius": {
+    "control": 18,
+    "card": 16,
+    "message": 16,
+    "dialog": 20,
+    "composer": 24,
+    "shell": 16
+  },
+  "spacing": {
+    "unit": 4,
+    "stack": 10,
+    "message-x": 14,
+    "message-y": 12
+  },
+  "borders": {
+    "width": 1,
+    "focusWidth": 2
+  },
+  "typography": {
+    "family": "system-ui, -apple-system, BlinkMacSystemFont, PingFang SC, sans-serif",
+    "bodySizePolicy": "inherit-host",
+    "bodyLineHeight": 1.65,
+    "brand": "assets/wordmark.svg"
+  },
+  "elevation": {
+    "message": "inset 0 1px 1px #ffffffee,0 3px 10px #82652010",
+    "card": "inset 0 1px 1px #ffffffee,0 2px 6px #82652012,0 7px 18px #82652012",
+    "dialog": "inset 0 1px 1px #ffffffee,0 12px 32px #82652024"
+  },
+  "motion": {
+    "hoverMs": 140,
+    "eventRateLimitMs": 900,
+    "decorateOnly": true,
+    "reducedMotion": "poster; stop all continuous figure rotation",
+    "confirmedSendOnly": true
+  },
+  "content": {
+    "messageTextOpacity": 1,
+    "messageBackgroundAlpha": 0.9,
+    "mediaOpacityMaximum": 0.82,
+    "preserveMediaPixels": true
+  },
+  "invariants": [
+    "no-business-action",
+    "no-hit-interception",
+    "no-structure-replacement",
+    "default-theme-fallback"
+  ]
+}
