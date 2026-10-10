@@ -1,0 +1,2 @@
+# Keep the standalone theme package identical to its SHA256SUMS on every OS.
+themes/yoyo-tilt-collection/** -text
