@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "storageKey": "aiyoucodex.theme.yoyo-tilt-collection.v1",
+  "defaults": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "motion": true,
+    "alpha": {
+      "overall": 1,
+      "chrome": 0.9,
+      "sidebar": 0.86,
+      "chat": 0,
+      "panel": 0.86,
+      "card": 0.9,
+      "message": 0.9,
+      "composer": 0.9,
+      "control": 0.86,
+      "menu": 0.98,
+      "text": 1,
+      "border": 0.65,
+      "shadow": 1,
+      "decoration": 0.9,
+      "image": 0.82,
+      "composer-area": 0
+    },
+    "colors": {
+      "primary": "#40382f",
+      "secondary": "#63514d",
+      "link": "#176b91",
+      "success": "#27623a",
+      "danger": "#a4333f",
+      "warning": "#ad3d51",
+      "inverse": "#fffdf9"
+    },
+    "background": {
+      "fit": "cover",
+      "x": 50,
+      "y": 50,
+      "type": "image",
+      "source": "builtin",
+      "custom": null,
+      "customStates": {}
+    }
+  },
+  "defaultReadability": {
+    "minimum": 5.65,
+    "passes": true
+  },
+  "source": "createThemeCustomization"
+}

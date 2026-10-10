@@ -1,0 +1,17 @@
+{
+  "id": "yoyo-tilt-collection",
+  "name": "YOYO萌趣歪头·浠浠",
+  "version": "1.3.2",
+  "author": "浠浠",
+  "summary": "五款YOYO形象在奶油白、珊瑚红和浅蓝转台上错速丝滑旋转。",
+  "preview": "assets/yoyo-sprite.png",
+  "renderer": "aiyoucodex-theme-v1",
+  "tags": [
+    "yoyo",
+    "miniso",
+    "pastel",
+    "animated",
+    "rotating-display"
+  ],
+  "codeLicense": "MIT; character and artwork rights subject to ASSET-NOTICE.md"
+}
