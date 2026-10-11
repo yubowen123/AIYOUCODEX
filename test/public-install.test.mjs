@@ -10,6 +10,8 @@ import { findNpmCli } from "../scripts/setup-claude-dependencies.mjs";
 
 const projectRoot = path.resolve(".");
 const macOnly = { skip: process.platform !== "darwin" };
+// Reuse the populated package cache without sharing the isolated Codex profile.
+const dependencyCache = process.env.npm_config_cache || path.join(os.homedir(), ".npm");
 
 test("public installer copies a portable runtime and activates it under the current user", macOnly, async () => {
   const testHome = await mkdtemp(path.join(os.tmpdir(), "codex-sidebar-public-install-"));
@@ -21,6 +23,8 @@ test("public installer copies a portable runtime and activates it under the curr
       env: {
         ...process.env,
         HOME: testHome,
+        npm_config_cache: dependencyCache,
+        npm_config_prefer_offline: "true",
         CODEX_HOME: path.join(testHome, ".codex"),
         CODEX_SIDEBAR_SOURCE_DIR: projectRoot,
         CODEX_SIDEBAR_INSTALL_DIR: installDir,
@@ -69,8 +73,10 @@ test("public installer copies a portable runtime and activates it under the curr
     assert.match(publicRuntime, /readManagedShortcuts\(\)/,
       "the public runtime must keep loading normalized shortcuts from the external local profile");
     const installedPaths = await readdir(installDir, { recursive: true });
-    assert.deepEqual(installedPaths.filter(isPrivateConfigPath), [],
-      "the installed public runtime must not contain local-only profiles");
+    assert.deepEqual(installedPaths.filter(isPrivateConfigPath).filter(relative =>
+      relative !== ".aiyoucodex-private" && relative !== ".aiyoucodex-private/bundled-plugins"
+      && !relative.startsWith(".aiyoucodex-private/bundled-plugins/")), [],
+      "source private profiles must not be copied; only generated native plugin configuration is allowed");
     assert.match(publicRuntime, /HIDDEN_SHORTCUT_NAMES = new Set\(\)/,
       "The public UI must expose every native shortcut, including bundled project management");
     const plistPath = path.join(testHome, "Library", "LaunchAgents", "com.yubowen.codex-sidebar-enhancer.plist");
@@ -83,6 +89,7 @@ test("public installer copies a portable runtime and activates it under the curr
     const previousRuntime = await readFile(path.join(installDir, "scripts", "runtime.mjs"), "utf8");
     const upgraded = spawnSync("/bin/bash", ["install.sh"], {
       cwd: projectRoot, encoding: "utf8", env: { ...process.env, HOME: testHome, CODEX_HOME: path.join(testHome, ".codex"),
+        npm_config_cache: dependencyCache, npm_config_prefer_offline: "true",
         CODEX_SIDEBAR_SOURCE_DIR: projectRoot, CODEX_SIDEBAR_INSTALL_DIR: installDir,
         CODEX_SIDEBAR_NODE: process.execPath, CODEX_SIDEBAR_SKIP_LAUNCHCTL: "1", CODEX_SIDEBAR_SKIP_OPEN: "1" },
     });
@@ -101,6 +108,8 @@ test("public uninstaller removes only the installed runtime, LaunchAgent, launch
   const sharedEnv = {
     ...process.env,
     HOME: testHome,
+    npm_config_cache: dependencyCache,
+    npm_config_prefer_offline: "true",
     CODEX_HOME: path.join(testHome, ".codex"),
     CODEX_SIDEBAR_SOURCE_DIR: projectRoot,
     CODEX_SIDEBAR_INSTALL_DIR: installDir,

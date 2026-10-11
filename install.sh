@@ -81,6 +81,7 @@ STAGING_DIR="${INSTALL_PARENT}/.codex-sidebar-enhancer-new-$$"
 BACKUP_DIR="${INSTALL_PARENT}/.codex-sidebar-enhancer-previous-$$"
 mkdir -p "${STAGING_DIR}"
 /usr/bin/rsync -a \
+  --exclude-from "${SOURCE_DIR}/.npmignore" \
   --exclude '.git' \
   --exclude 'node_modules' \
   --exclude '/output/' \

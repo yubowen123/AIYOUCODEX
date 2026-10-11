@@ -38,6 +38,13 @@ export const REQUIRED_PRIVATE_IGNORE_RULES = Object.freeze([
   "**/model-arena/runs.json.*",
   "**/model-arena/runs/",
   "**/model-arena/media/",
+  "**/openchatcut/controller.json",
+  "**/openchatcut/controller.json.*",
+  "**/openchatcut/sessions.json",
+  "**/openchatcut/sessions.json.*",
+  "**/openchatcut/runtime-processes.json",
+  "**/openchatcut/runtime-processes.json.*",
+  "**/agent-workspace/",
 ]);
 
 // Internal channel identifiers are represented by case-insensitive token/domain
@@ -117,6 +124,7 @@ export function isPrivateConfigPath(filePath) {
     || /\.(?:private|local)\.json$/iu.test(basename)
     || /\.private\.mjs$/iu.test(basename)
     || segments.includes(".aiyoucodex-private")
+    || segments.some(segment => segment.toLowerCase() === "agent-workspace")
     || basename === ".aiyoucodex-thread.json"
     || segments.some((segment, index) => segment.toLowerCase() === "conversation-folders"
       && /^directories\.json(?:\.|$)/iu.test(segments[index + 1] || ""))
@@ -129,6 +137,8 @@ export function isPrivateConfigPath(filePath) {
     || segments.some((segment, index) => segment.toLowerCase() === "model-arena"
       && (/^(?:settings|assets|runs)\.json(?:\.|$)/iu.test(segments[index + 1] || "")
         || /^(?:runs|media)$/iu.test(segments[index + 1] || "")))
+    || segments.some((segment, index) => segment.toLowerCase() === "openchatcut"
+      && /^(?:controller|sessions|runtime-processes)\.json(?:\.|$)/iu.test(segments[index + 1] || ""))
   );
 }
 

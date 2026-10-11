@@ -1,0 +1,12 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {mkdtemp,mkdir,writeFile,readFile,rm,realpath} from 'node:fs/promises';
+import os from 'node:os';import path from 'node:path';
+import {createAgentWorkspace} from '../lib/agent-workspace.mjs';
+test('原生导入与可读副本一起校验和撤销，重复导入不覆盖目标新增消息',async t=>{
+ const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'agent-native-txn-')));t.after(()=>rm(root,{recursive:true,force:true}));const home=path.join(root,'home');const dir=path.join(home,'.codex/sessions/2026/10/09');await mkdir(dir,{recursive:true});await writeFile(path.join(dir,'rollout.jsonl'),[{type:'session_meta',payload:{id:'fixture',cwd:'/fixture/demo'}},{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'Continue project'}]}},{type:'response_item',payload:{type:'message',role:'assistant',content:[{type:'output_text',text:'Project updated'}]}}].map(r=>JSON.stringify(r)).join('\n'));
+ const service=createAgentWorkspace({home,stateRoot:path.join(root,'state')});const session=(await service.request({action:'sessions',agentId:'codex'})).sessions[0];
+ const preview=()=>service.request({action:'preview',sourceId:'codex',targetIds:['claude-code'],resourceIds:['conversation:'+session.id],conflict:'overwrite'});
+ const p=await preview();assert.equal(p.rows.length,3);const native=p.rows.find(r=>r.kind==='native-conversation');assert(native.createOnly);assert(native.targetPath.includes(path.join('.claude','projects','-fixture-demo')+path.sep));assert.equal((await service.execute(p.id)).receipt.status,'complete');const original=await readFile(native.targetPath,'utf8');assert(original.includes('Continue project'));assert.equal((await service.request({action:'sessions',agentId:'claude-code',refresh:true})).sessions.length,1);
+ await writeFile(native.targetPath,original+JSON.stringify({type:'user',message:{role:'user',content:'User appended next turn'}})+'\n');const q=await preview();assert.equal(q.rows.find(r=>r.kind==='native-conversation').action,'skip');await service.execute(q.id);assert((await readFile(native.targetPath,'utf8')).includes('User appended next turn'));assert.equal((await service.undo(p.id)).receipt.status,'undo-partial');
+ await writeFile(native.targetPath,original);assert.equal((await service.undo(p.id)).receipt.status,'undone');await assert.rejects(readFile(native.targetPath),{code:'ENOENT'});
+});

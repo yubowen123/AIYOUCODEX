@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
-import { injectionRuntimeNeedsRefresh, reconcileInjectionRuntime, taskboardServiceAction } from "../vendor/codex-taskboard/scripts/codex-injector-runtime.mjs";
+import { injectionRuntimeNeedsRefresh, probeInjectionConnection, reconcileInjectionRuntime, taskboardServiceAction } from "../vendor/codex-taskboard/scripts/codex-injector-runtime.mjs";
 import { createRuntimePlan } from "../lib/runtime-plan.mjs";
 
 const source = readFileSync(new URL("../vendor/codex-taskboard/scripts/codex-injector.mjs", import.meta.url), "utf8");
@@ -36,7 +36,7 @@ function injectorHarness({ initiallyInjected = false } = {}) {
     }
   }
   const context = vm.createContext({
-    CdpConnection: Cdp, injectionRuntimeNeedsRefresh, reconcileInjectionRuntime,
+    CdpConnection: Cdp, injectionRuntimeNeedsRefresh, probeInjectionConnection, reconcileInjectionRuntime,
     injectionScriptIdentifierName: "SCRIPT_IDENTIFIER", hostHeartbeatName: "HEARTBEAT", hostStartupTokenName: "STARTUP",
     installTaskboardHostBinding: async () => {}, publishHostHeartbeat: async () => {},
     waitForFrame: async () => true, writeFile: async () => {}, Buffer, setTimeout,

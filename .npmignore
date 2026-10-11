@@ -49,3 +49,14 @@ hooks.json.lock.*
 **/model-arena/runs.json.*
 **/model-arena/runs/
 **/model-arena/media/
+
+# Local editing bridge credentials and conversation projects are private state.
+**/openchatcut/controller.json
+**/openchatcut/controller.json.*
+**/openchatcut/sessions.json
+**/openchatcut/sessions.json.*
+
+# Agent migration plans and resolved native plugin runtimes are machine-local.
+**/agent-workspace/
+**/openchatcut/runtime-processes.json
+**/openchatcut/runtime-processes.json.*

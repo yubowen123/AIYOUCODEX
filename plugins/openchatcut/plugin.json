@@ -1,0 +1,26 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "openchatcut",
+  "version": "1.0.4",
+  "description": "Edit directly from the Codex conversation with OpenChatCut MCP; the right panel shows footage, preview and timeline while the embedded Agent chat is hidden.",
+  "author": {
+    "name": "AIYOUcodex"
+  },
+  "homepage": "https://github.com/0xsline/OpenChatCut",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "OpenChatCut",
+        "shortDescription": "对话驱动的本地视频剪辑",
+        "longDescription": "所有剪辑指令在 Codex 对话中完成，每个对话绑定独立工程；右侧显示素材、视频预览和时间线，隐藏 OpenChatCut 内置 Agent 工作台。",
+        "developerName": "AIYOUcodex",
+        "category": "Productivity",
+        "websiteURL": "https://github.com/0xsline/OpenChatCut",
+        "defaultPrompt": [
+          "使用 OpenChatCut 剪辑当前视频",
+          "打开当前对话的剪辑工程"
+        ]
+      }
+    }
+  }
+}

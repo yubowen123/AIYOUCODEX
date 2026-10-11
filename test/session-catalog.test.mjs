@@ -5,6 +5,42 @@ import os from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { PreviewRepository } from "../lib/preview-data.mjs";
+import { readSessionCatalog } from "../lib/session-catalog.mjs";
+
+test("NPC generator provenance excludes vscode sessions, preserves manual chats and forks, and survives legacy fallback", async t => {
+  const home = await mkdtemp(path.join(process.env.AIYOU_TEST_OUTPUT || os.tmpdir(), "aiyou-npc-catalog-"));
+  const db = new DatabaseSync(path.join(home, "state_5.sqlite"));
+  t.after(async () => { db.close(); await rm(home, { recursive: true, force: true }); });
+  const sessions = path.join(home, "sessions");
+  await mkdir(sessions);
+  db.exec("CREATE TABLE threads(id TEXT,title TEXT,updated_at INTEGER,cwd TEXT,rollout_path TEXT,source TEXT)");
+  const insert = db.prepare("INSERT INTO threads VALUES(?,?,?,?,?,?)");
+  const ids = Array.from({ length: 7 }, (_, i) => `77777777-7777-4777-8777-77777777777${i}`);
+  const cwd = "/project/.private-world/sqlite/npc-workspaces/npc-id";
+  const sameTitle = "以下 JSON 是本次固定人物回应的完整输入";
+  const at = "2026-10-11T08:00:00Z";
+  for (let i = 0; i < ids.length; i++) {
+    const rollout = path.join(sessions, `rollout-${ids[i]}.jsonl`);
+    const payload = { id: ids[i], cwd: i === 3 ? "/project" : cwd, originator: i === 1 ? "Codex Desktop" : "interactive_agent_studio",
+      ...(i === 2 ? { forked_from_id: ids[0] } : {}) };
+    if (i === 5) payload.id = ids[0];
+    if (i !== 4) await writeFile(rollout, (i === 6 ? "broken metadata" : JSON.stringify({ type: "session_meta", payload })) + "\n");
+    insert.run(ids[i], sameTitle, Date.parse(at) / 1000, payload.cwd, rollout, "vscode");
+  }
+  const catalog = await readSessionCatalog(home);
+  assert.deepEqual(catalog.filter(row => row.isSubagent).map(row => row.threadId), [ids[0]]);
+  const repository = new PreviewRepository({ codexHome: home });
+  const visible = await repository.readRecentCatalog();
+  assert.deepEqual(visible.map(row => row.threadId).sort(), ids.slice(1).sort());
+  const snapshot = await repository.readRecentCatalog({ includeExcluded: true });
+  assert.deepEqual(snapshot.filter(row => row.isSubagent), [{ threadId: ids[0], isSubagent: true }], "Renderer gets source exclusions without message contents");
+  await writeFile(path.join(home, "session_index.jsonl"), ids.map(id => JSON.stringify({ id, thread_name: sameTitle, updated_at: at })).join("\n"));
+  db.exec("DROP TABLE threads");
+  const legacy = new PreviewRepository({ codexHome: home });
+  assert.ok(!(await legacy.readRecentCatalog()).some(row => row.threadId === ids[0]), "Older hosts use the same rollout provenance");
+  assert.ok((await legacy.readRecentCatalog()).some(row => row.threadId === ids[1]), "Identical manual prompt stays visible");
+  assert.deepEqual((await legacy.readRecentCatalog({ includeExcluded: true })).filter(row => row.isSubagent), [{ threadId: ids[0], isSubagent: true }]);
+});
 
 test("live WAL catalog updates without JSONL changes, includes new chats, excludes archived and agents", async t => {
   const home = await mkdtemp(path.join(process.env.AIYOU_TEST_OUTPUT || os.tmpdir(), "aiyou-live-catalog-"));
