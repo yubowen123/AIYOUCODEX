@@ -7,10 +7,13 @@
 | 海边度假·浠浠 v1.2.0 | ⭐ 社区共创 · 特别鸣谢浠浠（xixi），主题设计 | [下载 ZIP](https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-beach-vacation-xixi-v1.2.0.zip) |
 | 海底假日·海绵宝宝 v1.0.2 | ⭐ 社区共创 · 特别鸣谢浠浠（xixi），主题设计 | [下载 ZIP](https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-spongebob-beach-motion-xixi-v1.0.2.zip) |
 | YOYO萌趣歪头·浠浠 v1.3.2 | ⭐ 社区共创 · 特别鸣谢浠浠（xixi），主题设计 | [下载 ZIP](https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-yoyo-tilt-collection-xixi-v1.3.2.zip) |
+| 小新四图轮播·浠浠 v1.0.1 | ⭐ 社区共创 · 特别鸣谢浠浠（xixi），主题设计 | [下载 ZIP](https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-crayon-shinchan-four-scenes-xixi-v1.0.1.zip) |
 
 新增海底假日主题修复了重挂载后的动效失效、自定义背景叠加人物、气泡留白、发送按钮对比度和设置名称。25 项隔离验证通过；原生安装和界面效果尚未实测。[修复记录与隔离预览](THEME-SPONGEBOB-v1.0.2.md)。
 
 新增 YOYO萌趣歪头主题修复了编译失败、损坏 GIF、动效重挂载、静态回退、自定义背景混叠、气泡与设置名称。保留六张原图及独立设置；[版本说明与验证范围](THEME-YOYO-v1.3.2.md)。
+
+新增小新四图轮播主题保留全部四张原图，修复图片拉伸、轮播暂停与回退、气泡和旧模板设置。33 项隔离检查通过；[版本说明与验证范围](THEME-SHINCHAN-v1.0.1.md)。
 
 更新 AIYOUcodex v1.5.1 后可安装任意独立主题。主题包包含源文件与必要素材，不包含账号、对话或个人媒体。主题名下方链接直接下载 GitHub Release 附件；源文件各自位于 `themes/` 的独立目录。
 

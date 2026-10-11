@@ -1,0 +1,17 @@
+{
+  "id": "crayon-shinchan-four-scenes-xixi",
+  "name": "小新四图轮播·浠浠",
+  "version": "1.0.1",
+  "author": "浠浠",
+  "summary": "用户提供的四张小新主题图片完整显示，暖色界面下轻柔淡入淡出轮播。",
+  "preview": "assets/poster.png",
+  "renderer": "aiyoucodex-theme-v1",
+  "tags": [
+    "crayon-shinchan",
+    "family",
+    "photo-slideshow",
+    "warm",
+    "animated"
+  ],
+  "codeLicense": "MIT; supplied character images and IP rights are not licensed by this package"
+}

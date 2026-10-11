@@ -1,2 +1,3 @@
 # Keep the standalone theme package identical to its SHA256SUMS on every OS.
 themes/yoyo-tilt-collection/** -text
+themes/crayon-shinchan-four-scenes-xixi/** -text whitespace=cr-at-eol
