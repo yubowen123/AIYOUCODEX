@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "crayon-shinchan-four-scenes-xixi",
   "name": "小新四图轮播·浠浠",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "renderer": "aiyoucodex-theme-v1",
   "palette": "colors.json",
   "design": "design.json",
