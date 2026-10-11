@@ -497,7 +497,7 @@ test('explicit local transcription runs without a cloud generation request', asy
 test('private loopback controller authenticates requests and writes secret-free session configuration', async t => {
   const { controller, directory } = await fixture(t);
   const connection = await controller.start();
-  assert.equal((await stat(connection.connectionPath)).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal((await stat(connection.connectionPath)).mode & 0o777, 0o600);
   const denied = await fetch(`${connection.url}/request`, { method: 'POST', body: '{}' }); assert.equal(denied.status, 401);
   const response = await fetch(`${connection.url}/request`, { method: 'POST', headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'status', threadId: 'a' }) });
   assert.equal((await response.json()).data.installed, true);

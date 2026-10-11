@@ -200,7 +200,9 @@ test("Linux x64 installs the verified AppImage with executable mode without runn
   const result = await f.installer.install();
   assert.equal(result.installed, true); assert.equal(f.commands.length, 0);
   assert.deepEqual(await readFile(result.executable), bytes);
-  assert.equal((await stat(result.executable)).mode & 0o777, 0o755);
+  // The fixture simulates Linux installation on every host; Windows filesystems
+  // do not expose POSIX executable permission bits.
+  if (process.platform !== 'win32') assert.equal((await stat(result.executable)).mode & 0o777, 0o755);
 });
 
 test("unsupported packages are reported honestly and never downloaded", async t => {
@@ -302,8 +304,8 @@ test("Windows detects a manually installed app and can connect to its existing s
 });
 
 test("application management paths stay outside plugin directories", () => {
-  assert.equal(openChatCutInstallDirectory({ home: "/example", platform: "darwin" }), "/example/Applications/AIYOUcodex/OpenChatCut");
-  assert.ok(openChatCutInstallDirectory({ home: "/example", platform: "linux" }).includes("applications/openchatcut"));
+  assert.equal(openChatCutInstallDirectory({ home: "/example", platform: "darwin" }), path.join('/example', 'Applications', 'AIYOUcodex', 'OpenChatCut'));
+  assert.equal(openChatCutInstallDirectory({ home: "/example", platform: "linux" }), path.join('/example', '.local', 'share', 'aiyoucodex', 'applications', 'openchatcut'));
 });
 
 test('stop terminates only installed application descendants and retains its package', async t => {
@@ -348,7 +350,7 @@ test('Linux launch records identify mounted AppImage descendants after a host re
   const record = JSON.parse(await readFile(recordPath, 'utf8'));
   assert.equal(record.application, installed.executable);
   assert.deepEqual(record.processes.map(row => row.pid), [101, 102]);
-  assert.equal((await stat(recordPath)).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal((await stat(recordPath)).mode & 0o777, 0o600);
   // The AppImage runtime has exited; its recorded render worker is now orphaned.
   rows = rows.filter(row => row.pid !== 101).map(row => ({ ...row, parentPid: 1 }));
   const signals = [];
