@@ -75,14 +75,30 @@ export async function waitForAvailableCodexTargets(
 }
 
 export function selectCodexTargets(targets) {
-  return targets.filter(
-    (target) =>
-      target.type === "page"
-      && target.webSocketDebuggerUrl
-      && !target.url?.includes("initialRoute=%2Fglobal-dictation")
-      && !target.url?.includes("initialRoute=%2Favatar-overlay")
-      && (target.url?.startsWith("app://") || target.title === "Codex"),
-  );
+  return targets.filter(target => {
+    if (target.type !== "page" || !target.webSocketDebuggerUrl) return false;
+    try {
+      const url = new URL(target.url);
+      if (url.protocol !== "app:" || url.hostname !== "-" || url.pathname !== "/index.html") return false;
+      const route = url.searchParams.get("initialRoute") || "";
+      return !["/global-dictation", "/avatar-overlay"].some(excluded => route === excluded || route.startsWith(`${excluded}/`));
+    } catch { return false; }
+  });
+}
+
+// A transient health read preserves the UI. Repeated failures retire only the
+// transport; the caller probes a fresh connection before deciding to reinject.
+export async function probeInjectionConnection(connection, readStatus) {
+  try {
+    const status = await readStatus(connection);
+    connection.taskboardHealthFailures = 0;
+    return { action: "ready", status };
+  } catch (error) {
+    const failures = connection.taskboardHealthFailures = (connection.taskboardHealthFailures || 0) + 1;
+    const reconnect = connection.closed || failures >= 3;
+    if (reconnect) connection.close();
+    return { action: reconnect ? "reconnect" : "retry", failures, error };
+  }
 }
 
 export function injectionRuntimeNeedsRefresh(currentStatus, expectedSourceHash) {

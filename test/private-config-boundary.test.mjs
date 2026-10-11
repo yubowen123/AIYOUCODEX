@@ -51,6 +51,16 @@ test("local shortcut profiles and private overrides are recognized at any depth"
     "nested/model-arena/settings.json.lock/owner.json",
     "nested/model-arena/runs/one.json",
     "nested\\model-arena\\media\\one.mp4",
+    "agent-workspace/plans/one.json",
+    "nested/agent-workspace/profiles/state.json",
+    "agent-workspace/receipts/one.json",
+    "agent-workspace/backups/file.json",
+    "openchatcut/runtime-processes.json",
+    "nested/openchatcut/runtime-processes.json.tmp-123",
+    "openchatcut/controller.json",
+    "nested/openchatcut/controller.json.tmp-123",
+    "nested/openchatcut/sessions.json",
+    "openchatcut/sessions.json.lock/owner.json",
   ];
   for (const filePath of privatePaths) assert.equal(isPrivateConfigPath(filePath), true, filePath);
 
@@ -73,6 +83,9 @@ test("local shortcut profiles and private overrides are recognized at any depth"
     "model-arena/public/app.js",
     "model-arena/public/style.css",
     "model-arena/public/index.html",
+    "plugins/openchatcut/.mcp.json",
+    "plugins/openchatcut/.codex-plugin/plugin.json",
+    "plugins/openchatcut/server/controller-client.mjs",
   ];
   for (const filePath of publicPaths) assert.equal(isPrivateConfigPath(filePath), false, filePath);
 });
@@ -115,6 +128,9 @@ test("npm ignore rules physically exclude local-only profiles from a package", a
     for (const relative of [
       "efficiency/state.json", "nested/efficiency/state.json", "efficiency/state.json.lock/owner.json",
       "efficiency/state.json.tmp-123", "efficiency/hook-events.json", "hook-events.json",
+      "agent-workspace/plans/one.json", "agent-workspace/backups/private.json", "nested/agent-workspace/profiles/state.json",
+      "openchatcut/runtime-processes.json", "nested/openchatcut/runtime-processes.json.tmp-123",
+      "openchatcut/controller.json", "nested/openchatcut/controller.json.tmp-123", "openchatcut/sessions.json",
       "nested/hook-events.json.tmp-123", "hooks.json.aiyou-backup-123", "nested/hooks.json.aiyou-backup-123",
       "hooks.json.tmp-123", "hooks.json.lock/owner.json", "hooks.json.lock.reaper/owner.json",
       "efficiency/conversation-folders/directories.json", "nested/conversation-folders/directories.json.tmp-123",

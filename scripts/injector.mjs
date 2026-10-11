@@ -30,11 +30,16 @@ import { createConversationFolders, createConversationFolderSync } from "../lib/
 import { executeConfirmedContext } from "../lib/context-execution.mjs";
 import { createClaudeController, CLAUDE_BINDING } from "../lib/claude-code.mjs";
 import { RENDERER_HEALTH_EXPRESSION, acceptDocumentHealth, canReuseRenderer, recordUpdateFailure, rendererReadiness } from "../lib/renderer-health.mjs";
+import { createAgentWorkspace, AGENT_BINDING } from "../lib/agent-workspace.mjs";
 import { readOptionalThemeSource } from "../lib/theme-package.mjs";
 import { createLayaSearchController, LAYA_SEARCH_BINDING } from "../lib/laya-search.mjs";
+import { createOpenChatCutController } from "../lib/openchatcut-controller.mjs";
+import { createOpenChatCutInstaller } from "../lib/openchatcut-install.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(root, "inject", "conversation-preview.user.js");
+const agentSourcePath = path.join(root, "inject", "agent-workspace.user.js");
+const openChatCutSourcePath = path.join(root, "inject", "openchatcut.user.js");
 const claudeSourcePath = path.join(root, "inject", "claude-code.user.js");
 const SCRIPT_ID_GLOBAL = "__CODEX_CONVERSATION_PREVIEW_SCRIPT_IDENTIFIER__";
 
@@ -52,6 +57,7 @@ function parseArgs(argv) {
 
 const options = parseArgs(process.argv.slice(2));
 const repository = new PreviewRepository();
+const agentWorkspace = createAgentWorkspace();
 const layaSearchController = createLayaSearchController({ repository });
 const readResetNotice = createResetAnnouncementReader();
 const conversationFolders = createConversationFolders();
@@ -59,6 +65,43 @@ const syncConversationFolders = createConversationFolderSync({ folders: conversa
 
 let stopped = false;
 const sessions = new Map();
+const openChatCutController = createOpenChatCutController({ installer: createOpenChatCutInstaller() });
+let openChatCutOwnerTargetId = "";
+const openChatCutReady = openChatCutController.start().catch(error => {
+  process.stderr.write(`[openchatcut] local bridge unavailable: ${error.message}\n`);
+});
+let openChatCutEvents = Promise.resolve();
+openChatCutController.subscribe(value => {
+  openChatCutEvents = openChatCutEvents.then(async () => {
+    if (!sessions.size) return;
+    const editorEvent = Boolean(value.editorUrl || value.session?.editorUrl);
+    if (editorEvent && !sessions.has(openChatCutOwnerTargetId)) {
+      const candidates = [...sessions.values()];
+      const matches = await Promise.all(candidates.map(async session => {
+        const context = await readActiveConversationContext(session).catch(() => null);
+        return context?.threadId === value.threadId;
+      }));
+      openChatCutOwnerTargetId = candidates[matches.indexOf(true)]?.targetId
+        || persistentShortcutOwnerTargetId || candidates[0].targetId;
+    }
+    const targets = [...sessions.values()];
+    const dispatched = await Promise.allSettled(targets.map(async session => {
+      const event = { ...value };
+      if (editorEvent && session.targetId === openChatCutOwnerTargetId) {
+        event.editorUrl = await session.assetConsoleBridge.embedOpenChatCut(value.editorUrl || value.session?.editorUrl, value);
+        if (event.session) event.session = { ...event.session, editorUrl: event.editorUrl };
+      } else if (editorEvent) {
+        delete event.editorUrl;
+        event.session = event.session ? { ...event.session, editorUrl: undefined } : undefined;
+        event.autoOpen = false;
+      }
+      return session.client.evaluate(`window.__aiyouOpenChatCut__?.update?.(${JSON.stringify(event)})`);
+    }));
+    dispatched.forEach((result, index) => {
+      if (result.status === 'rejected') process.stderr.write(`[openchatcut] renderer ${targets[index].targetId} panel sync failed: ${result.reason?.message || 'unavailable'}\n`);
+    });
+  }).catch(error => process.stderr.write(`[openchatcut] panel sync failed: ${error.message}\n`));
+});
 const resetMonitorController = createResetMonitorController();
 const claudeController = createClaudeController({ repository,
   readSkills: (cwd) => readCachedSkillCatalog(cwd),
@@ -80,7 +123,7 @@ async function expectedRendererSourceHash() {
     const [baseSource, claudeSource, managedShortcuts] = await Promise.all([
       readFile(sourcePath, "utf8"), readFile(claudeSourcePath, "utf8"), readManagedShortcuts(),
     ]);
-    const userSource = baseSource + "\n" + claudeSource + "\n" + await readOptionalThemeSource(root);
+    const userSource = baseSource + "\n" + claudeSource + "\n" + await readFile(agentSourcePath, "utf8") + "\n" + await readFile(openChatCutSourcePath, "utf8") + "\n" + await readOptionalThemeSource(root);
     // A partial edit must not replace a healthy renderer with invalid source.
     new Function(userSource);
     cachedRendererSourceHash = createHash("sha256").update(userSource)
@@ -110,7 +153,7 @@ const assetConsoleOptions = {
 };
 
 function createAssetConsoleBridge() {
-  return new AssetConsoleBridge(assetConsoleOptions);
+  return new AssetConsoleBridge({ ...assetConsoleOptions, openChatCutStatus: context => openChatCutController.status(context) });
 }
 
 async function disposeRendererSession(session, { destroy = false } = {}) {
@@ -123,7 +166,9 @@ async function disposeRendererSession(session, { destroy = false } = {}) {
   session.skillOrganizationBridge?.dispose();
   session.resetMonitorBridge?.dispose();
   session.claudeBridge?.dispose();
+  session.agentBridge?.dispose();
   session.layaSearchBridge?.dispose();
+  session.openChatCutBridge?.dispose();
   session.client.close();
   session.deliveredHistoryKey = "";
 }
@@ -143,10 +188,26 @@ async function attachTarget(target) {
     return readCachedSkillCatalog(record?.projectPath || "", { refresh });
   } });
   const skillOrganizationBridge = new SkillOrganizationBridge(skillOrganizationController);
+  const agentBridge = new EfficiencyBridge(agentWorkspace, { binding: AGENT_BINDING, resolver: "resolveAgentRequest", publicErrorCodes: ["AGENT_ERROR"], actionPayloadLimits: { handoff: 250000, preview: 40000 }, fallbackError: "本机迁移未确认完成，请查看迁移记录并核对目录。" });
   const resetMonitorBridge = new EfficiencyBridge(resetMonitorController, { binding: RESET_MONITOR_BINDING,
     resolver: "resolveResetMonitorRequest", publicErrorCodes: ["RESET_MONITOR_ERROR"], fallbackError: "监控设置未确认生效，请刷新核对。" });
   const claudeBridge = new EfficiencyBridge(claudeController, { binding: CLAUDE_BINDING,
     resolver: "resolveClaudeRequest", publicErrorCodes: ["CLAUDE_ERROR"], actionPayloadLimits: { "persona-save": 750000 }, fallbackError: "Claude 操作未确认完成；请核对本机连接，输入已保留。" });
+  const openChatCutBridge = new EfficiencyBridge({ request: async payload => {
+    await openChatCutReady;
+    const active = await readActiveConversationContext({ client });
+    if (["open", "start-editing"].includes(payload.action)) {
+      if (!active?.threadId || payload.threadId !== active.threadId) throw Object.assign(new Error("当前对话已变化，请重新打开剪辑工具。"), { code: "OPENCHATCUT_ERROR" });
+      openChatCutOwnerTargetId = target.id;
+    }
+    const result = await openChatCutController.handle(payload, active);
+    if (result?.editorUrl || result?.session?.editorUrl) {
+      const editorUrl = await assetConsoleBridge.embedOpenChatCut(result.editorUrl || result.session?.editorUrl, result);
+      return { ...result, editorUrl, ...(result.session ? { session: { ...result.session, editorUrl } } : {}) };
+    }
+    return result;
+  } }, { binding: "__AIYOUCODEX_OPENCHATCUT_REQUEST__", resolver: "resolveOpenChatCutRequest",
+    publicErrorCodes: ["OPENCHATCUT_ERROR", "OPENCHATCUT_INSTALL_REQUIRED", "OPENCHATCUT_INSTALL_UNSUPPORTED", "OPENCHATCUT_THREAD_REQUIRED", "OPENCHATCUT_TARGET_CHANGED", "OPENCHATCUT_EDITOR_NOT_READY", "OPENCHATCUT_BINDING_ERROR", "OPENCHATCUT_PROJECT_ERROR", "OPENCHATCUT_PROJECT_MISMATCH", "OPENCHATCUT_REVIEW_PENDING", "OPENCHATCUT_RECOVERY_REQUIRED", "OPENCHATCUT_STOPPING", "OPENCHATCUT_STOPPED", "OPENCHATCUT_STOP_FAILED", "OPENCHATCUT_BACKGROUND_RUNTIME_FAILED", "OPENCHATCUT_APP_EXITED", "OPENCHATCUT_LAUNCH_FAILED", "OPENCHATCUT_STARTUP_TIMEOUT"], fallbackError: "OpenChatCut 尚未确认连接，请刷新安装与连接状态。" });
   try {
     // New-document registration must be enabled on this exact CDP connection.
     await client.send("Page.enable");
@@ -164,7 +225,7 @@ async function attachTarget(target) {
         throw new Error("Managed shortcut profile could not be read");
       }),
     ]);
-    const userSource = baseSource + "\n" + claudeSource + "\n" + await readOptionalThemeSource(root);
+    const userSource = baseSource + "\n" + claudeSource + "\n" + await readFile(agentSourcePath, "utf8") + "\n" + await readFile(openChatCutSourcePath, "utf8") + "\n" + await readOptionalThemeSource(root);
     const sourceHash = createHash("sha256").update(userSource).update(JSON.stringify(managedShortcuts)).digest("hex");
     const rendererSource = `if (window.top === window) { window.__CODEX_SIDEBAR_RENDERER_TARGET_ID__ = ${JSON.stringify(target.id)}; window.__CODEX_SIDEBAR_MANAGED_SHORTCUTS__ = ${JSON.stringify(managedShortcuts)}; ${userSource}\n window.__AIYOUCODEX_RUNTIME_SOURCE_HASH__ = ${JSON.stringify(sourceHash)}; }`;
     const snapshot = await client.evaluate(RENDERER_HEALTH_EXPRESSION);
@@ -178,7 +239,11 @@ async function attachTarget(target) {
     await skillOrganizationBridge.install(client);
     await resetMonitorBridge.install(client);
     await claudeBridge.install(client);
+    await agentBridge.install(client);
+    await openChatCutBridge.install(client);
     await client.evaluate("window.__aiyouClaudeInjection__?.onBridgeReady?.();true");
+    await client.evaluate("window.__aiyouAgentWorkspace__?.onBridgeReady?.();true");
+    await client.evaluate("window.__aiyouOpenChatCut__?.onBridgeReady?.();true");
     process.stdout.write(`[${new Date().toISOString()}] Codex conversation preview attached to renderer ${target.id}\n`);
     const session = {
       targetId: target.id,
@@ -191,6 +256,8 @@ async function attachTarget(target) {
       skillOrganizationBridge,
       resetMonitorBridge,
       claudeBridge,
+      agentBridge,
+      openChatCutBridge,
       registeredScriptIdentifier: registered.identifier,
       deliveredHistoryKey: "",
       persistentShortcutIds: managedShortcuts
@@ -208,6 +275,8 @@ async function attachTarget(target) {
     skillOrganizationBridge.dispose();
     resetMonitorBridge.dispose();
     claudeBridge.dispose();
+    agentBridge.dispose();
+    openChatCutBridge.dispose();
     client.close();
     throw error;
   }
@@ -413,7 +482,7 @@ async function pushPreviews(session) {
       });
     })()`),
     readActiveConversationContext(session),
-    repository.readRecentCatalog(),
+    repository.readRecentCatalog({ includeExcluded: true }),
     repository.readPinnedThreadIds(),
     readActiveTaskThreads(),
     repository.readRemoteProjectCatalog?.() || [],
@@ -423,7 +492,8 @@ async function pushPreviews(session) {
   const threadExecutionStates = await readNativeExecutionStates(session, remoteProjects.map(project => project.hostId));
   const recentCatalog = [...localRecentCatalog, ...remoteCatalog];
   const authoritative = activeContext?.threadId ? await repository.resolveEfficiencyThread(activeContext.threadId) : null;
-  try { await syncConversationFolders(localRecentCatalog, authoritative); }
+  const visibleLocalCatalog = localRecentCatalog.filter(entry => !entry.isSubagent);
+  try { await syncConversationFolders(visibleLocalCatalog, authoritative); }
   catch { /* A folder failure must not tear down sidebar cards or chat. */ }
   const catalogKey = authoritative?.projectPath || "";
   const skillCatalog = await readCachedSkillCatalog(catalogKey);
@@ -433,7 +503,7 @@ async function pushPreviews(session) {
   const interruptedCatalog = await repository.readInterruptedCatalog({
     activeThreadIds: taskboardStatus.activeThreadIds,
   });
-  const recentRequests = localRecentCatalog.slice(0, 30).map((entry) => ({
+  const recentRequests = visibleLocalCatalog.slice(0, 30).map((entry) => ({
     key: `local:${entry.threadId}\n${entry.title}`,
     id: `local:${entry.threadId}`,
     title: entry.title,
@@ -486,6 +556,7 @@ async function stop() {
   stopped = true;
   layaSearchController.stop();
   await claudeController.stopAll();
+  await openChatCutController.dispose();
   const closing = [...sessions.values()];
   sessions.clear();
   // A supervisor restart must not take the user's persistent pages down with it.

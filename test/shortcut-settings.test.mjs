@@ -18,7 +18,8 @@ test("built-in workspace enhancements participate in the same visibility menu", 
   assert.match(source, /kind:\s*"enhancement"/);
   assert.match(source, /openSkillsGrouping/);
   assert.match(source, /openAssetConsolePanel/);
-  assert.match(source, /shortcutCatalog\.filter\(\(item\) => item\.kind !== "settings"\)/);
+  assert.match(source, /orderedShortcuts\(shortcutCatalog\)/);
+  assert.match(source, /checkbox\.disabled = item\.kind === "settings"/);
 });
 
 test("custom shortcuts support preset icons and both open modes", () => {

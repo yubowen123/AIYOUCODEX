@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import os from "node:os";
 import { createConversationFolders, runConversationFolderHook } from "../lib/conversation-folders.mjs";
+import { runOpenChatCutRoutingHook } from "../lib/openchatcut-routing-hook.mjs";
 
 export function resolveNativeDefaultSkills(selections, { cwd, homeDir, timeoutMs = 1400 } = {}) {
   if (!selections.length) return Promise.resolve([]);
@@ -58,19 +59,22 @@ async function main() {
   } catch {
     folderWarning = "AIYOUcodex 对话专属目录暂不可用；不要假设文件已归档，请检查输出位置。";
   }
+  let editingContext = "";
+  try { editingContext = await runOpenChatCutRoutingHook(event); }
+  catch { /* Optional editing routing cannot block native conversation. */ }
   let result = {};
   try {
     result = await runEfficiencyHook(event, {
       resolveThread: async (threadId) => threadId === event.session_id ? { projectPath: event.cwd || null } : null,
       resolveSkills: (selections, options) => resolveNativeDefaultSkills(selections, { ...options, cwd: event.cwd }),
-      contextReserve: folderContext.length + 1,
+      contextReserve: folderContext.length + editingContext.length + 2,
     });
   } catch {
     // Directory delivery must not depend on a valid optional output-preference file.
     result.systemMessage = "AIYOUcodex 输出偏好暂不可用，保留原生对话与目录规则。";
   }
-  if (folderContext) result.hookSpecificOutput = { hookEventName: event.hook_event_name,
-    additionalContext: [result.hookSpecificOutput?.additionalContext, folderContext].filter(Boolean).join("\n") };
+  if (folderContext || editingContext) result.hookSpecificOutput = { hookEventName: event.hook_event_name,
+    additionalContext: [result.hookSpecificOutput?.additionalContext, folderContext, editingContext].filter(Boolean).join("\n") };
   if (folderWarning) result.systemMessage = folderWarning;
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }

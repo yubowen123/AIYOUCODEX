@@ -17,6 +17,7 @@ import {
   findResidentInjectorPids,
   handleHostBindingPayload,
   injectionRuntimeNeedsRefresh,
+  probeInjectionConnection,
   reconcileManagedCodexRuntime,
   reconcileInjectionRuntime,
   restartResidentInjector,
@@ -1206,23 +1207,24 @@ async function injectAll(
     const existingConnection = injectedTargets.get(target.id);
     let reattachExisting = false;
     if (existingConnection) {
-      try {
-        const currentStatus = await readInjectionStatus(existingConnection);
-        existingConnection.taskboardHealthFailures = 0;
-        if (!injectionRuntimeNeedsRefresh(currentStatus, sourceHash)) continue;
+      const health = await probeInjectionConnection(existingConnection, readInjectionStatus);
+      if (health.action === "ready") {
+        if (!injectionRuntimeNeedsRefresh(health.status, sourceHash)) continue;
         reattachExisting = true;
-      } catch {
-        existingConnection.taskboardHealthFailures = (existingConnection.taskboardHealthFailures || 0) + 1;
-        if (existingConnection.taskboardHealthFailures === 1 || existingConnection.taskboardHealthFailures % 15 === 0) {
+      } else {
+        if (health.failures === 1 || health.action === "reconnect") {
           console.error(JSON.stringify({
-            at: new Date().toISOString(), component: "taskboard-injector", event: "health-read-deferred",
-            targetId: target.id, attempts: existingConnection.taskboardHealthFailures, action: "preserve-renderer",
+            at: new Date().toISOString(), component: "taskboard-injector",
+            event: health.action === "reconnect" ? "health-connection-reconnect" : "health-read-deferred",
+            targetId: target.id, attempts: health.failures,
+            action: health.action === "reconnect" ? "probe-fresh-connection" : "preserve-renderer",
+            reason: health.error?.message,
           }));
         }
-        // A timeout/transition is not evidence that UI source is missing. Keep
-        // the connection and panels; retry on the next watch tick. A genuinely
-        // closed transport is removed by the explicit closed check above.
-        continue;
+        if (health.action === "retry") continue;
+        // Reconnecting is not permission to destroy a panel or reload Codex.
+        // injectTarget rereads health and reconciles against the live document.
+        reattachExisting = true;
       }
       existingConnection.close();
       injectedTargets.delete(target.id);

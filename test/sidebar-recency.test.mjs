@@ -94,6 +94,14 @@ test("sidebar activity order survives delayed snapshots, missing index entries, 
   const diskChild = "44444444-4444-4444-8444-444444444444";
   await client.evaluate(`${api}.setRecentCatalog([{threadId:${JSON.stringify(diskChild)},title:'Disk child',source:'{"subagent":{"other":"guardian"}}',updatedAt:'2026-10-09T00:00:00Z'}]);${api}.refresh()`);
   assert.ok(!(await client.evaluate(recentIds)).includes(diskChild), "Background and JSON-source children are excluded");
+  const npc = "55555555-5555-4555-8555-555555555555";
+  const manual = "66666666-6666-4666-8666-666666666666";
+  const npcEntries = [npc, manual].map(threadId => ({ threadId, title: "以下 JSON 是本次固定人物回应", source: "vscode", updatedAt: "2026-10-11T12:00:00Z" }));
+  await client.evaluate(`(()=>{const managers=[{getHostId:()=> 'local',getThreadSummaries:()=>${JSON.stringify(npcEntries.map(e => ({ ...e, conversationId: e.threadId })))}}];
+    document.getElementById('root').__reactContainerFixture.memoizedProps.value.get('fixture').store.get=()=>managers;
+    ${api}.__test.refreshNativeExecutionStates();${api}.setRecentCatalog(${JSON.stringify([...npcEntries, { threadId: npc, isSubagent: true }])});
+    ${api}.__test.refreshNativeExecutionStates();${api}.setRecentCatalog(${JSON.stringify(npcEntries)});${api}.refresh();})()`);
+  await waitForBrowserState(client, `!${recentIds}.includes(${JSON.stringify(npc)}) && ${recentIds}.includes(${JSON.stringify(manual)})`, "Provenance markers override native vscode source and delayed snapshots, preserving identical manual chats");
   await client.evaluate(`document.getElementById('root').__reactContainerFixture.memoizedProps.value.get('fixture').store.get=()=>[];${api}.__test.refreshNativeExecutionStates();${api}.setRecentCatalog([{threadId:${JSON.stringify(child)},title:'Stale child'}]);${api}.refresh()`);
   assert.equal((await client.evaluate(recentIds)).length,0,"Only-child snapshots leave an empty Recent, without restoring hidden native children");
 

@@ -94,6 +94,12 @@ test("production attach and delivery survive CDP reconnect; real document reload
     readOptionalThemeSource: async () => '',
     claudeController: { request: async () => ({ available: false }) },
     CLAUDE_BINDING: "__AIYOUCODEX_CLAUDE_REQUEST__",
+    agentWorkspace: { request: async () => ({ agents: [], receipts: [], version: 0 }) },
+    AGENT_BINDING: "__AIYOUCODEX_AGENT_REQUEST__",
+    agentSourcePath: new URL("../inject/agent-workspace.user.js", import.meta.url),
+    openChatCutSourcePath: new URL("../inject/openchatcut.user.js", import.meta.url),
+    openChatCutReady: Promise.resolve(), openChatCutOwnerTargetId: "",
+    openChatCutController: { handle: async () => ({ state: "not-installed", installed: false }) },
     layaSearchController: { snapshot: () => ({ ready: false, enabled: false }), request: async () => ({ status: { ready: false, enabled: false } }) },
     LAYA_SEARCH_BINDING: "__AIYOUCODEX_LAYA_SEARCH_REQUEST__",
     readManagedShortcuts: async () => shortcuts, createHash,
@@ -118,6 +124,7 @@ test("production attach and delivery survive CDP reconnect; real document reload
   const installDeliveryCounters = async () => inspect.evaluate(`(()=>{const api=window.__codexConversationPreviewInjection__;window.__fixtureDeliveries={snapshot:0,history:0,destroy:0};for(const [method,key]of [['setSnapshot','snapshot'],['setConversationHistory','history'],['destroy','destroy']]){const original=api[method];api[method]=(...args)=>{window.__fixtureDeliveries[key]+=1;return original(...args)}}})()`);
   let session = await context.attachTarget(target);
   assert.equal(await inspect.evaluate("typeof window.__AIYOUCODEX_CLAUDE_REQUEST__"), "function", "Claude bridge attaches in the native default world");
+  assert.equal(await inspect.evaluate("typeof window.__AIYOUCODEX_AGENT_REQUEST__"), "function", "Agent migration bridge attaches in the native default world");
   await installDeliveryCounters();
   // The real watcher retries when a native mount is temporarily unavailable.
   // Verify that it does not incorrectly acknowledge readiness on that attempt.
@@ -129,7 +136,7 @@ test("production attach and delivery survive CDP reconnect; real document reload
   assert.equal(session.persistentShortcutReady.size, 1, "Watcher retry mounts and acknowledges the persistent shortcut");
   await context.pushPreviews(session);
   assert.equal(folderSyncCalls.length, 1);
-  assert.equal(folderSyncCalls[0][0], catalog);
+  assert.deepEqual(JSON.parse(JSON.stringify(folderSyncCalls[0][0])), catalog);
   assert.equal(folderSyncCalls[0][1], null, "Unresolved tasks must not invent a folder binding");
   await waitForBrowserState(inspect, shortcutLoaded, "Persistent shortcut loads its actual document before recording navigation identity");
   assert.deepEqual(await inspect.evaluate("window.__fixtureDeliveries"), { snapshot: 1, history: 1, destroy: 0 });

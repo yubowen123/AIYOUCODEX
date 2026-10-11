@@ -2,7 +2,7 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
-  const RUNTIME_VERSION = "2026-10-09.5";
+  const RUNTIME_VERSION = "2026-10-11.1-openchatcut";
   const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
@@ -58,15 +58,21 @@
   const WORKSPACE_PANEL_WIDTH_KEY = "codex-workspace-enhancer:side-panel-width-v1";
   const WORKSPACE_PANEL_EVENT = "codex-workspace-panel:open";
   const SHORTCUT_ICON_PRESETS = {
+    sites: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a18 18 0 0 1 0 18 18 18 0 0 1 0-18Z"/>',
+    plugins: '<path d="m8 3 1 5m6-5 1 5M6 9h12v3a6 6 0 0 1-12 0V9Zm6 9v4"/>',
+    scheduled: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18m-12 5 2 2 4-4"/>',
+    pullRequest: '<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="19" r="2"/><path d="M6 7v10m12 0v-7a4 4 0 0 0-4-4h-2m3-3-3 3 3 3"/>',
+    agent: '<rect x="4" y="7" width="16" height="13" rx="3"/><path d="M12 3v4M2 12v4m20-4v4M9 16h6"/><circle cx="9" cy="12" r=".65" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r=".65" fill="currentColor" stroke="none"/>',
     link: '<path d="M10.2 13.8 13.8 10.2M8.1 15.9l-1.4 1.4a3.5 3.5 0 0 1-5-5l3-3a3.5 3.5 0 0 1 5 0M15.9 8.1l1.4-1.4a3.5 3.5 0 0 1 5 5l-3 3a3.5 3.5 0 0 1-5 0"/>',
     book: '<path d="M4 4.5h5.5A2.5 2.5 0 0 1 12 7v13a3 3 0 0 0-3-3H4zM20 4.5h-5.5A2.5 2.5 0 0 0 12 7v13a3 3 0 0 1 3-3h5z"/>',
     sparkle: '<path d="m12 2 1.5 5.2L19 9l-5.5 1.8L12 16l-1.5-5.2L5 9l5.5-1.8zM5 16l.8 2.2L8 19l-2.2.8L5 22l-.8-2.2L2 19l2.2-.8z"/>',
     play: '<rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="m10 9 5 3-5 3z"/>',
     chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
     code: '<path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"/>',
-    skills: '<path d="M5 5.5h6M5 9h9M5 12.5h5M16.5 4v8M13 8h7M6 17.5h12M8.5 15v5M15.5 15v5"/>',
-    assets: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 4V2M17 4V2M3 9h18M8 13h3v3H8zM14 13h3v3h-3z"/>',
+    skills: '<path d="M9 4H5a1 1 0 0 0-1 1v4h2a2 2 0 0 1 0 4H4v6a1 1 0 0 0 1 1h4v-2a2 2 0 0 1 4 0v2h6a1 1 0 0 0 1-1v-6h-2a2 2 0 0 1 0-4h2V5a1 1 0 0 0-1-1h-6V3a2 2 0 0 0-4 0v1Z"/>',
+    assets: '<path d="M20 10V7a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h7"/><path d="m17 12 4 2.5v5L17 22l-4-2.5v-5L17 12Zm-4 2.5 4 2.5 4-2.5M17 17v5"/>',
     arena: '<path d="M8 3h8v5a4 4 0 0 1-8 0V3ZM8 5H4v2a4 4 0 0 0 4 4m8-6h4v2a4 4 0 0 1-4 4M12 12v6m-4 3h8M9 18h6v3H9z"/>',
+    scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="m8.2 8.2 12 12M8.2 15.8 20 4M12 12h.01"/>',
     newChat: '<path d="M5 5.5A2.5 2.5 0 0 1 7.5 3h9A2.5 2.5 0 0 1 19 5.5v9a2.5 2.5 0 0 1-2.5 2.5H9l-4 4V5.5Z"/><path d="M9 10h6m-3-3v6"/>',
     project: '<rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M9 4v16m5.5-12h2.5m-2.5 4h2.5m-2.5 4h2.5"/>',
   };
@@ -162,6 +168,7 @@
     schemaVersion: 4,
     hidden: Array.from(HIDDEN_SHORTCUT_NAMES, (name) => `native:${name}`),
     custom: [],
+    order: [],
   };
   let customShortcutPage = null;
   let customShortcutFrame = null;
@@ -315,6 +322,7 @@
           ? hidden
           : hidden.filter((value) => !value.startsWith("native:")),
         custom,
+        order: normalizedShortcutOrder(savedShortcutSettings.order),
       };
       if (savedShortcutSettings.schemaVersion !== 4) {
         localStorage.setItem(SHORTCUT_SETTINGS_STORAGE_KEY, JSON.stringify(shortcutSettings));
@@ -843,6 +851,29 @@
         display: block;
         width: 18px !important;
         height: 18px !important;
+        flex: 0 0 18px;
+        max-width: none;
+        margin: 0;
+        transform: none;
+        opacity: 1;
+        visibility: visible;
+      }
+      #${SHORTCUT_GRID_ID} .${SHORTCUT_ICON_CLASS} svg {
+        overflow: visible;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      #${SHORTCUT_GRID_ID} .${SHORTCUT_ICON_CLASS} img[data-aiyou-brand-logo="moke-aigc"] {
+        width: 24px !important;
+        flex: 0 0 24px;
+        max-width: 100%;
+        height: 24px !important;
+        object-fit: contain;
+        filter: none !important;
+        opacity: 1;
       }
       #${SHORTCUT_GRID_ID} .${SHORTCUT_ICON_CLASS} img[data-aiyou-brand-logo="moke-aigc"] {
         width: 24px !important;
@@ -1027,10 +1058,13 @@
       }
       #${SHORTCUT_SETTINGS_ID} .codex-shortcut-settings-shell {
         display: flex;
-        max-height: min(680px, calc(100vh - 48px));
+        height: 100%;
+        max-height: 100%;
+        min-height: 0;
         flex-direction: column;
       }
       #${SHORTCUT_SETTINGS_ID} .codex-shortcut-settings-header {
+        flex: none;
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -1055,10 +1089,29 @@
         cursor: pointer;
       }
       #${SHORTCUT_SETTINGS_ID} .codex-shortcut-settings-body {
+        flex: 1 1 0;
         min-height: 0;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable;
         padding: 0 18px 18px;
         overflow: auto;
       }
+      #${SHORTCUT_SETTINGS_ID}[data-codex-workspace-side-panel] { overflow: hidden !important; }
+      #${SHORTCUT_SETTINGS_ID} [data-codex-shortcut-drag-handle] {
+        flex: none; border: 0; padding: 3px; background: transparent; color: inherit;
+        cursor: grab; touch-action: none; -webkit-app-region: no-drag;
+      }
+      #${SHORTCUT_SETTINGS_ID} [data-codex-shortcut-sort-help] { font-size:12px; line-height:1.6; opacity:.75; }
+      [data-codex-shortcut-sort-key] { position: relative; }
+      [data-codex-shortcut-sort-key][data-aiyou-menu-dragging] {
+        opacity: .65; outline: 2px solid var(--aiyou-accent,var(--color-text-info,Highlight)); outline-offset:-2px;
+      }
+      [data-codex-shortcut-sort-key][data-aiyou-menu-drop]::after {
+        content:""; position:absolute; pointer-events:none; inset:0 2px auto;
+        height:3px; border-radius:3px; background:var(--aiyou-accent,var(--color-text-info,Highlight)); z-index:2;
+      }
+      [data-codex-shortcut-sort-key][data-aiyou-menu-drop="after"]::after { inset:auto 2px 0; }
+      html[data-aiyou-menu-sorting],html[data-aiyou-menu-sorting] * { cursor:grabbing!important; user-select:none!important; }
       #${SHORTCUT_SETTINGS_ID} .codex-shortcut-settings-list {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2762,6 +2815,158 @@
     return item?.custom ? `custom:${item.id}` : `native:${item?.name || ""}`;
   }
 
+  // Keep unavailable/hidden keys so restoring a menu also restores its place.
+  function normalizedShortcutOrder(order) {
+    return Array.from(new Set(Array.isArray(order)
+      ? order.filter(key => typeof key === "string" && key.length > 0 && key.length <= 160)
+      : [])).slice(0, 1000);
+  }
+
+  function orderedShortcuts(items) {
+    const ranks = new Map(normalizedShortcutOrder(shortcutSettings.order).map((key, i) => [key, i]));
+    return [...items].sort((a, b) => (ranks.get(shortcutItemKey(a)) ?? Infinity)
+      - (ranks.get(shortcutItemKey(b)) ?? Infinity));
+  }
+
+  function moveShortcut(key, targetKey, after) {
+    const keys = normalizedShortcutOrder([...shortcutSettings.order, ...shortcutCatalog.map(shortcutItemKey)]);
+    if (key === targetKey || !keys.includes(key) || !keys.includes(targetKey)) return;
+    const next = keys.filter(value => value !== key);
+    next.splice(next.indexOf(targetKey) + (after ? 1 : 0), 0, key);
+    shortcutSettings.order = next;
+    persistShortcutSettings();
+    shortcutCatalog = orderedShortcuts(shortcutCatalog);
+    const dialog = document.getElementById(SHORTCUT_SETTINGS_ID);
+    if (dialog?.open) renderShortcutVisibilityList(dialog);
+    scheduleSync();
+  }
+
+  let shortcutDrag = null;
+  let shortcutDragFrame = null;
+  let shortcutClickGuard = null;
+
+  function shortcutSortNode(target) {
+    return target?.closest?.('[data-codex-shortcut-sort-key]');
+  }
+
+  function clearShortcutDrag() {
+    const drag = shortcutDrag;
+    if (!drag) return;
+    clearTimeout(drag.timer);
+    if (drag.active) shortcutClickGuard = { key: drag.key, until: Date.now() + 1500 };
+    cancelAnimationFrame(shortcutDragFrame);
+    shortcutDragFrame = null;
+    drag.node.removeAttribute('data-aiyou-menu-dragging');
+    drag.container.querySelectorAll('[data-aiyou-menu-drop]').forEach(n => n.removeAttribute('data-aiyou-menu-drop'));
+    document.documentElement.removeAttribute('data-aiyou-menu-sorting');
+    shortcutDrag = null;
+  }
+
+  function updateShortcutDrop() {
+    const drag = shortcutDrag;
+    if (!drag?.active) return;
+    cancelAnimationFrame(shortcutDragFrame);
+    if (!drag.node.isConnected || !drag.container.isConnected) { clearShortcutDrag(); return; }
+    const boundary = drag.scroll.getBoundingClientRect();
+    const inside = drag.x >= boundary.left && drag.x <= boundary.right
+      && drag.y >= boundary.top && drag.y <= boundary.bottom;
+    const candidates = [...drag.container.querySelectorAll('[data-codex-shortcut-sort-key]')]
+      .filter(n => n.getBoundingClientRect().height > 0);
+    let best = null, distance = Infinity;
+    if (inside) for (const node of candidates) {
+      const r = node.getBoundingClientRect();
+      if (r.bottom < boundary.top || r.top > boundary.bottom) continue;
+      const d = Math.hypot(drag.x - (r.left + r.width / 2), drag.y - (r.top + r.height / 2));
+      if (d < distance) { best = node; distance = d; }
+    }
+    drag.container.querySelectorAll('[data-aiyou-menu-drop]').forEach(n => n.removeAttribute('data-aiyou-menu-drop'));
+    if (best === drag.node) best = null;
+    drag.target = best;
+    if (best) {
+      const r = best.getBoundingClientRect();
+      // Both the two-column settings grid and the vertical rail use row-major order.
+      drag.after = drag.y > r.top + r.height / 2;
+      best.dataset.aiyouMenuDrop = drag.after ? 'after' : 'before';
+    }
+    if (inside && drag.scroll.scrollHeight > drag.scroll.clientHeight) {
+      const speed = drag.y < boundary.top + 35 ? -8 : drag.y > boundary.bottom - 35 ? 8 : 0;
+      if (speed) drag.scroll.scrollTop += speed;
+    }
+    shortcutDragFrame = requestAnimationFrame(updateShortcutDrop);
+  }
+
+  function handleShortcutSortPointerDown(event) {
+    if (event.button !== 0 || event.isPrimary === false) return;
+    const node = shortcutSortNode(event.target);
+    if (!node || (node.classList.contains('codex-shortcut-settings-row')
+      && !event.target.closest('[data-codex-shortcut-drag-handle]'))) return;
+    clearShortcutDrag();
+    shortcutClickGuard = null;
+    const container = node.closest('[data-codex-shortcut-visibility-list]') || node.closest(`#${SHORTCUT_GRID_ID}`);
+    if (!container) return;
+    let scroll = container;
+    while (scroll.parentElement && !/auto|scroll/.test(getComputedStyle(scroll).overflowY)) scroll = scroll.parentElement;
+    const drag = shortcutDrag = { node, container, scroll, key: node.dataset.codexShortcutSortKey,
+      pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
+      x: event.clientX, y: event.clientY, active: false, target: null };
+    drag.timer = setTimeout(() => {
+      if (shortcutDrag !== drag || !node.isConnected) { clearShortcutDrag(); return; }
+      drag.active = true;
+      node.dataset.aiyouMenuDragging = 'true';
+      document.documentElement.dataset.aiyouMenuSorting = 'true';
+      shortcutClickGuard = { key: drag.key, until: Date.now() + 1500 };
+      updateShortcutDrop();
+    }, 450);
+  }
+
+  function handleShortcutSortPointerMove(event) {
+    const drag = shortcutDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    drag.x = event.clientX; drag.y = event.clientY;
+    if (!drag.active && Math.hypot(drag.x - drag.startX, drag.y - drag.startY) > 8) clearShortcutDrag();
+    else if (drag.active) { event.preventDefault(); event.stopPropagation(); }
+  }
+
+  function handleShortcutSortPointerEnd(event) {
+    const drag = shortcutDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.active) {
+      event.preventDefault(); event.stopPropagation();
+      shortcutClickGuard = { key: drag.key, until: Date.now() + 1500 };
+      // Recheck the final release location; do not save a drop outside the menu.
+      drag.x = event.clientX; drag.y = event.clientY;
+      updateShortcutDrop();
+    }
+    const targetKey = drag.target?.dataset.codexShortcutSortKey;
+    const commit = event.type === 'pointerup' && drag.active && targetKey;
+    clearShortcutDrag();
+    if (commit) moveShortcut(drag.key, targetKey, drag.after);
+  }
+
+  function handleShortcutSortClick(event) {
+    const node = shortcutSortNode(event.target);
+    if (node && event.detail !== 0 && shortcutClickGuard && shortcutClickGuard.until > Date.now()) {
+      event.preventDefault(); event.stopImmediatePropagation(); shortcutClickGuard = null;
+    }
+  }
+
+  function handleShortcutSortKeydown(event) {
+    if (event.key === 'Escape' && shortcutDrag) {
+      if (shortcutDrag.active) shortcutClickGuard = { key: shortcutDrag.key, until: Date.now() + 1500 };
+      clearShortcutDrag(); event.preventDefault(); event.stopImmediatePropagation(); return;
+    }
+    const node = shortcutSortNode(event.target);
+    if (!node || !event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    const keys = orderedShortcuts(shortcutCatalog).map(shortcutItemKey);
+    const key = node.dataset.codexShortcutSortKey;
+    const other = keys[keys.indexOf(key) + (event.key === 'ArrowUp' ? -1 : 1)];
+    if (!other) return;
+    event.preventDefault(); event.stopPropagation();
+    moveShortcut(key, other, event.key === 'ArrowDown');
+    document.getElementById(SHORTCUT_SETTINGS_ID)?.querySelectorAll('[data-codex-shortcut-drag-handle]')
+      .forEach(handle => { if (shortcutSortNode(handle)?.dataset.codexShortcutSortKey === key) handle.focus(); });
+  }
+
   function validShortcutUrl(value) {
     try {
       const url = new URL(String(value || "").trim());
@@ -2819,6 +3024,7 @@
       schemaVersion: 4,
       hidden: Array.from(new Set(shortcutSettings.hidden.filter((value) => typeof value === "string"))),
       custom: normalizedCustomShortcuts(),
+      order: normalizedShortcutOrder(shortcutSettings.order),
     };
     try { localStorage.setItem(SHORTCUT_SETTINGS_STORAGE_KEY, JSON.stringify(shortcutSettings)); } catch {}
   }
@@ -2829,7 +3035,7 @@
   }
 
   function settingsShortcutSvg() {
-    return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z" stroke="currentColor" stroke-width="1.7"/><path d="m19 13.2 1.5 1.2-1.7 2.9-1.8-.7a7.6 7.6 0 0 1-2.1 1.2l-.3 1.9h-3.4l-.3-1.9a7.6 7.6 0 0 1-2.1-1.2l-1.8.7-1.7-2.9 1.5-1.2a7.5 7.5 0 0 1 0-2.4L5.3 9.6 7 6.7l1.8.7a7.6 7.6 0 0 1 2.1-1.2l.3-1.9h3.4l.3 1.9A7.6 7.6 0 0 1 17 7.4l1.8-.7 1.7 2.9-1.5 1.2a7.5 7.5 0 0 1 0 2.4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>';
+    return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M19.13 9.68 L19.39 10.70 L21.31 10.69 L21.31 13.31 L19.39 13.30 L19.13 14.32 L18.68 15.40 L18.14 16.30 L19.51 17.66 L17.66 19.51 L16.30 18.14 L15.40 18.68 L14.32 19.13 L13.30 19.39 L13.31 21.31 L10.69 21.31 L10.70 19.39 L9.68 19.13 L8.60 18.68 L7.70 18.14 L6.34 19.51 L4.49 17.66 L5.86 16.30 L5.32 15.40 L4.87 14.32 L4.61 13.30 L2.69 13.31 L2.69 10.69 L4.61 10.70 L4.87 9.68 L5.32 8.60 L5.86 7.70 L4.49 6.34 L6.34 4.49 L7.70 5.86 L8.60 5.32 L9.68 4.87 L10.70 4.61 L10.69 2.69 L13.31 2.69 L13.30 4.61 L14.32 4.87 L15.40 5.32 L16.30 5.86 L17.66 4.49 L19.51 6.34 L18.14 7.70 L18.68 8.60Z"/><circle cx="12" cy="12" r="3"/></svg>';
   }
 
   function openCustomShortcutInBrowser(item) {
@@ -3059,7 +3265,7 @@
       [data-aiyou-workspace-dock] > [data-codex-workspace-side-panel]:not([hidden]) { position:relative!important; inset:auto!important; flex:0 0 min(var(--codex-workspace-panel-width,560px),var(--aiyou-workspace-panel-limit,calc(100% - min(240px,35%))))!important; width:min(var(--codex-workspace-panel-width,560px),var(--aiyou-workspace-panel-limit,calc(100% - min(240px,35%))))!important; min-width:0!important; max-width:var(--aiyou-workspace-panel-limit,calc(100% - min(240px,35%)))!important; height:100%!important; max-height:100%!important; margin:0!important; border-radius:0!important; overflow:auto; box-sizing:border-box; border:0; border-left:1px solid var(--color-border-default,#8995a633); background:var(--color-background-surface,Canvas); color:var(--color-text-primary,CanvasText); box-shadow:none!important; }
       [data-aiyou-workspace-dock] > #codex-taskboard-page:not([hidden]) { margin-top:var(--codex-taskboard-header-inset,0px)!important;height:calc(100% - var(--codex-taskboard-header-inset,0px))!important;max-height:calc(100% - var(--codex-taskboard-header-inset,0px))!important; }
       [data-codex-workspace-side-panel][hidden] { display:none!important; }
-      [data-aiyou-workspace-dock]:has(> [data-codex-workspace-side-panel][data-aiyou-panel-expanded="true"]:not([hidden])) > [data-aiyou-workspace-chat] { flex:0 0 0!important;width:0!important;visibility:hidden!important; }
+      [data-aiyou-workspace-dock]:has(> [data-codex-workspace-side-panel][data-aiyou-panel-expanded="true"]:not([hidden])) > [data-aiyou-workspace-chat] { flex:0 0 0!important;width:0!important;visibility:hidden!important;padding:0!important;margin:0!important;border:0!important;overflow:hidden!important; }
       [data-aiyou-workspace-dock] > [data-codex-workspace-side-panel][data-aiyou-panel-expanded="true"]:not([hidden]) { flex:0 0 100%!important;width:100%!important;max-width:100%!important;border-left:0!important; }
       [data-codex-workspace-side-panel] [data-aiyou-panel-expand] { display:inline-grid!important;place-items:center;flex:0 0 34px!important;width:34px!important;min-width:34px!important;height:34px!important;min-height:34px!important;margin:0!important;padding:0!important;border:1px solid var(--aiyou-card-border,var(--color-border-default,#8995a633))!important;border-radius:var(--aiyou-radius-button,8px)!important;background:var(--aiyou-fill-control,var(--color-background-control-opaque,Canvas))!important;color:var(--aiyou-text,var(--color-text-primary,CanvasText))!important;cursor:pointer;-webkit-app-region:no-drag; }
       [data-aiyou-panel-header-actions] { display:flex;align-items:center;gap:8px;margin-left:auto;flex:none; }
@@ -3464,6 +3670,8 @@
   }
 
   function closeOtherWorkspacePanels(panel, notify = true) {
+    if (panel !== "openchatcut") window.__aiyouOpenChatCut__?.close?.();
+    if (panel !== "agent-workspace") window.__aiyouAgentWorkspace__?.close?.();
     if (panel !== "claude") window.__aiyouClaudeInjection__?.close?.();
     if (panel !== "custom") closeCustomShortcutPanel(false);
     if (panel !== "asset") closeAssetConsolePanel({ notify: false, restoreFocus: false });
@@ -5835,13 +6043,23 @@
 
   function renderShortcutVisibilityList(dialog) {
     const list = dialog.querySelector("[data-codex-shortcut-visibility-list]");
-    const items = shortcutCatalog.filter((item) => item.kind !== "settings");
+    const items = orderedShortcuts(shortcutCatalog);
     list.replaceChildren(...items.map((item) => {
       const row = document.createElement("label");
       row.className = "codex-shortcut-settings-row";
+      row.dataset.codexShortcutSortKey = shortcutItemKey(item);
+      const handle = document.createElement("button");
+      handle.type = "button";
+      handle.dataset.codexShortcutDragHandle = "true";
+      handle.textContent = "⠿";
+      handle.setAttribute("aria-label", `调整${item.name}的位置`);
+      handle.title = "长按拖动排序，或 Alt + ↑ / ↓";
+      handle.onclick = event => event.preventDefault();
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
-      checkbox.checked = !shortcutSettings.hidden.includes(shortcutItemKey(item));
+      checkbox.checked = item.kind === "settings" || !shortcutSettings.hidden.includes(shortcutItemKey(item));
+      checkbox.disabled = item.kind === "settings";
+      if (checkbox.disabled) checkbox.title = "设置入口始终显示";
       checkbox.dataset.codexShortcutVisible = shortcutItemKey(item);
       checkbox.setAttribute("aria-label", `显示${item.name}`);
       checkbox.onchange = () => {
@@ -5855,7 +6073,7 @@
       };
       const name = document.createElement("span");
       name.textContent = item.name;
-      row.append(checkbox, name);
+      row.append(handle, checkbox, name);
       if (item.custom) {
         const remove = document.createElement("button");
         remove.type = "button";
@@ -5865,6 +6083,7 @@
         remove.onclick = (event) => {
           event.preventDefault();
           shortcutSettings.custom = shortcutSettings.custom.filter((candidate) => candidate.id !== item.id);
+          shortcutSettings.order = shortcutSettings.order.filter(key => key !== shortcutItemKey(item));
           shortcutSettings.hidden = shortcutSettings.hidden.filter((value) => value !== shortcutItemKey(item));
           persistShortcutSettings();
           document.getElementById(SHORTCUT_GRID_ID)?.remove();
@@ -5892,6 +6111,7 @@
           <p>在卡片视图与列表视图之间切换。</p>
           <button type="button" data-aiyou-efficiency-open><span>输出偏好与默认 Skills</span><span aria-hidden="true">→</span></button>
           <p data-efficiency-open-error role="alert"></p>
+          <section data-aiyou-openchatcut-settings aria-label="OpenChatCut 安装与连接"></section>
           <form data-reset-monitor-form>
             <h3>重置公告监控</h3>
             <label class="codex-shortcut-settings-row"><input type="checkbox" name="enabled">启用定时监控</label>
@@ -5901,7 +6121,8 @@
             <div><button type="submit">保存监控设置</button> <button type="button" data-reset-monitor-refresh>刷新状态</button></div>
             <p data-reset-monitor-message role="status" aria-live="polite"></p>
           </form>
-          <h3>显示与隐藏</h3>
+          <h3>菜单显示与排序</h3>
+          <p data-codex-shortcut-sort-help>长按左侧菜单或这里的拖动柄，拖到目标位置后松开，自动保存顺序。也可使用 Alt + ↑ / ↓ 调整。</p>
           <div class="codex-shortcut-settings-list" data-codex-shortcut-visibility-list></div>
           <form data-codex-shortcut-custom-form>
             <h3>新建快捷入口</h3>
@@ -5978,6 +6199,7 @@
       scheduleSync();
     };
     document.body.appendChild(dialog);
+    window.__aiyouOpenChatCut__?.renderSettings?.(dialog.querySelector('[data-aiyou-openchatcut-settings]'));
     return dialog;
   }
 
@@ -5986,6 +6208,7 @@
     if (!dialog) dialog = createShortcutSettingsDialog();
     renderShortcutVisibilityList(dialog);
     updateViewState();
+    window.__aiyouOpenChatCut__?.renderSettings?.();
     if (!dialog.open) {
       resetMonitorDirty = false;
       showWorkspaceSection(dialog);
@@ -6195,9 +6418,11 @@
     const rail = nativeIconRail();
     const managedItems = normalizedManagedShortcuts();
     const enhancementItems = [
+      { id: "agent-workspace", name: "Agent 工作区", kind: "enhancement", icon: "agent", activate: () => window.__aiyouAgentWorkspace__?.open?.() },
       { id: "skills-grouping", name: "Skills 分组", kind: "enhancement", icon: "skills", activate: openSkillsGrouping },
       { id: "asset-console", name: "资产控制台", kind: "enhancement", icon: "assets", activate: openAssetConsolePanel },
       { id: "model-arena", name: "模型竞技场", kind: "enhancement", icon: "arena", activate: () => openAssetConsolePanel({ kind: "arena" }) },
+      { id: "openchatcut", name: "OpenChatCut", kind: "enhancement", icon: "scissors", activate: () => window.__aiyouOpenChatCut__?.open?.() },
       { id: "project-management", name: "项目管理", kind: "enhancement", icon: "project",
         activate: () => {
           if (typeof window.__codexTaskboardInjection__?.open === "function") window.__codexTaskboardInjection__.open();
@@ -6207,13 +6432,13 @@
     ];
     const settingsItem = { id: "settings", name: "设置", kind: "settings" };
     if (rail) {
-      const catalogItems = [
+      const catalogItems = orderedShortcuts([
         { name: "新对话", kind: "native", icon: "newChat", button: newConversation },
         ...managedItems,
         ...enhancementItems,
         ...normalizedCustomShortcuts(),
         settingsItem,
-      ];
+      ]);
       const items = catalogItems.filter((item) => item.kind === "settings"
         || !shortcutSettings.hidden.includes(shortcutItemKey(item)));
       return { mode: "rail", rail, mountHost: nativeIconRailMount(rail),
@@ -6238,15 +6463,15 @@
       ...navigationButtons.map((button) => ({ name: shortcutLabel(button), button, quickButton: null })),
     ].filter((item, index, values) => item.name && values.findIndex((candidate) => candidate.name === item.name) === index);
     const builtInItems = sourceItems.filter((item) => !HIDDEN_SHORTCUT_NAMES.has(item.name) && item.name !== "项目管理");
-    const catalogItems = [
+    const catalogItems = orderedShortcuts([
       ...builtInItems.slice(0, 1),
       ...managedItems,
       ...builtInItems.slice(1),
       ...enhancementItems,
       ...normalizedCustomShortcuts(),
       settingsItem,
-    ];
-    const items = catalogItems.filter((item) => !shortcutSettings.hidden.includes(shortcutItemKey(item)));
+    ]);
+    const items = catalogItems.filter((item) => item.kind === "settings" || !shortcutSettings.hidden.includes(shortcutItemKey(item)));
     return { header, newConversationRow, navigationGroup, overflowGroup, sourceItems, catalogItems, items };
   }
 
@@ -6269,18 +6494,13 @@
       host.innerHTML = settingsShortcutSvg();
       return host;
     }
-    // Project management is our module, not a native icon. Older entries and
-    // new host layouts can contain no SVG at all; keep this artwork standalone.
-    if (name === "项目管理" && !icon) {
-      host.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M9 4v16M14.5 8h2.5M14.5 12h2.5M14.5 16h2.5"/></svg>';
-      return host;
-    }
-    if (icon) {
-      host.innerHTML = presetShortcutSvg(icon);
-      return host;
-    }
-    const image = source?.querySelector("svg, img")?.cloneNode(true);
-    if (image) host.appendChild(image);
+    // Own built-in artwork: native nodes may carry hidden/mask/size styles.
+    const builtInIcon = {
+      "新对话": "newChat", "项目管理": "project", "Agent 工作区": "agent",
+      "Skills 分组": "skills", "资产控制台": "assets", "模型竞技场": "arena",
+      "拉取请求": "pullRequest", "已安排": "scheduled", "插件": "plugins", "站点": "sites",
+    }[name];
+    host.innerHTML = presetShortcutSvg(icon || builtInIcon || "link");
     return host;
   }
 
@@ -6292,17 +6512,18 @@
     button.className = SHORTCUT_CARD_CLASS;
     button.dataset.codexSidebarShortcutCard = "true";
     button.dataset.codexSidebarShortcutName = item.name;
+    button.dataset.codexShortcutSortKey = shortcutItemKey(item);
     if (item.url) button.dataset.codexSidebarShortcutUrl = item.url;
     if (item.kind === "settings") button.dataset.codexSidebarShortcutSettings = "true";
     if (item.custom) button.dataset.codexSidebarShortcutCustom = item.id;
     if (item.managed) button.dataset.codexSidebarShortcutManaged = item.id;
     button.setAttribute("aria-label", item.kind === "settings" ? "打开 AIYOUcodex 设置" : `打开${item.name}`);
-    button.title = item.name;
+    button.title = `${item.name} · 长按拖动排序`;
     const label = document.createElement("span");
     label.className = SHORTCUT_LABEL_CLASS;
     label.textContent = item.name;
     button.append(shortcutIcon(item.button, SHORTCUT_ICON_CLASS, item.name, item.icon, item.id), label);
-    button.onclick = () => {
+    button.onclick = (event) => {
       if (item.kind === "settings") openShortcutSettings();
       else if (item.kind === "enhancement") {
         if (shortcutPanelIsOpen(item)) {
@@ -6402,6 +6623,7 @@
   }
 
   function clearShortcutEnhancement() {
+    if (shortcutDrag?.container.id === SHORTCUT_GRID_ID) clearShortcutDrag();
     document.getElementById(SHORTCUT_GRID_ID)?.remove();
     document.querySelectorAll('[data-aiyoucodex-icon-rail]').forEach((node) => node.removeAttribute('data-aiyoucodex-icon-rail'));
     document.querySelectorAll("[data-codex-sidebar-shortcut-source-hidden]").forEach((node) => {
@@ -6418,6 +6640,7 @@
   }
 
   function ensureShortcutGrid() {
+    if (shortcutDrag?.active) return;
     const sources = nativeShortcutSources();
     if (!sources || sources.items.length < 2) {
       if (document.getElementById(SHORTCUT_GRID_ID)) {
@@ -6438,6 +6661,7 @@
       || !shortcutRoots.has(grid)
       || grid?.parentElement !== mountHost
       || grid?.dataset.codexShortcutLayout !== (railMode ? "rail" : "grid")
+      || [...(grid?.querySelectorAll("[data-codex-shortcut-sort-key]") || [])].some((node, i) => node.dataset.codexShortcutSortKey !== shortcutItemKey(sources.items[i]))
       || grid?.children.length !== sources.items.length
       || grid?.querySelectorAll('[data-codex-sidebar-shortcut-card]').length !== sources.items.length
       || Boolean(grid?.querySelector('[data-codex-sidebar-shortcut-quick]')) !== sources.items.some((item) => Boolean(item.quickButton))
@@ -9322,6 +9546,13 @@
 
   function start() {
     installStyles();
+    document.addEventListener("pointerdown", handleShortcutSortPointerDown, true);
+    document.addEventListener("pointermove", handleShortcutSortPointerMove, true);
+    document.addEventListener("pointerup", handleShortcutSortPointerEnd, true);
+    document.addEventListener("pointercancel", handleShortcutSortPointerEnd, true);
+    document.addEventListener("click", handleShortcutSortClick, true);
+    document.addEventListener("keydown", handleShortcutSortKeydown, true);
+    window.addEventListener("blur", clearShortcutDrag);
     refreshNativeExecutionStates();
     executionStateTimer = setInterval(refreshNativeExecutionStates, 3000);
     resetNoticeTimer = setInterval(() => { if (!document.hidden) updateResetNotice(); }, 30_000);
@@ -9358,6 +9589,15 @@
   }
 
   function destroy() {
+    clearShortcutDrag();
+    document.removeEventListener("pointerdown", handleShortcutSortPointerDown, true);
+    document.removeEventListener("pointermove", handleShortcutSortPointerMove, true);
+    document.removeEventListener("pointerup", handleShortcutSortPointerEnd, true);
+    document.removeEventListener("pointercancel", handleShortcutSortPointerEnd, true);
+    document.removeEventListener("click", handleShortcutSortClick, true);
+    document.removeEventListener("keydown", handleShortcutSortKeydown, true);
+    window.removeEventListener("blur", clearShortcutDrag);
+    shortcutClickGuard = null;
     clearInterval(executionStateTimer);
     destroyed = true;
     window.__aiyouClaudeInjection__?.destroy?.();
@@ -9512,8 +9752,14 @@
     setLayaSearchData,
     resolveResetMonitorRequest,
     resolveClaudeRequest: (response) => window.__aiyouClaudeInjection__?.resolve?.(response),
+    resolveAgentRequest: (response) => window.__aiyouAgentWorkspace__?.resolve?.(response),
+    resolveOpenChatCutRequest: (response) => window.__aiyouOpenChatCut__?.resolve?.(response),
+    prepareAgentPanel: () => { closeOtherWorkspacePanels("agent-workspace"); return findCustomShortcutPageMount(); },
+    initializeAgentPanel: (page) => { initializeWorkspacePanel(page, "agent-workspace"); setWorkspacePanelHostLayer(page, true); },
+    closeAgentPanelLayer: (page) => setWorkspacePanelHostLayer(page, false),
     getWorkspacePanelMount: findCustomShortcutPageMount,
     initializeWorkspacePanel,
+    closeOtherWorkspacePanels,
     prepareClaudePanel: () => { closeOtherWorkspacePanels("claude"); return findCustomShortcutPageMount(); },
     initializeClaudePanel: (page) => {
       if (!page.dataset.aiyouClaudeInitialized) { initializeWorkspacePanel(page, "claude"); page.dataset.aiyouClaudeInitialized = "true"; }
