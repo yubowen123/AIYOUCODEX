@@ -57,7 +57,8 @@
  const event=eventFor(),asset=event==='poster'?(format==='gif'?config.poster:config.staticImage||config.poster):config.media[event]||config.poster;
  if(format==='video'){renderVideo(event,restart);return;}
  if(anchored){renderAnchored(event,asset,restart);return;}
- if(asset===currentAsset&&!restart)return;currentAsset=asset;layer.dataset.event=event;const previous=img;img=document.createElement('img');img.alt='';img.setAttribute('aria-hidden','true');img.draggable=false;
+ // Builtin image mode observes interactions without restarting one slideshow layer.
+ if(asset===currentAsset&&(!restart||prefs.background.type==='image'))return;currentAsset=asset;layer.dataset.event=event;const previous=img;img=document.createElement('img');img.alt='';img.setAttribute('aria-hidden','true');img.draggable=false;
  // New element restarts one-shot GIF decode. No URL cache-busting or network request.
  img.className='aiyou-motion-art';img.src=asset;img.addEventListener('error',()=>{if(img.src!==config.poster)img.src=config.poster;},{once:true});previous.replaceWith(img);nonce++;
  }

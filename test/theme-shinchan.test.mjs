@@ -19,7 +19,7 @@ test('community shinchan package compiles with consistent defaults and the exist
  const manifest=JSON.parse(await readFile(path.join(theme,'manifest.json')));
  const preset=JSON.parse(await readFile(path.join(theme,'controls.json')));
  const built=await buildThemePackage(theme);
- assert.equal(built.manifest.version,'1.0.1');
+ assert.equal(built.manifest.version,'1.0.2');
  assert.equal(manifest.author,'浠浠');
  const sums=(await readFile(path.join(theme,'SHA256SUMS.txt'),'utf8')).trim().split('\n');
  for(const line of sums){
@@ -47,7 +47,7 @@ test('community theme runtime protects motion, custom media, messages, draft and
   assert.equal(result.code,0,result.stdout+'\n'+result.stderr);
   const report=JSON.parse(await readFile(path.join(output,'fixed-results.json')));
   assert.equal(report.failed,0);
-  assert.equal(report.passed,33);
+  assert.equal(report.passed,34);
   assert.equal(report.error,undefined);
  }finally{await rm(output,{recursive:true,force:true,maxRetries:5,retryDelay:100});}
 });

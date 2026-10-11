@@ -23,7 +23,7 @@ GitHub 开源地址：[https://github.com/yubowen123/AIYOUCODEX](https://github.
 </tr>
 <tr>
 <td width="50%" align="center"><img src="themes/yoyo-tilt-collection/assets/yoyo-sprite.png" alt="YOYO萌趣歪头·浠浠主题素材预览，非原生截图" width="100%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-yoyo-tilt-collection-xixi-v1.3.2.zip"><strong>⭐ YOYO萌趣歪头·浠浠 · v1.3.2 ↓ 独立下载</strong></a><br />浠浠设计 · 社区共创 · 素材预览</td>
-<td width="50%" align="center"><img src="themes/crayon-shinchan-four-scenes-xixi/assets/poster.png" alt="小新四图轮播·浠浠主题素材预览" width="100%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-crayon-shinchan-four-scenes-xixi-v1.0.1.zip"><strong>⭐ 小新四图轮播·浠浠 · v1.0.1 ↓ 独立下载</strong></a><br />浠浠设计 · 社区共创 · 素材预览</td>
+<td width="50%" align="center"><img src="themes/crayon-shinchan-four-scenes-xixi/assets/poster.png" alt="小新四图轮播·浠浠主题素材预览" width="100%" /><br /><a href="https://github.com/yubowen123/AIYOUCODEX/releases/download/v1.5.1/aiyoucodex-theme-crayon-shinchan-four-scenes-xixi-v1.0.2.zip"><strong>⭐ 小新四图轮播·浠浠 · v1.0.2 ↓ 独立下载</strong></a><br />浠浠设计 · 社区共创 · 素材预览</td>
 </tr>
 </table>
 
