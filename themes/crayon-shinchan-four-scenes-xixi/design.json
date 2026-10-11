@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "crayon-shinchan-four-scenes-xixi",
+  "language": "野原家相册：奶油纸色、暖陶土红、天空蓝和叶绿，四张用户照片柔和轮播",
+  "radius": {
+    "control": 12,
+    "card": 14,
+    "message": 16,
+    "dialog": 18,
+    "composer": 22,
+    "shell": 14
+  },
+  "spacing": {
+    "unit": 4,
+    "stack": 10,
+    "message-x": 14,
+    "message-y": 12
+  },
+  "borders": {
+    "width": 1,
+    "focusWidth": 2
+  },
+  "typography": {
+    "family": "system-ui, -apple-system, BlinkMacSystemFont, PingFang SC, sans-serif",
+    "bodySizePolicy": "inherit-host",
+    "bodyLineHeight": 1.65,
+    "brand": "assets/wordmark.svg"
+  },
+  "elevation": {
+    "message": "inset 0 1px 1px #ffffffcc,0 3px 10px #6b49301a",
+    "card": "inset 0 1px 1px #ffffffcc,0 2px 5px #6b493014,0 8px 20px #6b493018",
+    "dialog": "inset 0 1px 2px #ffffffdd,0 14px 36px #6b49302a"
+  },
+  "motion": {
+    "hoverMs": 140,
+    "eventRateLimitMs": 900,
+    "decorateOnly": true,
+    "reducedMotion": "poster",
+    "confirmedSendOnly": true
+  },
+  "content": {
+    "messageTextOpacity": 1,
+    "messageBackgroundAlpha": 0.9,
+    "mediaOpacityMaximum": 0.46,
+    "preserveMediaPixels": true
+  },
+  "invariants": [
+    "no-business-action",
+    "no-hit-interception",
+    "no-structure-replacement",
+    "default-theme-fallback"
+  ]
+}

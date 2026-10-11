@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "storageKey": "aiyoucodex.theme.crayon-shinchan-four-scenes-xixi.v1",
+  "defaults": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "motion": true,
+    "alpha": {
+      "overall": 1,
+      "chrome": 0.78,
+      "sidebar": 0.68,
+      "chat": 0,
+      "panel": 0.86,
+      "card": 0.92,
+      "message": 0.9,
+      "composer": 0.9,
+      "control": 0.88,
+      "menu": 0.98,
+      "text": 1,
+      "border": 0.65,
+      "shadow": 1,
+      "decoration": 0.85,
+      "image": 0.46,
+      "composer-area": 0
+    },
+    "colors": {
+      "primary": "#413730",
+      "secondary": "#665b51",
+      "link": "#315e77",
+      "success": "#426749",
+      "danger": "#9e3e3c",
+      "warning": "#9a5743",
+      "inverse": "#fffaf1"
+    },
+    "background": {
+      "fit": "contain",
+      "x": 50,
+      "y": 50,
+      "type": "image",
+      "source": "builtin",
+      "custom": null,
+      "customStates": {}
+    }
+  },
+  "defaultReadability": {
+    "minimum": 4.99,
+    "passes": true
+  },
+  "source": "createThemeCustomization"
+}

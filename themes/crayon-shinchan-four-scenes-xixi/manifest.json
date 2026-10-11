@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "id": "crayon-shinchan-four-scenes-xixi",
+  "name": "小新四图轮播·浠浠",
+  "version": "1.0.1",
+  "renderer": "aiyoucodex-theme-v1",
+  "palette": "colors.json",
+  "design": "design.json",
+  "controls": "controls.json",
+  "poster": "assets/poster.png",
+  "decorations": {},
+  "motion": {
+    "enter": {
+      "file": "assets/poster.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "click": {
+      "file": "assets/poster.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "send": {
+      "file": "assets/poster.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "running": {
+      "file": "assets/poster.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "complete": {
+      "file": "assets/poster.png",
+      "durationMs": 1200,
+      "loop": false
+    },
+    "error": {
+      "file": "assets/poster.png",
+      "durationMs": 1200,
+      "loop": false
+    }
+  },
+  "defaults": {
+    "enabled": true,
+    "motion": true,
+    "backgroundType": "image",
+    "backgroundOpacity": 0.46
+  },
+  "limits": {
+    "maxAssetBytes": 10000000,
+    "maxBundleBytes": 20000000
+  },
+  "events": {
+    "chatEntry": "enter",
+    "interaction": "click",
+    "sendAccepted": "send",
+    "running": "running",
+    "completed-unread": "complete",
+    "error": "error",
+    "read": "poster"
+  },
+  "description": "以用户提供的四张蜡笔小新主题图片制作的柔和轮播主题。",
+  "author": "浠浠",
+  "license": "MIT (theme code only); character and artwork rights are not licensed by this package"
+}
