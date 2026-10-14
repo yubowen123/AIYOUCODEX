@@ -1,0 +1,70 @@
+生成方式：Codex Image 内置工具。先使用主题素材合成四图参考，再生成整张卡片，最后补充已实现的关闭插件与版本号。
+
+【主题参考拼版提示词.txt】
+Compose the four provided REAL theme artworks into a flat 2-by-2 reference contact sheet, PNG on warm white. Each quadrant should contain its corresponding complete original image fitted without distortion. Preserve actual artwork and all characters exactly; no redrawing or substitute generic art. Upper left: input1, five YOYO figurines, all five fully visible. Upper right: input2, Shinchan plush collage. Lower left: input3, SpongeBob and Patrick in teal water. Lower right: input4, colorful beach vacation group. Thin 12px white gutters, no text, no labels, no decoration, no borders, no perspective. This is an intermediate asset board for accurate placement into an infographic. Output landscape 1536x1024.
+
+
+【AIYOUcodex-一周更新-知识卡片提示词.txt】
+Create ONE polished tall Chinese knowledge infographic, portrait 1440×2560, PNG. This is the AIYOUcodex weekly product update card for 2026-10-08 through 2026-10-14 (China time). All visible Chinese text must be precise, large, readable and typeset professionally. Warm off-white background #FBFAF4, dark navy typography, blue and teal accents, subtle dividers, clean editorial layout. Use an integrated editorial flow, not many nested boxes. Do not add invented statistics, features or QR codes.
+
+CRITICAL: The supplied four image inputs are supporting insert/compositing inputs from the ACTUAL theme assets. Use them recognizably in the theme gallery with their identities and details preserved. Do NOT replace them with generic seaside art or made-up substitute illustrations. Image 1 is the actual photographic seaside glasses woman from 海岛心动陪伴. Keep her face, glasses, pose and photographic quality faithful. Input 2 is a contact sheet: its upper-left quadrant is five colorful YOYO figurines, upper-right is the plush Shinchan collage, lower-left is SpongeBob and Patrick on floating beach chairs in teal water, lower-right is the colorful beach vacation group. Separate these four artworks from the contact sheet and place into their individual theme tiles. Input 3 is dark metallic mecha in a hangar; input 4 is a pink fluffy rabbit among clouds. In the instructions below, Image 2 means input2 upper-left, Image3 means input2 upper-right, Image4 means input2 lower-left, Image5 means input2 lower-right, Image6 means input3, Image7 means input4. Maintain the appearance of each reference; crop for layout only. Do not invent application interface screenshots.
+
+TOP (about 12%):
+Small badge: “AIYOUcodex · 一周更新”
+Large two-line title: “工作接起来”“主题更精彩”
+Subtitle: “2026.10.08—10.14”
+Small evolution line: “v1.5.1 → v1.6.0 → v1.7.0”
+No misleading new version labels.
+
+UPPER MIDDLE (about 32%): A clear working flow with arrows “选模型 → 找资源 → 接工作 → 做内容”. Four concise modules connected visually:
+1. Large blue-accented model module:
+Heading “GPT ↔ DeepSeek”
+Text “同一对话切换 · 按目标模型处理长上下文”
+Small note “DeepSeek 自动接入目前仅 macOS”
+2. Resource / Agent pair on adjacent editorial columns:
+Heading “资源随手找”
+Text “Skills 与资产：Laya / 普通搜索”
+Text “名称、标签、已有文本与命中摘要”
+Heading “Agent 工作区”
+Text “发现本机 Agent · 选择资源和对话”
+Text “迁移预览 → 校验 → 回执 / 撤销”
+3. Content / conversation pair:
+Heading “对话里剪视频”
+Text “OpenChatCut：每个对话独立工程”
+Text “右侧素材、预览、时间线”
+Heading “对话更顺手”
+Text “实时排序 · 历史滚动定位”
+Text “完整右键菜单 · 快捷入口拖动”
+4. Slim stability strip:
+Heading “等待有反馈，失败能重试”
+Text “模块加载状态 · 草稿保留 · 看板重连”
+Small text “MOKE 插件随包集成”
+
+LOWER MIDDLE / THEME GALLERY (about 49%, emphasize the images):
+Section heading “7 款主题 · 看得见的个性”
+Subheading “背景 / 边框 / 流光配色 · 透明度独立调节”
+Place large wide Image 1 as the principal gallery image, with an elegant caption:
+“海岛心动陪伴 v1.0.2”
+“连续视频 · 声音开关默认关闭”
+Below it, make a balanced 3-row × 2-column contact sheet of six substantial clear thumbnail images, each with a single neat caption:
+Image 6 caption “机甲控制舱 v1.4.3”
+Image 7 caption “粉嫩软糖 v1.0.4”
+Image 5 caption “海边度假 v1.2.0”
+Image 4 caption “海底假日 v1.0.2”
+Image 2 caption “YOYO萌趣歪头 v1.3.2”
+Image 3 caption “小新四图轮播 v1.0.2”
+Every theme must show its actual provided artwork, not an icon or blank tile. Gallery may use rounded frame borders; make good use of space, prioritize images and readable captions.
+Under gallery: “特别鸣谢：浠浠（xixi）社区共创”
+
+FOOTER (about 7%):
+One concise blue/green action strip: “GitHub 主题区独立下载 · 设置中切换主题”
+Small factual note: “主题配图为素材预览；实机与平台边界详见发行说明。”
+Source: “github.com/yubowen123/AIYOUCODEX”
+Output one complete PNG infographic only. No surrounding mockup, no perspective, no extra cards.
+
+
+【知识卡片补充关闭插件提示词.txt】
+Edit the supplied AIYOUcodex weekly infographic. Keep ALL existing layout, theme artwork, faces, captions, icons, dates and other text intact with minimum change. Only make these two text updates:
+1. In the top version strip replace “v1.5.1 → v1.6.0 → v1.7.0” with “v1.5.1 → v1.6.0 → v1.7.1”.
+2. In the rightmost pale green functional column, keep “MOKE 插件随包集成” and add below it a compact visible line “设置：关闭插件 / 退出应用”, with very small second line “关闭增强，保留原生 Codex”. Increase that column height or reduce its internal blank space slightly to fit without overlapping nearby content. Both actions are separate buttons. Do not change other claims.
+Output a single finished PNG of the same portrait infographic, with all seven actual theme asset illustrations retained. Precise Chinese text; no additional redesign, no new images or features.

@@ -7,6 +7,7 @@ import path from "node:path";
 import os from "node:os";
 import { createConversationFolders, runConversationFolderHook } from "../lib/conversation-folders.mjs";
 import { runOpenChatCutRoutingHook } from "../lib/openchatcut-routing-hook.mjs";
+import { isEnhancementEnabled } from '../lib/enhancement-state.mjs';
 
 export function resolveNativeDefaultSkills(selections, { cwd, homeDir, timeoutMs = 1400 } = {}) {
   if (!selections.length) return Promise.resolve([]);
@@ -42,6 +43,7 @@ async function readInput() {
 
 async function main() {
   const event = await readInput();
+  if (!await isEnhancementEnabled()) { process.stdout.write('{}\n'); return; }
   if (process.argv[2] === "--skill-metadata") {
     const { readInstalledSkillCatalog } = await import("../lib/skill-catalog.mjs");
     const ids = new Set(event.selections.slice(0, 8).map((selection) => selection.id));

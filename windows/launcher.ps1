@@ -13,6 +13,15 @@ $nodePath = [string]$config.nodePath
 $port = [int]$config.port
 $logsDir = [string]$config.logsDir
 
+$stateCommand = Join-Path $installDir "scripts\enhancement-state.mjs"
+if ($InjectorOnly) {
+  & $nodePath $stateCommand status
+  if ($LASTEXITCODE -ne 0) { exit 0 }
+} else {
+  & $nodePath $stateCommand enable
+  if ($LASTEXITCODE -ne 0) { throw "Could not resume AIYOUcodex enhancement." }
+}
+
 function Test-DebugPort {
   $client = New-Object Net.Sockets.TcpClient
   try {
