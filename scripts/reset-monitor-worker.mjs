@@ -2,6 +2,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { acquireMonitorLock, readResetMonitorStatus, resetMonitorPath, writeMonitorJson } from "../lib/reset-monitor-store.mjs";
 import { tickResetMonitor } from "../lib/reset-monitor-worker.mjs";
+import { isEnhancementEnabled } from '../lib/enhancement-state.mjs';
 
 const args = process.argv.slice(2);
 if (args.some((arg) => arg !== "--once")) throw new Error("Usage: reset-monitor-worker.mjs [--once]");
@@ -17,6 +18,11 @@ for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { stopped
 try {
   do {
     try {
+      if (!await isEnhancementEnabled()) {
+        if (args.includes('--once')) break;
+        await delay(1500, undefined, { signal: controller.signal }).catch(() => {});
+        continue;
+      }
       const result = await tickResetMonitor({ filePath, force: args.includes("--once") });
       if (result.checked) console.log(`[reset-monitor] ${result.lastStatus}; new events=${result.lastEventCount}; next=${result.nextRunAt == null ? "paused" : new Date(result.nextRunAt).toISOString()}`);
     } catch (error) {

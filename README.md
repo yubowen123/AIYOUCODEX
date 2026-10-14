@@ -34,9 +34,19 @@ GitHub 开源地址：[https://github.com/yubowen123/AIYOUCODEX](https://github.
 
 查看[主题安装与配置](docs/THEMES.md)。本次新增控件通过隔离浏览器测试；上述旧原生截图和素材预览不代表新增控件的实机验收。
 
-当前发行版：**v1.7.0**。项目管理、Skills 分组、本地资产库、快捷入口设置及对应的 macOS/Windows 后台运行时会作为同一安装包更新，不需要分别安装。
+当前发行版：**v1.7.1**。项目管理、Skills 分组、本地资产库、快捷入口设置及对应的 macOS/Windows 后台运行时会作为同一安装包更新，不需要分别安装。
 
 v1.4.0 将菜单功能统一为不打断对话的右侧面板：可以直接在项目对话里搜索项目、Skills 或资产，并把 Skill 与本地资产安全预填到当前输入框，不会自动发送。
+
+### v1.7.1 · 关闭插件与一周更新
+
+设置底部新增 **关闭插件**：移除 AIYOUcodex 增强界面、暂停自有工作服务，保留原生 Codex、草稿与配置。刷新、后台恢复和登录启动不自动启用；再次手动打开 AIYOUcodex 可恢复。原有“退出 AIYOUcodex”仍用于退出整个应用。[关闭与恢复说明](docs/RELEASE-v1.7.1.md)
+
+**10 月 8—14 日**：卡片配色与社区主题、实时排序与对话菜单、MOKE 集成、Agent 工作区、OpenChatCut 对话剪辑、DeepSeek、Skills / 资产搜索、模块加载恢复，以及新的关闭入口。
+
+<img src=".github/assets/20261014/weekly-updates-20261008-1014-with-themes.png" alt="AIYOUcodex 10月8日至14日一周更新：功能流程与七款主题素材配图" width="720" />
+
+卡片由 Codex Image 生成，配图来自 7 款现有主题素材；属于素材展示，原生效果与平台范围见[本周更新详情](docs/WEEKLY-2026-10-08-14.md)。[下载 v1.7.1](https://github.com/yubowen123/AIYOUCODEX/releases/tag/v1.7.1)
 
 ### v1.7.0 · DeepSeek、搜索与加载体验
 
@@ -45,10 +55,6 @@ v1.4.0 将菜单功能统一为不打断对话的右侧面板：可以直接在�
 Skills 与资产库新增 **Laya / 普通搜索**切换；资产搜索按名称、标签与已有资料文本匹配，并显示命中摘要。多个面板补齐加载、慢连接与失败重试状态，保留已加载内容和未发送草稿；设置新增明确退出入口。海岛心动陪伴 **v1.0.2** 随包提供，视频声音默认关闭。
 
 [发行说明与验证范围](docs/RELEASE-v1.7.0.md) · [下载 v1.7.0](https://github.com/yubowen123/AIYOUCODEX/releases/tag/v1.7.0)
-
-<img src=".github/assets/20261014/aiyoucodex-v1.7.0-knowledge-card.png" alt="AIYOUcodex v1.7.0 更新知识卡片：GPT 与 DeepSeek、搜索和加载体验" width="720" />
-
-知识卡片由 Codex Image 生成，原图 **1086×1448 PNG**，图形为说明性插画。DeepSeek 桌面完整冷启动、Windows 原生接入与实际历史仍待实机确认。
 
 ### v1.6.0 · 工作区与对话剪辑
 
@@ -67,26 +73,6 @@ Agent 工作区支持本机 Agent 发现、资源与对话选择、迁移预览�
 Mac arm64 已通过真实素材导入、裁剪、工程保存、H.264/AAC 导出和桥接重连验证。Mac x64/Linux x64 有自动安装实现，尚未真机验证；Windows 当前提供官方手动安装入口及已有应用检测。转写、音乐分析和模型生成需另行配置相应资源。[插件说明](plugins/openchatcut/README.md)
 
 ### 对话体验与 MOKE 接入更新 · 2026-10-09
-
-历史消息滚动保持阅读位置；“最近”过滤子 Agent 对话；右键菜单跟随卡片主题，补齐置顶、重命名、归档和移动项目。MOKE 官网 Logo 入口使用原生右侧浏览器，MCP 插件随安装集成。
-
-**验证进展（2026-10-11）：** 本机 MOKE 只读目录查询成功；这不代表通用 OAuth 或所有安装环境均已验证。原生菜单页面加载仍待实机确认。Windows 安装与交互以相应 CI 和实机结果为准。[更新详情与验证范围](docs/UPDATE-2026-10-09.md)
-
-<img src=".github/assets/20261009/recent-update-card.png" alt="AIYOUcodex 近期更新知识卡片：对话体验与 MOKE 接入" width="640" />
-
-卡片由 Codex Image 生成，其中真实界面示例来自 10 月 8 日的教程截图；以上源码更新现已纳入 v1.6.0。
-
-### 主分支修复更新 · 2026-10-08
-
-侧栏边框与状态光晕完整显示；“最近”接入实时会话目录并自动更新排序，首批 30 条后可加载更多；“置顶”按最新对话时间倒序。粉嫩软糖气泡在聊天区域重建时保持统一留白，主题 Skill 补齐插件展开和拖动边界标准。
-
-87 项侧栏及相关专项回归通过，并完成当前 Codex 实机核验。[修复说明与验证](docs/UPDATE-2026-10-08-SIDEBAR.md)
-
-<img src=".github/assets/20261008/sidebar-recency-update-card.png" alt="AIYOUcodex 侧栏与对话排序更新卡片" width="640" />
-
-卡片使用 Codex Image 生成；其中界面素材来自当前原生 Codex，卡片文案已替换为教程示例。本节为主分支源码更新，发行包版本以 Releases 页面为准。
-
-## 对话体验与 MOKE 接入更新 · 2026-10-09
 
 历史消息滚动保持阅读位置；“最近”过滤子 Agent 对话；右键菜单跟随卡片主题，补齐置顶、重命名、归档和移动项目。MOKE 官网 Logo 入口使用原生右侧浏览器，MCP 插件随安装集成。
 

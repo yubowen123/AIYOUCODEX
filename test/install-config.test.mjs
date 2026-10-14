@@ -211,6 +211,11 @@ test("launcher revives missing helpers and focuses an existing native app withou
     const fakeApp = path.join(testHome, "Applications", "ChatGPT.app");
     await mkdir(fakeApp, {recursive: true});
     const plan = createInstallPlan({home: testHome});
+    // Run the state CLI against an isolated file; never change the user's pause.
+    for (const file of ['scripts/enhancement-state.mjs', 'lib/enhancement-state.mjs']) {
+      const destination = path.join(plan.installDir, file); await mkdir(path.dirname(destination), { recursive: true });
+      await writeFile(destination, await readFile(new URL('../' + file, import.meta.url)));
+    }
     await mkdir(plan.launchAgentsDir, {recursive: true});
     await writeFile(plan.plistPath, plan.plist);
     await writeFile(path.join(plan.launchAgentsDir, "com.aiyoucodex.theme-runtime.plist"), "test");
@@ -227,7 +232,7 @@ function mock_osascript() { print -r -- "UNEXPECTED osascript $*" >> "$AIYOU_TES
       .replaceAll("/usr/bin/curl", "mock_curl").replaceAll("/usr/bin/pgrep", "mock_pgrep")
       .replaceAll("/usr/bin/open", "mock_open").replaceAll("/usr/bin/osascript", "mock_osascript");
     const result = spawnSync("/bin/zsh", ["-c", mock + isolatedScript], {
-      encoding: "utf8", env: {...process.env, AIYOU_TEST_LOG: logPath},
+      encoding: "utf8", env: {...process.env, AIYOU_TEST_LOG: logPath, AIYOUCODEX_ENHANCEMENT_STATE_FILE: path.join(testHome, 'enhancement-state.json')},
     });
     assert.equal(result.status, 0, result.stderr);
     const log = await readFile(logPath, "utf8");

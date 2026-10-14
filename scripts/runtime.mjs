@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import { createRuntimePlan } from "../lib/runtime-plan.mjs";
 import { resolveLoopbackPort } from "../lib/runtime-port.mjs";
 import { provisionAssetConsoleState } from "../lib/workspace-enhancements.mjs";
+import { isEnhancementEnabled } from "../lib/enhancement-state.mjs";
+import { createRuntimeSupervisor } from "../lib/runtime-supervisor.mjs";
 
 function parseArgs(argv) {
   const options = { port: 9231 };
@@ -40,9 +41,6 @@ const preferredAssetConsolePort = Number(process.env.CODEX_ASSET_CONSOLE_PORT ||
 const assetConsolePort = await resolveLoopbackPort(preferredAssetConsolePort);
 runtimeEnvironment = { ...runtimeEnvironment, CODEX_ASSET_CONSOLE_PORT: String(assetConsolePort) };
 const plan = createRuntimePlan({ root, port: options.port, taskboardPort, environment: runtimeEnvironment });
-const children = new Map();
-const restartTimers = new Map();
-const restartAttempts = new Map();
 let stopping = false;
 
 for (const child of plan.children) await access(child.args[0]);
@@ -59,53 +57,9 @@ await writeFile(plan.taskboardRuntimeFile, `${JSON.stringify({
   startedAt: new Date().toISOString(),
 }, null, 2)}\n`, { mode: 0o600 });
 
-function start(definition) {
-  if (stopping) return;
-  const startedAt = Date.now();
-  const child = spawn(definition.command, definition.args, {
-    cwd: definition.cwd,
-    env: definition.env,
-    stdio: "inherit",
-  });
-  children.set(definition.name, child);
-  process.stdout.write(`[${new Date().toISOString()}] [runtime] ${definition.name} started (${child.pid})\n`);
-  child.once("error", (error) => {
-    process.stderr.write(`[${new Date().toISOString()}] [runtime] ${definition.name} error: ${error.message}\n`);
-  });
-  child.once("close", (code, signal) => {
-    if (children.get(definition.name) === child) children.delete(definition.name);
-    if (stopping) return;
-    const attempts = Date.now() - startedAt >= 60_000 ? 1 : (restartAttempts.get(definition.name) || 0) + 1;
-    restartAttempts.set(definition.name, attempts);
-    const retryMs = Math.min(30_000, 1_000 * 2 ** Math.min(5, attempts - 1));
-    process.stderr.write(`[${new Date().toISOString()}] [runtime] ${definition.name} exited (${signal || code}); retry in ${retryMs}ms\n`);
-    const timer = setTimeout(() => {
-      restartTimers.delete(definition.name);
-      start(definition);
-    }, retryMs);
-    restartTimers.set(definition.name, timer);
-  });
-}
-
-async function stop() {
-  if (stopping) return;
-  stopping = true;
-  for (const timer of restartTimers.values()) clearTimeout(timer);
-  restartTimers.clear();
-  const exits = [];
-  for (const child of children.values()) {
-    exits.push(new Promise((resolve) => {
-      if (child.exitCode !== null || child.signalCode !== null) return resolve();
-      child.once("exit", resolve);
-      child.kill("SIGTERM");
-      setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-      }, 3_000).unref?.();
-    }));
-  }
-  await Promise.allSettled(exits);
-  children.clear();
-}
+const supervisor = createRuntimeSupervisor({ definitions: plan.children,
+  log: message => process.stdout.write(`[${new Date().toISOString()}] [runtime] ${message}\n`) });
+async function stop() { stopping = true; await supervisor.stop(); }
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, async () => {
@@ -114,6 +68,16 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
   });
 }
 
-for (const definition of plan.children) start(definition);
 process.stdout.write(`[runtime] Taskboard loopback port ${taskboardPort}\n`);
 process.stdout.write(`[runtime] Asset Console loopback port ${assetConsolePort}\n`);
+
+let active = null;
+while (!stopping) {
+  const enabled = await isEnhancementEnabled();
+  if (enabled !== active) {
+    active = enabled;
+    await supervisor.setEnabled(enabled);
+    process.stdout.write(`[runtime] enhancement ${enabled ? 'enabled' : 'paused'}\n`);
+  }
+  await new Promise(resolve => setTimeout(resolve, 1500));
+}

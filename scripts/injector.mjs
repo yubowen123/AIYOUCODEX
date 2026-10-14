@@ -40,6 +40,7 @@ import { createSkillSearchController } from "../lib/skill-search.mjs";
 import { createOpenChatCutController } from "../lib/openchatcut-controller.mjs";
 import { createOpenChatCutInstaller } from "../lib/openchatcut-install.mjs";
 import { registerRendererSource, evaluateRendererSource, removeRendererScripts } from "../lib/renderer-source.mjs";
+import { isEnhancementEnabled, createEnhancementController, guardEnhancementSource, ENHANCEMENT_TEARDOWN_EXPRESSION, ENHANCEMENT_RESUME_EXPRESSION } from "../lib/enhancement-state.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(root, "inject", "conversation-preview.user.js");
@@ -72,6 +73,8 @@ const conversationFolders = createConversationFolders();
 const syncConversationFolders = createConversationFolderSync({ folders: conversationFolders, repository });
 
 let stopped = false;
+let enhancementClosing = false;
+const enhancementController = createEnhancementController({ onDisabled: async () => { enhancementClosing = true; } });
 const sessions = new Map();
 const openChatCutController = createOpenChatCutController({ installer: createOpenChatCutInstaller() });
 let openChatCutOwnerTargetId = "";
@@ -165,9 +168,13 @@ function createAssetConsoleBridge() {
   return new AssetConsoleBridge({ ...assetConsoleOptions, openChatCutStatus: context => openChatCutController.status(context) });
 }
 
-async function disposeRendererSession(session, { destroy = false } = {}) {
+async function disposeRendererSession(session, { destroy = false, disable = false } = {}) {
   if (!session) return;
-  if (destroy) {
+  if (disable) {
+    const identifiers = await session.client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] || null`).catch(() => null);
+    await removeRendererScripts(session.client, identifiers);
+    try { await session.client.evaluate(ENHANCEMENT_TEARDOWN_EXPRESSION) } catch {}
+  } else if (destroy) {
     try { await session.client.evaluate("window.__codexConversationPreviewInjection__?.destroy?.()") } catch {}
   }
   await session.assetConsoleBridge.dispose();
@@ -179,12 +186,14 @@ async function disposeRendererSession(session, { destroy = false } = {}) {
   session.layaSearchBridge?.dispose();
   session.openChatCutBridge?.dispose();
   session.appLifecycleBridge?.dispose();
+  session.enhancementBridge?.dispose();
   session.deepSeekSettingsBridge?.dispose();
   session.client.close();
   session.deliveredHistoryKey = "";
 }
 
 async function attachTarget(target) {
+  if (enhancementClosing || !await isEnhancementEnabled()) throw new Error('AIYOUcodex enhancement is disabled');
   const client = await connectCodexTarget(target).catch(error => { error.rendererPhase = "connect"; throw error; });
   let rendererPhase = "prepare";
   const assetConsoleBridge = createAssetConsoleBridge();
@@ -195,6 +204,10 @@ async function attachTarget(target) {
   const appLifecycleBridge = new EfficiencyBridge(appLifecycleController, {
     binding: APP_LIFECYCLE_BINDING, resolver: "resolveAppLifecycleRequest",
     publicErrorCodes: ["APP_EXIT_ERROR"], fallbackError: "退出未完成，请稍后重试。",
+  });
+  const enhancementBridge = new EfficiencyBridge(enhancementController, {
+    binding: "__AIYOUCODEX_ENHANCEMENT_REQUEST__", resolver: "resolveEnhancementRequest",
+    publicErrorCodes: ["ENHANCEMENT_ERROR"], fallbackError: "关闭插件未完成，请重试。",
   });
   const deepSeekSettingsBridge = new EfficiencyBridge(deepSeekSettingsController, {
     binding: "__AIYOUCODEX_DEEPSEEK_SETTINGS_REQUEST__", resolver: "resolveDeepSeekSettingsRequest",
@@ -253,7 +266,9 @@ async function attachTarget(target) {
     ]);
     const userSource = baseSource + "\n" + claudeSource + "\n" + await readFile(agentSourcePath, "utf8") + "\n" + await readFile(openChatCutSourcePath, "utf8") + "\n" + await readOptionalThemeSource(root);
     const sourceHash = createHash("sha256").update(userSource).update(JSON.stringify(managedShortcuts)).digest("hex");
-    const rendererSource = `if (window.top === window) { window.__CODEX_SIDEBAR_RENDERER_TARGET_ID__ = ${JSON.stringify(target.id)}; window.__CODEX_SIDEBAR_MANAGED_SHORTCUTS__ = ${JSON.stringify(managedShortcuts)}; ${userSource}\n window.__AIYOUCODEX_RUNTIME_SOURCE_HASH__ = ${JSON.stringify(sourceHash)}; }`;
+    const rendererSource = guardEnhancementSource(`if (window.top === window) { window.__CODEX_SIDEBAR_RENDERER_TARGET_ID__ = ${JSON.stringify(target.id)}; window.__CODEX_SIDEBAR_MANAGED_SHORTCUTS__ = ${JSON.stringify(managedShortcuts)}; ${userSource}\n window.__AIYOUCODEX_RUNTIME_SOURCE_HASH__ = ${JSON.stringify(sourceHash)}; }`);
+    if (enhancementClosing || !await isEnhancementEnabled()) throw new Error('AIYOUcodex enhancement is disabled');
+    await client.evaluate(ENHANCEMENT_RESUME_EXPRESSION);
     rendererPhase = "renderer-health";
     const snapshot = await client.evaluate(RENDERER_HEALTH_EXPRESSION);
     rendererPhase = "new-document-register";
@@ -261,6 +276,11 @@ async function attachTarget(target) {
     // Reconnect to the same document without destroying its mounted/parked pages.
     rendererPhase = "source-evaluate";
     if (!canReuseRenderer(snapshot, sourceHash)) await evaluateRendererSource(client, rendererSource);
+    if (enhancementClosing || !await isEnhancementEnabled()) {
+      await removeRendererScripts(client, registered);
+      await client.evaluate(ENHANCEMENT_TEARDOWN_EXPRESSION);
+      throw new Error('AIYOUcodex enhancement is disabled');
+    }
     // Keep the previous preload intact until the replacement registered and
     // executed successfully. Both legacy single IDs and new batches are valid.
     // Preload IDs are scoped to the CDP connection and can be reused after
@@ -286,6 +306,7 @@ async function attachTarget(target) {
     await openChatCutBridge.install(client);
     rendererPhase = "appLifecycleBridge";
     await appLifecycleBridge.install(client);
+    await enhancementBridge.install(client);
     rendererPhase = "deepSeekSettingsBridge";
     await deepSeekSettingsBridge.install(client);
     rendererPhase = "bridge-ready";
@@ -309,6 +330,7 @@ async function attachTarget(target) {
       agentBridge,
       openChatCutBridge,
       appLifecycleBridge,
+      enhancementBridge,
       deepSeekSettingsBridge,
       registeredScriptIdentifier: registered,
       deliveredHistoryKey: "",
@@ -326,6 +348,7 @@ async function attachTarget(target) {
     await assetConsoleBridge.dispose().catch(() => {});
     efficiencyBridge.dispose();
     appLifecycleBridge.dispose();
+    enhancementBridge.dispose();
     deepSeekSettingsBridge.dispose();
     layaSearchBridge.dispose();
     skillOrganizationBridge.dispose();
@@ -411,6 +434,7 @@ async function reconcileTargets() {
           await session.assetConsoleBridge.install(session.client);
           await session.layaSearchBridge.install(session.client);
           await session.appLifecycleBridge.install(session.client);
+          await session.enhancementBridge.install(session.client);
           await session.deepSeekSettingsBridge.install(session.client);
           session.bridgeDocumentEpoch = session.documentEpoch;
         }
@@ -433,6 +457,7 @@ async function reconcileTargets() {
   // permission to terminate the host. Only recover an ordinary undebugged app
   // after repeated connection failures and never while a known session exists.
   if (!discoveryAvailable && discoveryFailures >= 5 && !sessions.size && options.watch
+      && !enhancementClosing && await isEnhancementEnabled()
       && process.env.CODEX_SIDEBAR_ALLOW_HOST_RESTART === "1") {
     let app = null;
     try { app = await desktopAppRuntime.readProcess(); } catch {}
@@ -457,6 +482,7 @@ async function reconcileTargets() {
     const action = desktopAppRecovery.next({ targetAvailable: false, app,
       recoveryAllowed: process.env.CODEX_SIDEBAR_ALLOW_HOST_RESTART === "1"
         && taskStatus.available && taskStatus.activeThreadIds.length === 0 });
+    if (enhancementClosing || !await isEnhancementEnabled()) return reconciliation;
     if (action?.type === "quit") {
       try {
         await desktopAppRuntime.quit(action.app);
@@ -614,16 +640,22 @@ async function pushPreviews(session) {
   await pushConversationHistory(session, activeContext);
 }
 
-async function stop() {
-  if (stopped) return;
+let stopPromise;
+function stop() {
+  if (stopPromise) return stopPromise;
   stopped = true;
+  stopPromise = (async () => {
+  const disabled = enhancementClosing || !await isEnhancementEnabled();
+  const closing = [...sessions.values()];
+  sessions.clear();
+  // Stop injected UI before waiting for background requests to settle. A pause
+  // must remove preloads; an ordinary supervisor reconnect preserves them.
+  await Promise.allSettled(closing.map((session) => disposeRendererSession(session, { destroy: !options.watch, disable: disabled })));
   layaSearchController.stop();
   await claudeController.stopAll();
   await openChatCutController.dispose();
-  const closing = [...sessions.values()];
-  sessions.clear();
-  // A supervisor restart must not take the user's persistent pages down with it.
-  await Promise.allSettled(closing.map((session) => disposeRendererSession(session, { destroy: !options.watch })));
+  })();
+  return stopPromise;
 }
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
@@ -636,6 +668,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 let nextFullRefreshAt = 0;
 try {
   while (!stopped) {
+    if (enhancementClosing || !await isEnhancementEnabled()) { await stop(); break; }
     try {
       const reconciliation = await reconcileTargets();
       for (const failure of reconciliation.errors) {

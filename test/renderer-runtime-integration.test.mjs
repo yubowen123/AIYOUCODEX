@@ -16,6 +16,7 @@ import { createSkillSearchController } from "../lib/skill-search.mjs";
 import { createLayaDocumentSearch } from "../lib/laya-document-search.mjs";
 import { SkillOrganizationBridge, createSkillOrganizationController } from "../lib/skill-organization.mjs";
 import { registerRendererSource, evaluateRendererSource, removeRendererScripts } from "../lib/renderer-source.mjs";
+import { guardEnhancementSource, ENHANCEMENT_TEARDOWN_EXPRESSION, ENHANCEMENT_RESUME_EXPRESSION } from '../lib/enhancement-state.mjs';
 
 const injectorSource = await readFile(new URL("../scripts/injector.mjs", import.meta.url), "utf8");
 const userSourcePath = new URL("../inject/conversation-preview.user.js", import.meta.url);
@@ -116,6 +117,9 @@ test("production attach and delivery survive CDP reconnect; real document reload
     createSkillSearchController, localLayaRuntime: fixtureLayaRuntime,
     layaLibrarySearch: createLayaDocumentSearch({ runtime: fixtureLayaRuntime }),
     APP_LIFECYCLE_BINDING: "__AIYOUCODEX_APP_REQUEST__",
+    enhancementClosing: false, isEnhancementEnabled: async () => true,
+    guardEnhancementSource, ENHANCEMENT_TEARDOWN_EXPRESSION, ENHANCEMENT_RESUME_EXPRESSION,
+    enhancementController: { request: async () => ({ supported: true, enabled: true }) },
     deepSeekSettingsController: {request: async () => ({configured: false, source: null, fileConfigured: false, environmentOverrides: false})},
     appLifecycleController: { request: payload => {
       if (payload.action === "snapshot") return { supported: true };
@@ -165,7 +169,13 @@ test("production attach and delivery survive CDP reconnect; real document reload
   assert.deepEqual(exitRequests, ["quit"]);
   releaseExitResponse.reject(Object.assign(new Error("退出测试失败，可重试"), { code: "APP_EXIT_ERROR" }));
   await waitForBrowserState(inspect, "!document.querySelector('[data-aiyou-app-quit]').disabled&&document.querySelector('[data-aiyou-app-message]').textContent.includes('可重试')", "Failed exit permits retry");
+  assert.equal(await inspect.evaluate("document.querySelector('[data-aiyou-enhancement-disable]').disabled"), false, 'A canceled exit also restores the independent plugin control');
   await clickExit();
+  // Browser input acknowledgement precedes delivery of the async binding event.
+  // Wait for the actual controller request, rather than assuming the CDP reply
+  // means Node has already received it on a separate connection.
+  const exitDeadline = Date.now() + 3000;
+  while (exitRequests.length < 2 && Date.now() < exitDeadline) await delay(10);
   assert.deepEqual(exitRequests, ["quit", "quit"]);
   releaseExitResponse.resolve({ closed: true });
   await waitForBrowserState(inspect, "document.querySelector('[data-aiyou-app-message]').textContent==='应用已退出。'", "Successful exit acknowledgement");

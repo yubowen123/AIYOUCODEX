@@ -1,6 +1,8 @@
 (() => {
   "use strict";
 
+  if (window.__AIYOUCODEX_ENHANCEMENT_DISABLED__ || localStorage.getItem('aiyoucodex.enhancement.disabled') === '1') return;
+
   const VERSION = "0.6.13";
   const SOURCE_HASH = window.__CODEX_TASKBOARD_SOURCE_HASH__;
   const SENTINEL_KEY = "__codexTaskboardInjection__";

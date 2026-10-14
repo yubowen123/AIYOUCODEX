@@ -254,6 +254,9 @@
   const efficiencyRequests = new Map();
   let appLifecyclePending = null;
   let appLifecycleSupported = true;
+  let enhancementPending = null;
+  let enhancementSupported = false;
+  let enhancementDisabled = false;
   let appLifecycleClosed = false;
   let deepSeekSettingsPending = null;
   let deepSeekSettingsSnapshot = null;
@@ -1121,15 +1124,19 @@
         justify-content: space-between; gap: 8px; padding: 12px 18px;
         border-top: 1px solid var(--aiyou-card-border,var(--color-border-default,#8995a633));
       }
-      #${SHORTCUT_SETTINGS_ID} [data-aiyou-app-quit] {
+      #${SHORTCUT_SETTINGS_ID} :is([data-aiyou-app-quit],[data-aiyou-enhancement-disable]) {
         box-sizing: border-box; max-width: 100%; padding: 8px 12px; border: 1px solid currentColor; border-radius: 8px;
         background: transparent; color: var(--color-text-danger,#b42318);
         font: inherit; cursor: pointer; -webkit-app-region: no-drag;
       }
-      #${SHORTCUT_SETTINGS_ID} [data-aiyou-app-quit]:hover:not(:disabled) {
+      #${SHORTCUT_SETTINGS_ID} :is([data-aiyou-app-quit],[data-aiyou-enhancement-disable]):hover:not(:disabled) {
         background: color-mix(in srgb,var(--color-text-danger,#b42318) 8%,transparent);
       }
-      #${SHORTCUT_SETTINGS_ID} [data-aiyou-app-quit]:disabled { opacity: .55; cursor: default; }
+      #${SHORTCUT_SETTINGS_ID} :is([data-aiyou-app-quit],[data-aiyou-enhancement-disable]):disabled { opacity: .55; cursor: default; }
+      #${SHORTCUT_SETTINGS_ID} :is([data-aiyou-enhancement-help],[data-aiyou-enhancement-message]) { flex-basis:100%; margin:0; font-size:12px; line-height:1.5; }
+      #${SHORTCUT_SETTINGS_ID} [data-aiyou-enhancement-help] { color:var(--color-text-secondary,#64748b); }
+      #${SHORTCUT_SETTINGS_ID} [data-aiyou-enhancement-message]:empty { display:none; }
+      #${SHORTCUT_SETTINGS_ID} [data-aiyou-enhancement-message][data-error="true"] { color:var(--color-text-danger,#b42318); }
       #${SHORTCUT_SETTINGS_ID} [data-aiyou-app-message] { flex-basis: 100%; margin: 0; font-size: 12px; }
       #${SHORTCUT_SETTINGS_ID} [data-aiyou-app-message]:empty { display: none; }
       #${SHORTCUT_SETTINGS_ID} [data-aiyou-app-message][data-error="true"] { color: var(--color-text-danger,#b42318); }
@@ -6425,7 +6432,10 @@
         </div>
         <footer class="codex-shortcut-settings-footer">
           <span>应用</span>
+          <button type="button" data-aiyou-enhancement-disable disabled>关闭插件</button>
           <button type="button" data-aiyou-app-quit>退出 AIYOUcodex</button>
+          <p data-aiyou-enhancement-help>关闭界面增强并暂停本地工作服务，保留 Codex 与配置。再次打开 AIYOUcodex 可恢复；原生模型会话和已安装的第三方插件保留。</p>
+          <p data-aiyou-enhancement-message role="status" aria-live="polite"></p>
           <p data-aiyou-app-message role="status" aria-live="polite"></p>
         </footer>
       </div>`;
@@ -6456,6 +6466,9 @@
     dialog.querySelector("[data-codex-shortcut-settings-close]").onclick = () => dialog.close();
     dialog.querySelector("[data-aiyou-app-quit]").onclick = (event) => {
       event.preventDefault(); event.stopPropagation(); requestAppLifecycle("quit");
+    };
+    dialog.querySelector("[data-aiyou-enhancement-disable]").onclick = (event) => {
+      event.preventDefault(); event.stopPropagation(); requestEnhancement('disable');
     };
     dialog.querySelector("[data-aiyou-efficiency-open]").onclick = (event) => {
       event.preventDefault(); event.stopPropagation();
@@ -6516,6 +6529,8 @@
     updateViewState();
     window.__aiyouOpenChatCut__?.renderSettings?.();
     renderAppLifecycleSettings();
+    renderEnhancementSettings();
+    if (!enhancementPending && !enhancementDisabled) requestEnhancement('snapshot');
     renderDeepSeekSettings();
     requestDeepSeekSettings('snapshot');
     if (!appLifecyclePending && !appLifecycleClosed) requestAppLifecycle("snapshot");
@@ -6576,15 +6591,55 @@
     return true;
   }
 
+  function renderEnhancementSettings() {
+    const button = document.querySelector(`#${SHORTCUT_SETTINGS_ID} [data-aiyou-enhancement-disable]`);
+    if (!button) return;
+    button.disabled = Boolean(enhancementPending) || !enhancementSupported || enhancementDisabled || appLifecycleClosed || Boolean(appLifecyclePending?.action === 'quit');
+    button.textContent = enhancementPending?.action === 'disable' || enhancementDisabled ? '正在关闭插件…' : '关闭插件';
+  }
+
+  function requestEnhancement(action) {
+    if (destroyed || enhancementPending || enhancementDisabled || appLifecyclePending?.action === 'quit') return;
+    const message = document.querySelector(`#${SHORTCUT_SETTINGS_ID} [data-aiyou-enhancement-message]`);
+    const binding = window.__AIYOUCODEX_ENHANCEMENT_REQUEST__;
+    if (typeof binding !== 'function') {
+      if (message) { message.textContent = '本地连接尚未就绪，请重新打开设置。'; message.dataset.error = 'true'; }
+      return;
+    }
+    const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+    const timer = setTimeout(() => resolveEnhancementRequest({ requestId, ok: false, error: '关闭状态尚未确认，请重新打开设置核对后重试。' }), 15000);
+    enhancementPending = { requestId, action, timer };
+    if (message) { message.textContent = action === 'disable' ? '正在关闭插件…' : ''; message.dataset.error = 'false'; }
+    renderEnhancementSettings(); renderAppLifecycleSettings();
+    const failed = () => resolveEnhancementRequest({ requestId, ok: false, error: '本地连接失败，请重试。' });
+    try { Promise.resolve(binding(JSON.stringify({ requestId, action }))).catch(failed); } catch { failed(); }
+  }
+
+  function resolveEnhancementRequest(response) {
+    if (destroyed || !enhancementPending || response?.requestId !== enhancementPending.requestId) return false;
+    const { action, timer } = enhancementPending; clearTimeout(timer); enhancementPending = null;
+    const valid = response.ok === true && typeof response.data?.supported === 'boolean' && typeof response.data?.enabled === 'boolean';
+    if (valid) { enhancementSupported = response.data.supported; enhancementDisabled = !response.data.enabled; }
+    const message = document.querySelector(`#${SHORTCUT_SETTINGS_ID} [data-aiyou-enhancement-message]`);
+    if (message) {
+      message.dataset.error = String(!valid);
+      message.textContent = !valid ? response.error || '关闭插件未完成，请重试。'
+        : !enhancementSupported ? '当前环境不支持关闭插件。'
+        : action === 'disable' || enhancementDisabled ? '关闭状态已保存，正在移除增强界面。再次打开 AIYOUcodex 可恢复。' : '';
+    }
+    renderEnhancementSettings(); renderAppLifecycleSettings();
+    return true;
+  }
+
   function renderAppLifecycleSettings() {
     const button = document.querySelector(`#${SHORTCUT_SETTINGS_ID} [data-aiyou-app-quit]`);
     if (!button) return;
-    button.disabled = Boolean(appLifecyclePending) || !appLifecycleSupported || appLifecycleClosed;
+    button.disabled = Boolean(appLifecyclePending) || !appLifecycleSupported || appLifecycleClosed || enhancementPending?.action === 'disable' || enhancementDisabled;
     button.textContent = appLifecyclePending?.action === "quit" ? "正在退出…" : "退出 AIYOUcodex";
   }
 
   function requestAppLifecycle(action) {
-    if (destroyed || appLifecyclePending || appLifecycleClosed) return;
+    if (destroyed || appLifecyclePending || appLifecycleClosed || enhancementPending?.action === 'disable' || enhancementDisabled) return;
     const message = document.querySelector(`#${SHORTCUT_SETTINGS_ID} [data-aiyou-app-message]`);
     const binding = window.__AIYOUCODEX_APP_REQUEST__;
     if (typeof binding !== "function") {
@@ -6597,6 +6652,7 @@
     appLifecyclePending = { requestId, action, timer };
     if (message) { message.textContent = action === "quit" ? "正在退出 AIYOUcodex…" : ""; message.dataset.error = "false"; }
     renderAppLifecycleSettings();
+    renderEnhancementSettings();
     const failed = () => resolveAppLifecycleRequest({ requestId, ok: false, error: "本地连接失败，请稍后重试。" });
     try { Promise.resolve(binding(JSON.stringify({ requestId, action }))).catch(failed); } catch { failed(); }
   }
@@ -6615,6 +6671,7 @@
         : action === "quit" ? "应用已退出。" : "";
     }
     renderAppLifecycleSettings();
+    renderEnhancementSettings();
     return true;
   }
 
@@ -10074,6 +10131,7 @@
     efficiencyRequests.clear(); efficiencyDrafts.clear(); efficiencyTargetDrafts.clear(); efficiencyTaskDraft = null;
     if (appLifecyclePending) clearTimeout(appLifecyclePending.timer);
     appLifecyclePending = null;
+    clearTimeout(enhancementPending?.timer); enhancementPending = null;
     cancelLayaSearch();
     for (const request of layaSearchRequests.values()) { clearTimeout(request.timer); request.reject(new Error("检索界面已关闭")); }
     layaSearchRequests.clear();
@@ -10158,6 +10216,7 @@
     setLayaSearchData,
     resolveResetMonitorRequest,
     resolveAppLifecycleRequest,
+    resolveEnhancementRequest,
     resolveDeepSeekSettingsRequest,
     resolveClaudeRequest: (response) => window.__aiyouClaudeInjection__?.resolve?.(response),
     resolveAgentRequest: (response) => window.__aiyouAgentWorkspace__?.resolve?.(response),
