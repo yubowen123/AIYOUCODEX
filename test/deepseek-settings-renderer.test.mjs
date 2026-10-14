@@ -13,13 +13,16 @@ import {connectFixtureBrowser, waitForBrowserState} from './helpers/browser-stat
 const source = await readFile(new URL('../inject/conversation-preview.user.js', import.meta.url), 'utf8');
 let executable;
 for (const candidate of [process.env.AIYOUCODEX_TEST_BROWSER,
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium'].filter(Boolean)) {
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium',
+  ...[process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)'], process.env.LOCALAPPDATA].filter(Boolean)
+    .map(root => path.join(root, 'Google/Chrome/Application/chrome.exe'))].filter(Boolean)) {
   try {await access(candidate); executable = candidate; break;} catch {}
 }
 
 test('DeepSeek settings uses the host binding, clears secrets, and reports confirmed saves and failures', {
-  timeout: 35000, skip: !executable && 'Chrome/Chromium required for isolated renderer fixture',
+  timeout: 35000, skip: !executable && process.env.AIYOUCODEX_REQUIRE_BROWSER !== '1' && 'Chrome/Chromium required for isolated renderer fixture',
 }, async t => {
+  assert.ok(executable, 'Required Chrome/Chromium browser must be installed');
   const root = await mkdtemp(path.join(tmpdir(), 'aiyou-deepseek-settings-'));
   await mkdir(path.join(root, '.codex'));
   const credentials = path.join(root, '.codex', 'keys.md');
