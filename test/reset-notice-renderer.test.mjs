@@ -56,6 +56,12 @@ test("reset notice fits header, opens once, updates locally, and never rewrites 
     assert.ok(boxes.at(-1).right <= width, `Header stays within sidebar at ${width}: ${JSON.stringify(boxes)}`);
   }
   async function click(selector) {
+    // Additional settings sections can put monitor actions below the viewport.
+    // Scroll those controls into view before issuing an actual mouse click.
+    if (selector.includes("data-reset-monitor")) {
+      await client.evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:"center",inline:"nearest"})`);
+      assert.equal(await client.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)}),r=e.getBoundingClientRect();return e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))})()`), true, `Monitor action receives the mouse click: ${selector}`);
+    }
     const point = await client.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)}),r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
     await client.send("Input.dispatchMouseEvent", { type: "mousePressed", ...point, button: "left", clickCount: 1 });
     await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...point, button: "left", clickCount: 1 });

@@ -19,6 +19,7 @@ import { readImageDimensions } from "./image-dimensions.js";
 import { createAssetScanCoordinator } from "./asset-scan-coordinator.js";
 import { filterLibraryResult } from "./asset-library-filter.js";
 import { AssetLibraryPager } from "./asset-library-pagination.js";
+import { AssetLibrarySearch } from './asset-library-search.js';
 import { normalizeCharacterMetadata, deriveCharacterRelations } from "./character-associations.js";
 import { PersistentAssetIndex, sameAssetIndexFolders } from "./persistent-asset-index.js";
 import { savePlainTextAsset, textContentRevision, textEditPolicy } from "./text-asset-safety.js";
@@ -69,6 +70,16 @@ const textExts = new Set([".md", ".markdown", ".txt", ".rtf", ".doc", ".docx"]);
 const supportedAssetExts = new Set([...imageExts, ...videoExts, ...audioExts, ...textExts]);
 const libraryScanCoordinator = createAssetScanCoordinator();
 const libraryPager = new AssetLibraryPager();
+let layaDocumentSearch, ownedLayaRuntime;
+const librarySearch = new AssetLibrarySearch({ search: async request => {
+  // Keep the ordinary asset service available when an older installation has
+  // no Laya adapter/model. The search adapter reports the keyword fallback.
+  layaDocumentSearch ||= import('../../../lib/laya-document-search.mjs').then(({ createLayaDocumentSearch }) => {
+    const search = createLayaDocumentSearch(); ownedLayaRuntime = search.runtime; return search;
+  });
+  try { return await (await layaDocumentSearch).search(request); }
+  catch (error) { layaDocumentSearch = null; throw error; }
+} });
 const reconciledProjectContexts = new Map();
 const assetCalibrationWarnings = new Map();
 const assetServiceEpoch = randomUUID();
@@ -1708,16 +1719,25 @@ function listLibraryAssets(view) {
   return { project: null, assets: [], counts: { all: 0, text: 0, image: 0, audio: 0, video: 0 }, smartCounts: { asset: 0, review: 0, noise: 0 }, settings: view.settings, index: { mode: "empty", initializedAt: "", updatedAt: "", revision: "missing", persistent: true } };
 }
 
-function paginatedLibraryAssets(view, filters) {
+async function paginatedLibraryAssets(view, filters, { all = false } = {}) {
   const revision = libraryRevision(view.project, view.entry, view.settings);
   if (filters.revision && filters.revision !== revision) throw Object.assign(new Error("资产索引已更新，请从第一页重新加载，避免遗漏或重复。"), { statusCode: 409 });
-  const page = libraryPager.page({
+  const searchResult = await librarySearch.select({ projectId: view.project?.id || '', assets: view.entry?.assets || [], revision, filters });
+  const request = {
     projectId: view.project?.id || "",
     assets: view.entry?.assets || [],
     revision,
-    filters,
+    filters: all ? { ...filters, limit: 240, offset: 0 } : filters,
+    searchResult,
     projectAsset: (asset) => ({ ...asset, projectId: view.project.id, projectName: view.project.name, ...textEditPolicy(asset.sourcePath || asset.name) }),
-  });
+  };
+  const page = libraryPager.page(request);
+  if (all) {
+    for (let offset = page.assets.length; offset < page.filteredTotal; offset += 240) {
+      page.assets.push(...libraryPager.page({ ...request, filters: { ...request.filters, offset } }).assets);
+    }
+    delete page.page;
+  }
   return {
     project: view.project ? { id: view.project.id, name: view.project.name, folders: view.project.folders } : null,
     ...page,
@@ -2711,10 +2731,18 @@ const server = createServer(async (req, res) => {
         category: url.searchParams.get("category") || "",
         smartGroup: url.searchParams.get("smartGroup") || "",
         query: url.searchParams.get("query") || "",
+        searchMode: url.searchParams.get('searchMode') || '',
+        searchRevision: url.searchParams.get('searchRevision') || '',
       };
-      if (url.searchParams.has("limit")) {
+      if (url.searchParams.has("limit") || filters.searchMode === 'laya' && filters.query.trim()) {
         Object.assign(filters, { limit: url.searchParams.get("limit"), offset: url.searchParams.get("offset"), sort: url.searchParams.get("sort"), revision: url.searchParams.get("revision") });
-        sendJson(res, paginatedLibraryAssets(view, filters));
+        if (!url.searchParams.has('sort') && filters.searchMode === 'laya') filters.sort = 'relevance';
+        const page = await paginatedLibraryAssets(view, filters, { all: !url.searchParams.has('limit') });
+        if (page.search) {
+          const current = await loadLibraryIndexView(projectId);
+          if (libraryRevision(current.project, current.entry, current.settings) !== page.index.revision) throw Object.assign(new Error('检索期间资产索引已更新，请重新搜索。'), { statusCode: 409 });
+        }
+        sendJson(res, page);
         return;
       }
       const library = listLibraryAssets(view);
@@ -3035,6 +3063,18 @@ const server = createServer(async (req, res) => {
 server.listen(port, "127.0.0.1", () => {
   console.log(`Generation asset workbench running at http://127.0.0.1:${port}`);
   console.log(`Config: ${configPath}`);
+});
+
+// This service owns this runtime instance only. Never discover or signal other
+// Python workers when the asset service is restarted or shut down.
+server.once('close', () => ownedLayaRuntime?.stop());
+process.once('exit', () => ownedLayaRuntime?.stop());
+for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => {
+  ownedLayaRuntime?.stop();
+  assetWatchers.closeAll();
+  for (const client of sseClients) client.end();
+  server.close(); server.closeAllConnections();
+  process.exit(0);
 });
 
 ensureWatchers().catch((error) => console.warn("Asset watcher setup:", error.message));

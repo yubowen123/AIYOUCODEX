@@ -101,7 +101,8 @@ test("project tab actions include a selected-folder new-chat proxy", () => {
   assert.match(source, /function handleCurrentFolderNewChat[\s\S]{0,420}currentFolderChatSource\(item\)[\s\S]{0,400}source\.click\(\)/);
   assert.match(source, /function syncCurrentFolderNewChatButton[\s\S]*?button\.hidden = false;[\s\S]*?button\.disabled = !available/);
   assert.match(source, /type: "electron-set-active-workspace-root", root: workspaceRoot/);
-  assert.match(source, /newChatButton\.dataset\.codexSidebarFolderNewChat = "true"/);
+  assert.doesNotMatch(source, /newChatButton\.dataset\.codexSidebarFolderNewChat = "true"/,
+    "The selected-folder action remains in the tab row; the duplicate search-row button is removed");
   assert.doesNotMatch(source, /function openNativeProjectsPage\(/,
     "A missing native new-chat action must not be replaced by generic Projects navigation");
 });

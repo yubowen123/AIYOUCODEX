@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createInstallPlan, LEGACY_TASKBOARD_LABELS } from "../lib/install-config.mjs";
+import { createInstallPlan, LEGACY_TASKBOARD_LABELS, MODEL_PROXY_RUNTIME_FILES } from "../lib/install-config.mjs";
 import { access, mkdir, rm, unlink, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -34,6 +34,7 @@ if (options.dryRun) {
 } else if (options.activate) {
   await access(path.join(plan.installDir, "scripts", "runtime.mjs"));
   await access(path.join(plan.installDir, "vendor", "codex-taskboard", "dist", "web", "index.html"));
+  for (const relative of MODEL_PROXY_RUNTIME_FILES) await access(path.join(plan.installDir, relative));
   await mkdir(plan.launchAgentsDir, { recursive: true });
   await mkdir(plan.logsDir, { recursive: true });
   await mkdir(path.dirname(plan.launcherExecutablePath), { recursive: true });
@@ -41,6 +42,7 @@ if (options.dryRun) {
   await writeFile(plan.loginPlistPath, plan.loginPlist, { mode: 0o644 });
   await writeFile(path.join(plan.launcherContentsDir, "Info.plist"), plan.launcherInfoPlist, { mode: 0o644 });
   await writeFile(plan.launcherExecutablePath, plan.launcherScript, { mode: 0o755 });
+  await writeFile(plan.modelProxyExecutablePath, plan.modelProxyScript, { mode: 0o755 });
   const themes = await installBundledThemes({ home: plan.home, installDir: plan.installDir, nodePath: plan.nodePath });
   const plugins = await installBundledPlugins({ home: plan.home, installDir: plan.installDir });
   const resetMonitor = await installResetMonitorService({ ...options, home: plan.home, installDir: plan.installDir, nodePath: plan.nodePath });

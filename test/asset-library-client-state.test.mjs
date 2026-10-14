@@ -24,6 +24,7 @@ function libraryHarness() {
     api: (url, options) => { const pending = deferred(); requests.push({ ...pending, url, signal: options.signal }); return pending.promise; },
     renderSmartGroupTabs() {}, renderCategoryChips() {}, updateKindCounts() {}, setColumns() {},
     renderAssets: () => renders.push(state.assets.map((asset) => asset.id)), resetAssetWindow() {}, formatDate: () => "now",
+    setLibraryLoading: (phase, title, detail, retry) => { state.libraryLoading = phase; state.loadingStatus = {phase, title, detail, retry}; },
     showToast: (...args) => toasts.push(args),
   });
   vm.runInContext(loadLibrarySource, context);
@@ -58,6 +59,7 @@ test("stale catch and finally cannot clear the current loading state or show an 
   assert.equal(h.state.busy, true);
   assert.equal(h.busyClasses.has("busy"), true);
   assert.equal(h.toasts.length, 0);
+  assert.equal(h.state.libraryLoading, "index", "Old errors do not replace the current read status");
   h.requests[1].resolve(snapshot("asset-B"));
   await b;
   assert.equal(h.state.busy, false);
@@ -80,6 +82,7 @@ test("same-project event refresh preserves pagination and keeps the last good sn
   assert.equal(h.state.assets[0].id, "asset-A");
   assert.equal(h.state.busy, false);
   assert.equal(h.els.scanState.textContent, "索引读取失败");
+  assert.equal(h.state.loadingStatus.retry, "library", "Failure offers a read-only retry, not a new scan");
 });
 
 test("clearing project selection invalidates all previous requests", async () => {
@@ -162,7 +165,7 @@ test("next-window navigation releases previous cards and remains bounded", async
   h.requests[0].resolve(pageSnapshot(0));
   await first;
   const next = h.load({ quiet: true, reset: true, offset: 600 });
-  assert.equal(h.state.assets.length, 0);
+  assert.equal(h.state.assets.length, 120, "The previous page stays visible while the replacement is read");
   assert.equal(new URL(h.requests[1].url, "http://test").searchParams.get("offset"), "600");
   h.requests[1].resolve(pageSnapshot(600));
   await next;
@@ -244,7 +247,7 @@ function textHarness() {
   const els = Object.fromEntries(["textViewerTitle", "textViewerFormat", "textViewerPreview", "textViewerEditor", "saveTextButton", "toggleTextEditButton", "textSaveState"].map((id) => [id, { focus() {} }]));
   els.textViewerDialog = { open: false, showModal() { this.open = true; } };
   const context = vm.createContext({
-    state, els, textRequests: createLatestRequestGate(), markdownToSafeHtml: (text) => text,
+    state, els, loadingMarkup: (title, detail) => `${title}: ${detail}`, textRequests: createLatestRequestGate(), markdownToSafeHtml: (text) => text,
     api: (url, options) => { const pending = deferred(); requests.push({ ...pending, url, options }); return pending.promise; },
     showToast: (...args) => toasts.push(args), loadLibrary: async () => {},
   });
@@ -378,4 +381,22 @@ test("revision polling does not supersede an in-progress forced scan", async () 
   await h.tick();
   assert.equal(h.values.fullReads, 1);
   h.poller.stop();
+});
+
+
+test("query and page resets keep same-project cards while reading but project changes still clear them", async () => {
+  const h = libraryHarness();
+  const first = h.load({ quiet: true }); h.requests[0].resolve(snapshot("asset-A")); await first;
+  h.state.query = "new query";
+  const pending = h.load({ quiet: true, reset: true });
+  assert.equal(h.state.assets[0].id, "asset-A");
+  assert.equal(h.state.libraryLoading, "search");
+  h.requests[1].resolve(snapshot("new-match")); await pending;
+  assert.equal(h.state.assets[0].id, "new-match"); assert.equal(h.state.libraryLoading, null);
+  const scan = h.load({ force: true }); h.requests[2].reject(new Error("folder offline")); await scan;
+  assert.equal(h.state.assets[0].id, "new-match");
+  assert.equal(h.state.loadingStatus.title, "扫描未完成"); assert.equal(h.state.loadingStatus.retry, "library");
+  const retry = h.load({ quiet: true, reset: true });
+  assert.equal(new URL(h.requests[3].url, "http://fixture").searchParams.has("rescan"), false);
+  h.requests[3].resolve(snapshot("after-read-retry")); await retry;
 });

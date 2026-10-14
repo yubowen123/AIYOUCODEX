@@ -12,7 +12,10 @@ import { connectCodexTarget } from "../scripts/cdp-client.mjs";
 import { RENDERER_HEALTH_EXPRESSION, acceptDocumentHealth, canReuseRenderer } from "../lib/renderer-health.mjs";
 import { connectFixtureBrowser, waitForBrowserState } from "./helpers/browser-state.mjs";
 import { EfficiencyBridge } from "../lib/efficiency-bridge.mjs";
+import { createSkillSearchController } from "../lib/skill-search.mjs";
+import { createLayaDocumentSearch } from "../lib/laya-document-search.mjs";
 import { SkillOrganizationBridge, createSkillOrganizationController } from "../lib/skill-organization.mjs";
+import { registerRendererSource, evaluateRendererSource, removeRendererScripts } from "../lib/renderer-source.mjs";
 
 const injectorSource = await readFile(new URL("../scripts/injector.mjs", import.meta.url), "utf8");
 const userSourcePath = new URL("../inject/conversation-preview.user.js", import.meta.url);
@@ -36,16 +39,17 @@ for (const candidate of candidates) { try { await access(candidate); executable 
 const requireBrowser = process.env.AIYOUCODEX_REQUIRE_BROWSER === "1";
 
 test("production attach and delivery survive CDP reconnect; real document reload replays snapshot, history and keepalive", {
-  timeout: 35_000,
+  timeout: 60_000,
   skip: !executable && !requireBrowser && "Set AIYOUCODEX_TEST_BROWSER for renderer integration coverage",
 }, async (t) => {
   assert.ok(executable, "Required isolated browser is unavailable");
-  const profile = await mkdtemp(path.join(tmpdir(), "aiyoucodex-runtime-regression-"));
+  const profile = await mkdtemp(path.join(process.env.AIYOU_TEST_OUTPUT || tmpdir(), "aiyoucodex-runtime-regression-"));
   const fixture = `<style>body{margin:0;display:flex;height:100vh}aside{width:240px;flex:none}main{flex:1;min-width:0;height:100vh}</style><title>Fixture</title><aside id="app-shell-sidebar"><nav><div><div><button class="sidebar-item"><span class="text-fade-truncate">新对话</span></button><button>+</button></div></div><div data-app-action-sidebar-scroll><div><section data-app-action-sidebar-section-heading="项目"><header><button data-app-action-sidebar-section-toggle aria-expanded="true">项目</button></header><div data-app-action-sidebar-thread-row data-app-action-sidebar-thread-active="true" data-app-action-sidebar-thread-id="11111111-1111-4111-8111-111111111111" data-app-action-sidebar-thread-title="Fixture thread">Fixture thread</div></section></div></div></nav></aside><main></main>`;
   const server = createServer((request, response) => {
     response.setHeader("content-type", "text/html;charset=utf-8");
-    response.end(request.url === "/panel" || request.url === "/arena"
-      ? `<title>Local panel fixture</title><p>${request.url === "/arena" ? "Arena" : "Asset"} fixture</p>` : fixture);
+    const pathname = new URL(request.url, 'http://fixture.test').pathname;
+    response.end(pathname === "/panel" || pathname === "/arena"
+      ? `<title>Local panel fixture</title><p>${pathname === "/arena" ? "Arena" : "Asset"} fixture</p><script>const key=new URL(location.href).searchParams.get('aiyou_loading_key');if(key)parent.postMessage({type:'aiyoucodex:module-ready',module:location.pathname==='/arena'?'arena':'asset',loadingKey:key},location.origin);</script>` : fixture);
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
@@ -64,16 +68,23 @@ test("production attach and delivery survive CDP reconnect; real document reload
   // different tab that never navigates to the command-line URL.
   const { client: inspect, target } = await connectFixtureBrowser({ browser, profile, url: origin });
   clients.add(inspect);
+  const preloadErrors = [];
+  inspect.on('Runtime.exceptionThrown', event => preloadErrors.push(event.exceptionDetails?.exception?.description || event.exceptionDetails?.text));
+  await inspect.send('Runtime.enable');
   await waitForBrowserState(inspect, `location.origin===${JSON.stringify(origin)}&&document.readyState==='complete'&&!!document.querySelector('main')`, "Fixture navigation and native panel mount are ready before attach");
   const shortcutLoaded = `(()=>{const frame=document.querySelector('iframe[data-codex-custom-shortcut-frame]');return !!frame&&frame.contentDocument?.readyState==='complete'&&frame.contentWindow.location.href===${JSON.stringify(`${origin}/panel`)}})()`;
   const assetVisible = "!!document.getElementById('codex-asset-console-frame')&&!document.getElementById('codex-asset-console-page').hidden";
-  const assetLoaded = `(()=>{const frame=document.getElementById('codex-asset-console-frame');return !!frame&&!document.getElementById('codex-asset-console-page').hidden&&frame.contentDocument?.readyState==='complete'&&frame.contentWindow.location.href===${JSON.stringify(`${origin}/panel`)}})()`;
+  const assetLoaded = `(()=>{const frame=document.getElementById('codex-asset-console-frame'),page=document.getElementById('codex-asset-console-page');return !!frame&&!page.hidden&&page.dataset.state==='ready'&&frame.contentDocument?.readyState==='complete'&&new URL(frame.contentWindow.location.href).pathname==='/panel'})()`;
+  const oversizedThemeSource = "/*" + "x".repeat(106 * 1024 * 1024) + "*/window.__fixtureLargeTheme=true;";
   const shortcuts = [{ id: "local-fixture", name: "Local fixture", url: `${origin}/panel`, icon: "link", openMode: "internal", keepAlive: true }];
   const catalog = [{ projectId: "fixture-project", projectName: "Fixture project", threadId: "11111111-1111-4111-8111-111111111111", title: "Fixture thread", updatedAt: "2026-09-05T10:00:00Z" }];
   const history = { ...catalog[0], totalCount: 1, sourceSize: 100,
     messages: [{ id: "fixture-message", role: "user", text: "Synthetic history fixture", timestamp: "2026-09-05T10:00:00Z" }] };
   const conversationFolders = Object.freeze({ fixtureOnly: true });
   const folderSyncCalls = [];
+  const exitRequests = [];
+  let releaseExitResponse;
+  const fixtureLayaRuntime = { request: async (_action, items) => ({ items: items.map(item => ({ id: item.id, choice: "related" })) }) };
   const context = vm.createContext({
     connectCodexTarget: async (entry) => { const client = await connectCodexTarget(entry); clients.add(client); return client; },
     // Only external asset-service I/O is excluded from this renderer lifecycle test.
@@ -91,7 +102,7 @@ test("production attach and delivery survive CDP reconnect; real document reload
     SCRIPT_ID_GLOBAL: "__CODEX_CONVERSATION_PREVIEW_SCRIPT_IDENTIFIER__", readFile, sourcePath: userSourcePath,
     claudeSourcePath: new URL("../inject/claude-code.user.js", import.meta.url),
     root: path.resolve('test-theme-fixture'),
-    readOptionalThemeSource: async () => '',
+    readOptionalThemeSource: async () => oversizedThemeSource,
     claudeController: { request: async () => ({ available: false }) },
     CLAUDE_BINDING: "__AIYOUCODEX_CLAUDE_REQUEST__",
     agentWorkspace: { request: async () => ({ agents: [], receipts: [], version: 0 }) },
@@ -102,6 +113,15 @@ test("production attach and delivery survive CDP reconnect; real document reload
     openChatCutController: { handle: async () => ({ state: "not-installed", installed: false }) },
     layaSearchController: { snapshot: () => ({ ready: false, enabled: false }), request: async () => ({ status: { ready: false, enabled: false } }) },
     LAYA_SEARCH_BINDING: "__AIYOUCODEX_LAYA_SEARCH_REQUEST__",
+    createSkillSearchController, localLayaRuntime: fixtureLayaRuntime,
+    layaLibrarySearch: createLayaDocumentSearch({ runtime: fixtureLayaRuntime }),
+    APP_LIFECYCLE_BINDING: "__AIYOUCODEX_APP_REQUEST__",
+    deepSeekSettingsController: {request: async () => ({configured: false, source: null, fileConfigured: false, environmentOverrides: false})},
+    appLifecycleController: { request: payload => {
+      if (payload.action === "snapshot") return { supported: true };
+      exitRequests.push(payload.action);
+      return new Promise((resolve, reject) => { releaseExitResponse = { resolve, reject }; });
+    } },
     readManagedShortcuts: async () => shortcuts, createHash,
     readResetNotice: async () => ({ checkStatus: "never", active: null }),
     readRemoteCatalog: async () => [],
@@ -109,6 +129,7 @@ test("production attach and delivery survive CDP reconnect; real document reload
     resetMonitorController: { snapshot: async () => ({ available: false }), request: async () => ({ available: false }) },
     RESET_MONITOR_BINDING: "__aiyoucodexResetMonitorRequest__",
     process: { stdout: { write() {} }, stderr: { write() {} } },
+    registerRendererSource, evaluateRendererSource, removeRendererScripts,
     RENDERER_HEALTH_EXPRESSION, acceptDocumentHealth, canReuseRenderer,
     repository: { readRecentCatalog: async () => catalog, readPinnedThreadIds: async () => [],
       readInterruptedCatalog: async () => [], readMany: async () => [], readUsage: async () => ({}), readConversationHistory: async () => history,
@@ -123,6 +144,32 @@ test("production attach and delivery survive CDP reconnect; real document reload
   }
   const installDeliveryCounters = async () => inspect.evaluate(`(()=>{const api=window.__codexConversationPreviewInjection__;window.__fixtureDeliveries={snapshot:0,history:0,destroy:0};for(const [method,key]of [['setSnapshot','snapshot'],['setConversationHistory','history'],['destroy','destroy']]){const original=api[method];api[method]=(...args)=>{window.__fixtureDeliveries[key]+=1;return original(...args)}}})()`);
   let session = await context.attachTarget(target);
+  assert.equal(await inspect.evaluate("window.__fixtureLargeTheme"), true, "Oversized theme loads without breaking renderer attachment");
+  // Exercise the settings footer with native input events; the controller is
+  // isolated so the actual browser/working conversation stays open.
+  await inspect.evaluate("window.__codexConversationPreviewInjection__.openShortcutSettings()");
+  await waitForBrowserState(inspect, "document.querySelector('[data-deepseek-status]')?.textContent.includes('未配置')", "Production attachment wires the DeepSeek settings bridge");
+  await waitForBrowserState(inspect, "!!document.querySelector('[data-aiyou-app-quit]')&&!document.querySelector('[data-aiyou-app-quit]').disabled", "Exit button ready");
+  async function clickExit() {
+    const point = await inspect.evaluate(`(()=>{const button=document.querySelector('[data-aiyou-app-quit]');const r=button.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+    await inspect.send("Input.dispatchMouseEvent", { type: "mousePressed", ...point, button: "left", clickCount: 1 });
+    await inspect.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...point, button: "left", clickCount: 1 });
+  }
+  for (const width of [1440, 390]) {
+    await inspect.send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
+    assert.equal(await inspect.evaluate(`(()=>{const b=document.querySelector('[data-aiyou-app-quit]');const r=b.getBoundingClientRect();return r.width>0&&r.x>=0&&r.right<=innerWidth&&r.y>=0&&r.bottom<=innerHeight})()`), true);
+  }
+  await inspect.send("Emulation.clearDeviceMetricsOverride");
+  await clickExit(); await clickExit();
+  await waitForBrowserState(inspect, "document.querySelector('[data-aiyou-app-quit]').disabled", "Pending exit disables repeat clicks");
+  assert.deepEqual(exitRequests, ["quit"]);
+  releaseExitResponse.reject(Object.assign(new Error("退出测试失败，可重试"), { code: "APP_EXIT_ERROR" }));
+  await waitForBrowserState(inspect, "!document.querySelector('[data-aiyou-app-quit]').disabled&&document.querySelector('[data-aiyou-app-message]').textContent.includes('可重试')", "Failed exit permits retry");
+  await clickExit();
+  assert.deepEqual(exitRequests, ["quit", "quit"]);
+  releaseExitResponse.resolve({ closed: true });
+  await waitForBrowserState(inspect, "document.querySelector('[data-aiyou-app-message]').textContent==='应用已退出。'", "Successful exit acknowledgement");
+  await inspect.evaluate("document.getElementById('codex-sidebar-shortcut-settings-dialog').close()");
   assert.equal(await inspect.evaluate("typeof window.__AIYOUCODEX_CLAUDE_REQUEST__"), "function", "Claude bridge attaches in the native default world");
   assert.equal(await inspect.evaluate("typeof window.__AIYOUCODEX_AGENT_REQUEST__"), "function", "Agent migration bridge attaches in the native default world");
   await installDeliveryCounters();
@@ -164,7 +211,7 @@ test("production attach and delivery survive CDP reconnect; real document reload
       && await inspect.evaluate("document.readyState==='complete'")) break;
     await delay(50);
   }
-  assert.equal(reloaded?.alive, true, "Registered production source starts in the new document");
+  assert.equal(reloaded?.alive, true, `Registered production source starts in the new document: ${JSON.stringify(preloadErrors)}`);
   assert.notEqual(reloaded.documentEpoch, beforeReload.epoch);
   assert.equal(acceptDocumentHealth(session, reloaded), true);
   assert.equal(session.deliveredSnapshotHash, "");

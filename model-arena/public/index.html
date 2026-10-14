@@ -4,6 +4,10 @@
 <body>
   <main>
     <header class="hero"><div><div class="eyebrow">AIYOUCODEX / MODEL ARENA</div><h1>模型竞技场<span class="badge">本机工作台</span></h1><p>一份素材，一次编排，多模型同场对比。</p></div><button id="config-button">API 与模型配置</button></header>
+    <div id="arena-loading" class="aiyou-module-loading" role="status" aria-live="polite" aria-busy="true">
+      <div class="aiyou-loading-art" aria-hidden="true"><span class="aiyou-loading-fill"></span><span class="aiyou-loading-glyph">◇</span></div>
+      <div class="aiyou-loading-copy"><strong>正在连接模型竞技场</strong><p>正在读取模型目录、本机配置与已有任务记录，请稍候。</p><span class="aiyou-loading-track" aria-hidden="true"><i></i></span></div>
+    </div>
     <div id="notice" role="status" aria-live="polite" hidden></div>
     <button id="retry-connect" hidden>重试连接本机服务</button>
     <nav class="steps" aria-label="工作步骤"><button data-view="generate">01 编排与生成</button><button data-view="results">02 对比与合成</button></nav>

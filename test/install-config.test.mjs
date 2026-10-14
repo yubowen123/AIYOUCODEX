@@ -4,13 +4,21 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { createInstallPlan } from "../lib/install-config.mjs";
+import { createInstallPlan, MODEL_PROXY_RUNTIME_FILES } from "../lib/install-config.mjs";
 
 const macOnly = { skip: process.platform !== "darwin" };
 
+test('launcher selects an additive app-server adapter without changing the account home', macOnly, () => {
+  const plan = createInstallPlan({home: '/Users/example', installDir: '/Users/example/runtime', nodePath: '/opt/node/bin/node'});
+  assert.ok(plan.launcherScript.includes('CODEX_CLI_PATH='));
+  assert.ok(plan.modelProxyScript.includes('/opt/node/bin/node'));
+  assert.ok(plan.modelProxyScript.includes('codex-model-proxy.mjs'));
+  assert.ok(plan.launcherScript.includes('CODEX_HOME=${AIYOU_CODEX_HOME}'));
+});
+
 async function activationFixture(home) {
   const installDir = path.join(home, "runtime");
-  for (const file of ["scripts/runtime.mjs", "scripts/reset-monitor-worker.mjs", "vendor/codex-taskboard/dist/web/index.html"]) {
+  for (const file of ["scripts/runtime.mjs", "scripts/reset-monitor-worker.mjs", "vendor/codex-taskboard/dist/web/index.html", ...MODEL_PROXY_RUNTIME_FILES]) {
     const target = path.join(installDir, file); await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, "fixture");
   }
@@ -30,6 +38,49 @@ test("launcher passes the existing profile as one literal shell argument", macOn
   const args = result.stdout.trim().split("\n");
   assert.ok(args.includes(`--user-data-dir=${path.join(testHome, "Library", "Application Support", "Codex")}`));
   assert.ok(args.includes("--remote-debugging-port=9231"));
+});
+
+test('launcher binds only a runnable CLI inside the selected app and keeps shell arguments literal', macOnly, async () => {
+  const testHome = await mkdtemp(path.join(os.tmpdir(), 'aiyou-native-cli-binding-'));
+  try {
+    const plan = createInstallPlan({home: testHome});
+    await mkdir(path.dirname(plan.modelProxyExecutablePath), {recursive: true});
+    await writeFile(plan.modelProxyExecutablePath, '#!/bin/sh\nexit 0\n', {mode: 0o755});
+    for (const [name, relative] of [
+      ["ChatGPT with 'quotes'.app", 'Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex'],
+      ['Codex with spaces.app', 'Contents/Resources/codex'],
+      ['Missing CLI.app', null],
+    ]) {
+      const appPath = path.join(testHome, 'Applications', name);
+      const native = relative && path.join(appPath, relative);
+      if (native) {await mkdir(path.dirname(native), {recursive: true}); await writeFile(native, '#!/bin/sh\nexit 0\n', {mode: 0o755});}
+      const source = 'PORT=9231\nAIYOU_CODEX_HOME=/synthetic/codex\nAIYOU_CODEX_USER_DATA_DIR=/synthetic/profile\nAPP_PATH="$AIYOU_TEST_APP_PATH"\n'
+        + plan.launcherScript.slice(plan.launcherScript.indexOf('# Bind the adapter')).replace('/usr/bin/open', '/usr/bin/printf "%s\\n"');
+      const result = spawnSync('/bin/zsh', ['-c', source], {encoding: 'utf8', env: {...process.env, AIYOU_TEST_APP_PATH: appPath}});
+      assert.equal(result.status, 0, result.stderr);
+      const args = result.stdout.trim().split('\n');
+      assert.ok(args.includes(appPath));
+      assert.equal(args.includes('CODEX_CLI_PATH=' + plan.modelProxyExecutablePath), Boolean(native));
+      if (native) assert.ok(args.includes('AIYOUCODEX_NATIVE_CODEX_BINARY=' + native));
+      else assert.equal(args.some(arg => arg.startsWith('AIYOUCODEX_NATIVE_CODEX_BINARY=')), false);
+    }
+  } finally {await rm(testHome, {recursive: true, force: true});}
+});
+
+test('incomplete DeepSeek runtime files fail installation before changing launchers or LaunchAgents', macOnly, async () => {
+  const testHome = await mkdtemp(path.join(os.tmpdir(), 'aiyou-incomplete-runtime-'));
+  try {
+    const installDir = await activationFixture(testHome);
+    for (const relative of ['models/deepseek-flash.json', 'scripts/deepseek-auth.mjs']) {
+      await rm(path.join(installDir, relative));
+      const result = spawnSync(process.execPath, ['scripts/install.mjs', '--activate', '--skip-launchctl', '--home', testHome, '--install-dir', installDir], {encoding: 'utf8'});
+      assert.notEqual(result.status, 0);
+      assert.ok(result.stderr.includes(relative));
+      await assert.rejects(access(path.join(testHome, 'Library', 'LaunchAgents')));
+      await assert.rejects(access(path.join(testHome, 'Applications', 'AIYOUcodex.app')));
+      await writeFile(path.join(installDir, relative), 'fixture');
+    }
+  } finally {await rm(testHome, {recursive: true, force: true});}
 });
 
 test("installer dry-run renders portable user paths and XML-safe launch configuration", macOnly, async () => {

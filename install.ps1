@@ -28,7 +28,7 @@ function Test-Node22([string]$Candidate) {
 function Copy-Package([string]$From, [string]$To) {
   $entries = @(
     "LICENSE", "README.md", "package.json", "package-lock.json",
-    "inject", "lib", "scripts", "vendor", "windows", "themes", "skills", "plugins", "install.ps1", "uninstall.ps1"
+    "inject", "lib", "scripts", "vendor", "windows", "themes", "skills", "plugins", "models", "install.ps1", "uninstall.ps1"
   )
   foreach ($entry in $entries) {
     $source = Join-Path $From $entry

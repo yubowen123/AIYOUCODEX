@@ -1,7 +1,49 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {existsSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
 
 import { createDesktopAppRuntime } from "../lib/desktop-runtime.mjs";
+
+test('macOS model adapter keeps the existing account and profile while selecting a separate CLI executable', () => {
+  const calls = [];
+  const proxy = fileURLToPath(new URL('../scripts/codex-model-proxy.mjs', import.meta.url));
+  assert.ok(existsSync(proxy));
+  const runtime = createDesktopAppRuntime({platform: 'darwin', modelProxyPath: proxy,
+    isExecutablePath: candidate => candidate === proxy || candidate === '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex',
+    spawnProcess(command, args, options) {calls.push({command, args, options}); return {unref(){}};}});
+  runtime.launch('/Applications/ChatGPT.app', 9231, {codexHome: '/original/.codex', userDataDir: '/original/Desktop'});
+  assert.ok(calls[0].args.includes('CODEX_CLI_PATH=' + proxy));
+  assert.ok(calls[0].args.includes('AIYOUCODEX_NATIVE_CODEX_BINARY=/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex'));
+  assert.ok(calls[0].args.includes('CODEX_HOME=/original/.codex'));
+  assert.ok(calls[0].args.includes('--user-data-dir=/original/Desktop'));
+});
+
+test('macOS recovery binds the CLI belonging to its actual selected app, including a custom location', () => {
+  const calls = [];
+  const proxy = '/installed/model-proxy';
+  const app = '/Volumes/Apps with spaces/Codex.app';
+  const selected = app + '/Contents/Resources/codex';
+  const otherApp = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex';
+  const runtime = createDesktopAppRuntime({platform: 'darwin', modelProxyPath: proxy,
+    isExecutablePath: candidate => [proxy, selected, otherApp].includes(candidate),
+    spawnProcess(command, args) {calls.push({command, args}); return {unref(){}};}});
+  runtime.launch(app, 9231);
+  assert.ok(calls[0].args.includes(`AIYOUCODEX_NATIVE_CODEX_BINARY=${selected}`));
+  assert.ok(calls[0].args.includes(app));
+  assert.equal(calls[0].args.some(arg => arg.includes(otherApp)), false);
+});
+
+test('macOS does not inject an adapter when the selected app has no runnable CLI', () => {
+  const calls = [];
+  const runtime = createDesktopAppRuntime({platform: 'darwin', modelProxyPath: '/installed/model-proxy',
+    isExecutablePath: candidate => candidate === '/installed/model-proxy'
+      || candidate === '/Applications/ChatGPT.app/Contents/Resources/codex',
+    spawnProcess(command, args) {calls.push({command, args}); return {unref(){}};}});
+  runtime.launch('/other/Codex.app', 9231);
+  assert.equal(calls[0].args.some(arg => arg.startsWith('CODEX_CLI_PATH=') || arg.startsWith('AIYOUCODEX_NATIVE_CODEX_BINARY=')), false);
+  assert.ok(calls[0].args.includes('/other/Codex.app'));
+});
 
 test("Windows runtime reads only the main desktop process and stops it by pid", async () => {
   const calls = [];

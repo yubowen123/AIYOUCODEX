@@ -9,6 +9,7 @@
   const retainedUI = previous?.ui || { open: previousPanel && !previousPanel.hidden, prompt: previousPanel?.querySelector("[data-claude-prompt]")?.value || "" };
   window[KEY]?.destroy?.();
   let row, source, panel, data, projectId = previous?.projectId || "", sessionId = previous?.sessionId || "", polling, destroyed = false, inFlight = false;
+  let panelEpoch = 0, reloadSequence = 0, reloadContext = "", loadingError = "";
   const requests = new Map(), skillIds = new Set(previous?.skillIds || previous?.data?.session?.skillIds || []), mcpIds = new Set(previous?.mcpIds || previous?.data?.session?.mcpIds || []);
   let resourcesSignature = "", messagesSignature = "";
   const processOpen = new Map(previous?.processOpen || priorState?.processOpen || []);
@@ -239,21 +240,41 @@
       void request("persona-get").then(result=>{if(!destroyed&&result?.persona){applyPersona(result.persona);personaLoaded=true;}}).finally(()=>{personaLoading=false;});
     }
   }
+  function currentRequest(pending) { return pending.display && pending.epoch === panelEpoch && (["persona-get", "persona-save"].includes(pending.action) || pending.sessionId === sessionId && pending.projectId === projectId); }
+  function renderLoading() {
+    const target = panel?.querySelector("[data-claude-module-loading]"); if (!target) return;
+    const pending = [...requests.values()].filter(currentRequest), current = pending.at(-1);
+    const session = data?.session, processing = session?.status === "running" && !session.permissions?.length;
+    const error = loadingError || (session?.status === "error" ? session.error || "Claude 调用未完成，请读取会话核对结果。" : data?.available === false ? data.reason || "本机 Claude 尚未就绪，请检查连接。" : "");
+    const visible = !destroyed && !panel.hidden && (pending.length || processing || error);
+    target.hidden = !visible;
+    if (!visible) { api()?.clearModuleLoadingState?.(target); target.replaceChildren(); target.removeAttribute("aria-busy"); return; }
+    const messages = { refresh: data ? "正在刷新会话与可用资源…" : "正在连接并读取项目与会话…", "persona-get": "正在读取角色设置…", "persona-save": "正在保存角色设置…", send: "正在提交本次消息…", stop: "正在确认停止结果…", permission: "正在提交工具确认…", "permission-mode": "正在确认权限模式…", "question-answer": "正在提交所选答案…", choice: "正在提交所选回复…" };
+    const options = { title: error && !pending.length ? "Claude 操作未完成" : "Claude Code", message: pending.length ? messages[current.action] || "正在等待本机请求回执…" : error || "Claude 正在处理当前会话…", state: pending.length || !error ? "loading" : "error", layout: data ? "compact" : "panel", ...(!pending.length && error ? { onRetry: () => void reload(), retryLabel: "重新读取会话" } : {}) };
+    if (api()?.renderModuleLoadingState) api().renderModuleLoadingState(target, options);
+    else { target.textContent = options.message; target.setAttribute("role", "status"); target.setAttribute("aria-busy", String(options.state === "loading")); if (options.onRetry) { const button = document.createElement("button"); button.textContent = options.retryLabel; button.onclick = options.onRetry; target.append(button); } }
+  }
   function request(action, fields = {}) {
     return new Promise(resolve => {
-      if (typeof window[BINDING] !== "function") { text("[data-claude-status]", "Claude 服务尚未连接；请检查 AIYOUcodex 是否运行。"); resolve(null); return; }
+      const metadata = { action, epoch: panelEpoch, display: Boolean(panel && !panel.hidden), sessionId, projectId };
+      const failed = message => { if (!destroyed && currentRequest(metadata)) { loadingError = message; text("[data-claude-status]", message); renderLoading(); } resolve(null); };
+      if (typeof window[BINDING] !== "function") { failed("Claude 服务尚未连接；请检查 AIYOUcodex 是否运行。"); return; }
       const requestId = `claude.${Date.now()}.${Math.random().toString(16).slice(2)}`;
-      const timer = setTimeout(() => { requests.delete(requestId); text("[data-claude-status]", "请求未收到回执；输入保留，请检查本机连接。"); resolve(null); }, 30000);
-      requests.set(requestId, { resolve, timer, action });
-      try { window[BINDING](JSON.stringify({ requestId, action, ...fields })); }
-      catch { clearTimeout(timer); requests.delete(requestId); resolve(null); text("[data-claude-status]", "本机连接不可用。"); }
+      const timer = setTimeout(() => { requests.delete(requestId); failed("请求未收到回执；输入保留，请重新读取会话核对。"); }, 30000);
+      requests.set(requestId, { resolve, timer, ...metadata }); if (currentRequest(metadata)) loadingError = ""; renderLoading();
+      const disconnected = () => { if (!requests.has(requestId)) return; clearTimeout(timer); requests.delete(requestId); failed("本机连接不可用，请重新读取会话。"); };
+      try { Promise.resolve(window[BINDING](JSON.stringify({ requestId, action, ...fields }))).catch(disconnected); }
+      catch { disconnected(); }
     });
   }
   function resolve(response) {
     const pending = requests.get(response?.requestId); if (!pending) return;
     clearTimeout(pending.timer); requests.delete(response.requestId);
-    if (!response.ok) text("[data-claude-status]", response.error || "操作未完成。");
+    if (destroyed || pending.display && !currentRequest(pending)) { pending.resolve(null); return; }
+    if (!response.ok && currentRequest(pending)) { loadingError = response.error || "操作未完成，请读取会话核对结果。"; text("[data-claude-status]", loadingError); }
+    else if (response.ok && currentRequest(pending) && pending.action !== "persona-get") loadingError = "";
     pending.resolve(response.ok ? response.data : null);
+    renderLoading();
   }
   function ensurePanel() {
     if (panel) return;
@@ -264,7 +285,7 @@
       <section data-claude-setup><div class="claude-pair"><select data-claude-project aria-label="Codex 项目"></select><select data-claude-session aria-label="Claude 会话"><option value="">新会话</option></select></div>
       <small data-claude-path></small>
       <div data-claude-status role="status">正在连接本机 Claude Code…</div></section>
-      <div data-claude-log aria-live="polite"></div><div data-claude-permissions></div>
+      <div data-claude-module-loading hidden></div><div data-claude-log aria-live="polite"></div><div data-claude-permissions></div>
       <section data-claude-compose>
       <div data-claude-command-menu hidden role="listbox" id="aiyou-claude-slash-menu" aria-label="Claude 快捷指令"></div><small data-claude-command-hint hidden role="status"></small>
       <div data-claude-reference-menu hidden role="dialog" aria-label="引用 Skills 与 MCP"><div data-claude-reference-tabs role="tablist"><button data-claude-tab="skills" role="tab" aria-selected="true">Skills · <span data-claude-skill-count>0</span></button><button data-claude-tab="mcps" role="tab" aria-selected="false">MCP · <span data-claude-mcp-count>0</span></button></div><input data-claude-search placeholder="搜索 Codex Skills" aria-label="搜索引用"><div data-claude-skills></div><div data-claude-mcps hidden></div><small>选择后作为引用随消息使用。宿主专用 MCP 不可直接迁移。</small></div>
@@ -483,7 +504,10 @@
     panel.querySelector("[data-claude-prompt]").focus();
   }
   function close() {
+    panelEpoch += 1; reloadSequence += 1; inFlight = false; reloadContext = ""; loadingError = "";
+    for (const [id,pending] of requests) if (pending.display) { clearTimeout(pending.timer); requests.delete(id); pending.resolve(null); }
     if (panel) panel.hidden = true; clearInterval(polling); polling = null;
+    renderLoading();
     document.body.removeAttribute("data-aiyou-claude-active");closePersona();
     row?.querySelector("[data-aiyou-claude]")?.setAttribute("aria-expanded", "false");
     api()?.closeClaudePanelLayer?.(panel);
@@ -540,6 +564,7 @@
     text("[data-claude-path]", session?.cwd || data.projects?.find(p => p.id === projectId)?.cwd || "暂无本地项目");
     panel.querySelector("[data-claude-path]").title = panel.querySelector("[data-claude-path]").textContent;
     renderResources();
+    renderLoading();
     const labels = { running: "正在运行…", stopped: "已停止，可继续发送", idle: "已就绪", error: "调用未完成" };
     text("[data-claude-status]", session?.error || (session?.permissions?.length ? session.permissions.some(p => p.kind === "question") ? "等待你选择或填写答案" : "等待你确认工具操作" : session ? labels[session.status] : data.available ? [data.version,"选择项目后开始"].filter(Boolean).join(" · ") : data.reason || "未找到本机 Claude Code，请先安装并登录。"));
     text("[data-claude-model]", session?.model || "沿用本机模型与登录");
@@ -615,31 +640,48 @@
     }
   }
   async function reload() {
-    if (inFlight || destroyed) return;
+    if (destroyed || !panel || panel.hidden) return;
+    const context = `${panelEpoch}:${projectId}:${sessionId}`;
+    if (inFlight && reloadContext === context) return;
+    const sequence = ++reloadSequence, epoch = panelEpoch, requestedSession = sessionId, requestedProject = projectId;
+    reloadContext = context;
     inFlight = true;
     try {
       const result = await request("refresh", { sessionId, projectId });
-      if (!result || destroyed) return;
+      if (!result || destroyed || panel.hidden || epoch !== panelEpoch || sequence !== reloadSequence || requestedSession !== sessionId || requestedProject !== projectId) return;
       const changedSession = data?.session?.id !== result.session?.id;
       data = result; projectId ||= data.projectId || "";
       if (changedSession && data.session) { skillIds.clear(); data.session.skillIds?.forEach(id => skillIds.add(id)); mcpIds.clear(); data.session.mcpIds?.forEach(id => mcpIds.add(id)); }
       render();
-    } finally { inFlight = false; }
+    } finally { if (sequence === reloadSequence) { inFlight = false; renderLoading(); } }
   }
   async function send() {
     const prompt = panel.querySelector("[data-claude-prompt]"), value = prompt.value.trim();
+    const epoch = panelEpoch;
     if (!value || localCommandBusy) return;
     localCommandBusy = true;
     try { if (await panelCommand(value)) return; } finally { localCommandBusy = false; }
-    if (panel.querySelector("[data-claude-send]").disabled) return;
+    if (destroyed || panel.hidden || epoch !== panelEpoch || panel.querySelector("[data-claude-send]").disabled) return;
     hideCommands();
     panel.querySelector("[data-claude-send]").disabled = true;
+    const requestedSession = sessionId, requestedProject = projectId;
     const result = await request("send", { sessionId, projectId, prompt: value, skillIds: [...skillIds], mcpIds: [...mcpIds], ...(!sessionId ? { permissionMode: draftMode } : {}) });
+    if (destroyed || panel.hidden || epoch !== panelEpoch || requestedSession !== sessionId || requestedProject !== projectId) return;
     if (result?.session) { sessionId = result.session.id; data.session = result.session; toggleReferences(false); render(); if (prompt.value.trim() === value) prompt.value = ""; panel.querySelector("[data-claude-command-hint]").hidden = true; await reload(); }
     else panel.querySelector("[data-claude-send]").disabled = false;
   }
   function onPanel(event) {
-    if (event.source === window && event.origin === location.origin && event.data?.type === "codex-workspace-panel:open" && event.data.panel !== "claude") close();
+    if (event.source !== window || event.origin !== location.origin || event.data?.type !== "codex-workspace-panel:open" || event.data.panel === "claude") return;
+    // Open notifications are asynchronous. A previous panel may have already
+    // closed by the time its message arrives after a newer Claude open.
+    const name = event.data.panel;
+    const stillOpen = name === "taskboard"
+      ? document.documentElement.getAttribute("data-codex-taskboard-open") === "true"
+      : [...document.querySelectorAll("[data-codex-workspace-side-panel]")].some(node => node !== panel
+        && node.getAttribute("data-codex-workspace-side-panel") === name
+        && !node.closest('[hidden],[aria-hidden="true"],[data-app-shell-active-page="false"]')
+        && (!node.matches("dialog") || node.open));
+    if (stillOpen) close();
   }
   window.addEventListener("message", onPanel);
   window[KEY] = { refresh, open, close, resolve,
