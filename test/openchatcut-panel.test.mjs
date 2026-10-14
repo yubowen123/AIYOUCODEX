@@ -137,17 +137,19 @@ test('OpenChatCut panel fixture uses the production CSP proxy, keeps editors ali
     if (request.action === 'install') return new Promise(resolve => { finishInstall = resolve; });
     if (request.action !== 'open' || !installation.installed) return installation;
     if (holdOpen) await new Promise(resolve => { finishOpen = resolve; });
-    const editorUrl = await assetBridge.embedOpenChatCut(`${editorOrigin}/#/editor/${editingProject}`);
-    return { ...installation, type: 'editing', threadId: request.threadId, projectId: editingProject, editorUrl,
-      ...(restartRecovery ? { reconnectEditor: true, serviceRestarted: true, editorDisconnected: true, reconnectId: 'menu-restart-fixture',
-        session: { threadId: request.threadId, projectId: editingProject, editSessionId: 'durable-pending-draft' } } : {}) };
+    const recovery = restartRecovery ? { reconnectEditor: true, serviceRestarted: true, editorDisconnected: true, reconnectId: 'c0'.repeat(12),
+      session: { threadId: request.threadId, projectId: editingProject, editSessionId: 'durable-pending-draft' } } : {};
+    // Match the native injector: recovery belongs to both the controlled route
+    // and the renderer, so a restarted service retires its former frame owner.
+    const editorUrl = await assetBridge.embedOpenChatCut(`${editorOrigin}/#/editor/${editingProject}`, recovery);
+    return { ...installation, type: 'editing', threadId: request.threadId, projectId: editingProject, editorUrl, ...recovery };
   } }, { binding: '__AIYOUCODEX_OPENCHATCUT_REQUEST__', resolver: 'resolveOpenChatCutRequest' });
   await editingBridge.install(client);
   await client.evaluate(`${editingApi}.update(${JSON.stringify(installation)})`);
 
   async function click(selector) {
     const action = /\[data-occ-(settings|close|stop)\]/.exec(selector)?.[1] || (selector.includes('[data-aiyou-panel-expand]') ? 'expand' : null);
-    if (action && await client.evaluate(`!!document.querySelector('${iframe}')`)) {
+    if (action && await client.evaluate(`!!document.querySelector('${iframe}')&&document.querySelector('${panel}').dataset.occEditorView==='true'`)) {
       const proxy = assetBridge.openChatCutProxy;
       // Resize crosses the OOPIF compositor boundary. Wait for its new
       // surface and move the mouse before issuing a second toolbar click.
@@ -400,7 +402,7 @@ test('OpenChatCut panel fixture uses the production CSP proxy, keeps editors ali
   await waitForBrowserState(client, "!!document.querySelector('[data-codex-shortcut-sort-key=\"enhancement:openchatcut\"]')", 'Reinstallation restores the sidebar entry');
   await click('[data-codex-shortcut-sort-key="enhancement:openchatcut"]');
   await waitForBrowserState(client, `document.querySelector('${panel}')?.dataset.editorLoaded==='true'`, 'A fresh feature installation can reopen the editor', 10000);
-  const recoveredProxy = assetBridge.openChatCutProxy;
+  let recoveredProxy = assetBridge.openChatCutProxy;
   await waitForFrame(recoveredProxy, "!!window.editorFixture&&location.hash==='#/editor/project-b'", 'Explicit reopening recovers the current project through a fresh transport');
   assert.notEqual(recoveredProxy.token, editorProxy.token);
   assert.equal(await client.evaluate(`document.querySelectorAll('${iframe}').length`), 1);
@@ -475,8 +477,13 @@ test('OpenChatCut panel fixture uses the production CSP proxy, keeps editors ali
   const failedFrame = await client.evaluate(`window.failedMenuFrame=document.querySelector('${iframe}');true`);
   assert.equal(failedFrame, true);
   upstreamOffline = false; restartRecovery = true;
+  const failedProxy = recoveredProxy;
   await click('[data-codex-shortcut-sort-key="enhancement:openchatcut"]');
+  await waitForBrowserState({ evaluate: async () => Boolean(assetBridge.openChatCutProxy && assetBridge.openChatCutProxy !== failedProxy) }, 'true', 'Cold restart allocates a fresh controlled route');
+  recoveredProxy = assetBridge.openChatCutProxy;
   await waitForFrame(recoveredProxy, `!!window.editorFixture&&location.hash==='#/editor/project-c'&&editorFixture.instanceId!==${JSON.stringify(recoveredDocumentId)}`, 'Menu cold-start restores a failed document on the original project');
+  assert.equal(failedProxy.cancelled, true, 'The obsolete error document route is retired');
+  assert.notEqual(recoveredProxy.token, failedProxy.token, 'Restarted service uses a fresh owned routing generation');
   assert.equal(await client.evaluate(`document.querySelector('${iframe}')!==window.failedMenuFrame&&${editingApi}.snapshot().state.session.editSessionId==='durable-pending-draft'`), true, 'Cold restart reloads the failed document while preserving its durable draft');
   restartRecovery = false;
   assert.equal(await client.evaluate("document.getElementById('draft').textContent"), '保留原有聊天草稿');

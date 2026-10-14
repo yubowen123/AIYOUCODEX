@@ -53,7 +53,7 @@ test("retained product surfaces never mix headings, folders or new-chat sources"
   await waitForBrowserState(client, "document.querySelectorAll('[data-codex-sidebar-remote-badge]').length===2", "Remote projects without local session files receive badges and separate host identities");
   assert.equal(await client.evaluate("document.querySelectorAll('[data-codex-sidebar-folder-label=\"项目 A\"]').length"), 3, "Same-name local and two remote projects never collapse");
   await client.evaluate("document.querySelector('[data-codex-sidebar-section-tab=\"项目\"]').click();document.querySelector('[data-codex-sidebar-folder-tag=\"remote:host-a:p1\"]').click()");
-  assert.equal(await client.evaluate("document.querySelector('[data-codex-sidebar-folder-new-chat]').disabled"), true, "A remote path cannot become a local execution root");
+  assert.equal(await client.evaluate("document.querySelector('#codex-sidebar-section-tabs [data-codex-sidebar-current-folder-new-chat]').disabled"), true, "A remote path cannot become a local execution root");
   assert.equal(await client.evaluate("document.querySelector('[data-codex-sidebar-virtual-folder-panel=\"remote:host-a:p1\"]').textContent"), "暂无对话");
   const nativeThreadId = "11111111-1111-4111-8111-111111111111";
   const remoteEntries = ["host-a", "host-b"].map(hostId => ({

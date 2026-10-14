@@ -72,11 +72,13 @@
         <div class="toolbar-row">
           <label class="search-box">
             <span aria-hidden="true">⌕</span>
-            <input id="librarySearchInput" type="search" placeholder="搜索名称、内容、分类或标签" autocomplete="off">
+            <input id="librarySearchInput" type="search" placeholder="描述要找的资料，或搜索名称、分类、标签" autocomplete="off" maxlength="200" aria-describedby="librarySearchStatus">
+            <select id="librarySearchMode" aria-label="资产搜索方式"><option value="laya" selected>Laya</option><option value="keyword">普通</option></select>
             <kbd>⌘ K</kbd>
           </label>
           <label class="sort-control">排序
             <select id="librarySortSelect">
+              <option value="relevance" selected>相关度</option>
               <option value="newest">最近更新</option>
               <option value="oldest">最早更新</option>
               <option value="name">名称</option>
@@ -88,6 +90,7 @@
             <output id="assetColumnOutput">4</output>
           </label>
         </div>
+        <p id="librarySearchStatus" class="library-search-status" role="status" aria-live="polite" hidden></p>
         <div class="library-view-row">
           <div class="view-switch" role="group" aria-label="浏览样式"><button id="thumbnailViewButton" type="button" aria-pressed="true">▦ 缩略图</button><button id="detailViewButton" type="button" aria-pressed="false">☷ 详细</button></div>
           <label class="related-toggle"><input id="relatedAssetsToggle" type="checkbox" checked>同角色相邻</label>
@@ -97,13 +100,17 @@
       </section>
 
       <section class="asset-content">
+        <div id="libraryLoadingState" class="aiyou-module-loading" role="status" aria-live="polite" aria-busy="true">
+          <div class="aiyou-loading-art" aria-hidden="true"><span class="aiyou-loading-fill"></span><span class="aiyou-loading-glyph">◇</span></div>
+          <div class="aiyou-loading-copy"><strong>正在连接资产管理</strong><p>正在读取配置与项目列表，请稍候。</p><span class="aiyou-loading-track" aria-hidden="true"><i></i></span></div>
+        </div>
         <div id="assetGrid" class="asset-grid" aria-live="polite"></div>
         <nav id="assetPagingControls" class="asset-paging-controls" aria-label="资产分页" hidden>
           <button id="previousAssetWindow" type="button" class="secondary-button">上一组</button>
           <span id="assetWindowLabel"></span>
           <button id="nextAssetWindow" type="button" class="secondary-button">下一组</button>
         </nav>
-        <div id="emptyLibraryState" class="empty-state">
+        <div id="emptyLibraryState" class="empty-state" hidden>
           <div class="empty-icon" aria-hidden="true">◇</div>
           <h2>这里还没有资产</h2>
           <p>创建项目并关联一个或多个文件夹，扫描结果会按文本、图片、音频和视频自动归类。</p>

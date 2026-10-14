@@ -250,6 +250,14 @@
       #${STATUS_ID}[hidden] {
         display: none !important;
       }
+      #${STATUS_ID}.aiyou-module-loading {
+        width: 100%;
+        max-width: none;
+        align-content: center;
+      }
+      #${STATUS_ID}.aiyou-module-loading .aiyou-loading-copy {
+        width: min(360px, 100%);
+      }
       #${STATUS_ID} button {
         margin-top: 10px;
         border: 1px solid var(--color-token-border, color-mix(in srgb, CanvasText 16%, transparent));
@@ -1018,15 +1026,17 @@
     return window.__codexConversationPreviewInjection__?.initializeWorkspacePanel?.(section,"taskboard") || section;
   }
 
-  function showLoading() {
+  function showLoading(message = "正在连接本机看板并读取项目与任务…") {
     if (!status) return;
-    status.replaceChildren(document.createTextNode("正在启动任务面板…"));
+    const api = window.__codexConversationPreviewInjection__;
+    if (api?.renderModuleLoadingState) api.renderModuleLoadingState(status, { title: "正在启动任务面板…", message, layout: "panel" });
+    else { status.replaceChildren(document.createTextNode(message)); status.setAttribute("aria-busy", "true"); }
     status.hidden = false;
     if (frame) frame.hidden = true;
   }
 
   function showFrame() {
-    if (status) status.hidden = true;
+    if (status) { window.__codexConversationPreviewInjection__?.clearModuleLoadingState?.(status); status.removeAttribute("aria-busy"); status.hidden = true; }
     if (frame) {
       frame.hidden = false;
       frame.focus?.();
@@ -1035,6 +1045,11 @@
 
   function showLoadError(message) {
     if (!status) return;
+    const api = window.__codexConversationPreviewInjection__;
+    if (api?.renderModuleLoadingState) {
+      api.renderModuleLoadingState(status, { title: "任务面板加载未完成", message, state: "error", layout: "panel", onRetry: openTaskboard, retryLabel: "重新连接" });
+      status.hidden = false; if (frame) frame.hidden = true; return;
+    }
     const content = document.createElement("div");
     const text = document.createElement("div");
     text.textContent = message;
@@ -1238,7 +1253,7 @@
       if (!active || generation !== openGeneration) return;
       hostContextSnapshot = context;
       if (!frameReady || result.restarted || !frameMatchesTaskboardUrl(taskboardUrl)) {
-        showLoading();
+        showLoading("本机服务已连接，正在加载任务列表与控件…");
         await loadTaskboardFrame();
         await waitForFrameReady();
       }
@@ -1339,6 +1354,7 @@
     if (!active && page?.hidden !== false) return;
     openGeneration += 1;
     active = false;
+    if (status) window.__codexConversationPreviewInjection__?.clearModuleLoadingState?.(status);
     stopPanelLayout();
     if (page) page.hidden = true;
     postPanelVisibility();

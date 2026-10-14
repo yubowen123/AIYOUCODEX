@@ -1,7 +1,7 @@
 (() => {
   'use strict';
   const KEY = '__aiyouOpenChatCut__', ID = 'aiyoucodex-openchatcut';
-  const RUNTIME_VERSION = '2026-10-11.10';
+  const RUNTIME_VERSION = '2026-10-12.1';
   const SETTINGS_KEY = '__aiyouOpenChatCutModelSettings__';
   function validEditorUrl(value) {
     try {
@@ -43,7 +43,7 @@
         frameLoaded = false; panel.dataset.editorLoaded = 'false';
       }
       trackedUrl = url;
-      return runtime.snapshot?.().state?.installed && panel?.dataset.editorLoaded !== 'false' && (frameLoaded || panel?.dataset.editorLoaded === 'true') && url
+      return runtime.snapshot?.().state?.installed && runtime.snapshot?.().editor?.ready !== false && panel?.dataset.editorLoaded !== 'false' && (frameLoaded || panel?.dataset.editorLoaded === 'true') && url
         ? { frame, origin: new URL(url).origin } : null;
     }
     function refresh() {
@@ -138,14 +138,68 @@
   finally { if (retainedPanel) { if (retainedRemove) Object.defineProperty(retainedPanel, 'remove', retainedRemove); else delete retainedPanel.remove; } }
   const requests = new Map();
   let state = prior?.state || { state: 'connecting', installed: false, message: '正在连接本机剪辑服务…' };
-  let panel = retainedPanel, frame = panel?.querySelector('iframe'), frameUrl = validEditorUrl(frame?.src) || '', destroyed = false, busy = false, error = '', returnFocus;
+  let panel = retainedPanel, frame = panel?.querySelector('iframe'), frameUrl = validEditorUrl(frame?.src) || '', destroyed = false, busy = false, busyAction = '', error = '', returnFocus;
   let visibleThreadId = panel?.dataset.occViewThread || prior?.state?.threadId || '', viewGeneration = 0, queuedOpen, stopping = false;
+  let frameGeneration = 0, documentLoaded = Boolean(frame && (prior?.editor?.loaded || panel?.dataset.editorLoaded === 'true'));
+  let controlsReady = Boolean(frame && (prior?.editor?.ready || panel?.dataset.editorReady === 'true')), verifiedReady = false;
+  let frameError = '', slowLoading = false, loadingTimer, editorDeadline;
   const reconnectIds = new Set();
   const api = () => window.__codexConversationPreviewInjection__;
   const context = () => api()?.getActiveTaskContext?.() || {};
   const installing = () => ['downloading', 'verifying', 'installing', 'extracting'].includes(state.state);
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
   const icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="m8.2 8.2 12 12M8.2 15.8 20 4M12 12h.01"/></svg>';
+  const editorReady = () => Boolean(frame?.isConnected && documentLoaded && (controlsReady || verifiedReady) && !frameError);
+  function loadingDetails() {
+    const failure = error || frameError || (['error', 'failed'].includes(state.state) ? state.message : '');
+    if (failure) return { title: '剪辑工具未能连接', message: `${failure} 请重试连接；已保存的工程会保留。`, state: 'error', onRetry: () => state.installed ? open() : act('install'), retryLabel: state.installed ? '重试连接' : '重试安装' };
+    if (installing()) {
+      const raw = typeof state.progress === 'number' ? state.progress : state.progress?.percent;
+      const progress = Number.isFinite(raw) ? Math.max(0, Math.min(1, raw / 100)) : undefined;
+      return { title: '正在准备剪辑工具', message: state.message || '正在安装本机组件，请保持当前页面打开。', state: 'loading', progress };
+    }
+    if (stopping || state.state === 'stopping') return { title: '正在关闭剪辑工具', message: '正在保存工程并结束本机后台进程，请稍候。', state: 'loading' };
+    const connecting = ['checking', 'launching', 'running', 'connecting', 'opening'].includes(state.state);
+    if (frame && !editorReady() || busyAction === 'open' || !frame && state.installed && connecting) {
+      const title = frame ? documentLoaded ? '正在连接剪辑工程' : '正在加载剪辑界面' : state.state === 'launching' || state.state === 'running' ? '正在启动本机剪辑工具' : state.state === 'checking' || busyAction === 'open' && !connecting ? '正在检查本机剪辑工具' : '正在连接本机剪辑工具';
+      const message = slowLoading ? '连接所需时间较久，仍在等待本机编辑器响应。请保持面板打开；若持续无响应，可重试连接。'
+        : frame ? documentLoaded ? '剪辑界面已加载，正在等待当前对话的工程连接。' : '正在载入素材、预览和时间线，请稍候。'
+        : state.state === 'launching' || state.state === 'running' ? '本机服务正在启动，随后会加载当前对话的剪辑工程。' : '正在检查组件与服务连接，请稍候。';
+      return { title, message, state: 'loading', ...(slowLoading && !busy ? { onRetry: open, retryLabel: '重试连接' } : {}) };
+    }
+    if (busyAction === 'status') return { title: '正在检查剪辑工具状态', message: '正在读取本机服务和当前工程的连接状态。', state: 'loading' };
+    return null;
+  }
+  function renderLoading(target, details, layout) {
+    if (!target) return;
+    target.hidden = !details;
+    if (details) api()?.renderModuleLoadingState?.(target, { ...details, layout });
+    else api()?.clearModuleLoadingState?.(target);
+  }
+  function syncLoadingClock(details) {
+    if (details?.state === 'loading' && !panel?.hidden) {
+      if (!loadingTimer && !slowLoading) loadingTimer = setTimeout(() => { loadingTimer = null; slowLoading = true; render(); }, 8000);
+    } else {
+      clearTimeout(loadingTimer); loadingTimer = null; slowLoading = false;
+    }
+  }
+  function watchFrame(target) {
+    const generation = ++frameGeneration, expectedUrl = frameUrl;
+    clearTimeout(editorDeadline);
+    const current = () => !destroyed && frame === target && target.isConnected && generation === frameGeneration && validEditorUrl(target.src) === expectedUrl;
+    target.onload = () => {
+      if (!current()) return;
+      documentLoaded = true; panel.dataset.editorLoaded = 'true'; render();
+    };
+    target.onerror = () => {
+      if (!current()) return;
+      frameError = '剪辑界面加载失败。'; render();
+    };
+    if (!editorReady()) editorDeadline = setTimeout(() => {
+      if (!current() || editorReady()) return;
+      frameError = '剪辑界面迟迟未响应。请确认本机工具仍在运行。'; render();
+    }, 60_000);
+  }
   function request(action, extra = {}) {
     return new Promise((resolve, reject) => {
       if (typeof window.__AIYOUCODEX_OPENCHATCUT_REQUEST__ !== 'function') return reject(new Error('本机剪辑服务尚未连接，请稍后重试。'));
@@ -165,7 +219,7 @@
     if (error) return error;
     if (installing()) {
       const raw = typeof state.progress === 'number' ? state.progress : state.progress?.percent;
-      const p = Number.isFinite(raw) ? ` ${Math.round(raw <= 1 ? raw * 100 : raw)}%` : '';
+      const p = Number.isFinite(raw) ? ` ${Math.round(Math.max(0, Math.min(100, raw)))}%` : '';
       return `${state.message || '正在安装 OpenChatCut…'}${p}`;
     }
     return state.message || (state.installed ? `OpenChatCut ${state.version || ''} 已安装` : '尚未安装 OpenChatCut');
@@ -175,6 +229,8 @@
     for (const host of hosts) {
       const unavailable = state.supported === false && !state.installed;
       host.innerHTML = `<h3>${icon} OpenChatCut 剪辑</h3><p>对话剪辑与右侧时间线同步。首次使用下载官方桌面组件，之后在本机运行。</p><p role="status" aria-live="polite" data-occ-setting-status>${escape(statusText())}</p><div class="occ-actions"><button type="button" data-occ-install ${state.installed || unavailable || busy || installing() ? 'disabled' : ''}>${installing() ? '正在安装…' : state.installed ? '已安装' : unavailable ? '请手动安装' : ['error', 'failed'].includes(state.state) ? '重试安装' : '一键下载安装'}</button><button type="button" data-occ-open ${busy || installing() || unavailable ? 'disabled' : ''}>打开剪辑工具</button><button type="button" data-occ-refresh ${busy ? 'disabled' : ''}>刷新状态</button>${unavailable ? '<a href="https://github.com/0xsline/OpenChatCut/releases/latest" target="_blank" rel="noopener noreferrer">官方下载安装</a>' : ''}</div>`;
+      const loading = document.createElement('div'); loading.setAttribute('data-occ-setting-loading', ''); host.querySelector('[data-occ-setting-status]').after(loading);
+      renderLoading(loading, loadingDetails(), 'compact');
       host.querySelector('[data-occ-install]').onclick = () => act('install');
       host.querySelector('[data-occ-open]').onclick = open;
       host.querySelector('[data-occ-refresh]').onclick = () => act('status');
@@ -190,6 +246,10 @@
     return panel;
   }
   function bindPanel() {
+    const body = panel.querySelector('.occ-body');
+    if (!body.querySelector('[data-occ-loading]')) {
+      const loading = document.createElement('div'); loading.setAttribute('data-occ-loading', ''); loading.hidden = true; body.append(loading);
+    }
     const header = panel.querySelector('.occ-header');
     let stopButton = header.querySelector('[data-occ-stop]');
     if (!stopButton) {
@@ -205,7 +265,7 @@
     panel.querySelector('[data-occ-primary]').onclick = () => state.installed ? open() : act('install');
     panel.querySelector('[data-occ-retry]').onclick = () => act('status');
     panel.close = close;
-    if (frame) frame.onload = () => { panel.dataset.editorLoaded = 'true'; render(); };
+    if (frame) watchFrame(frame);
   }
   if (panel) bindPanel();
   function show({ visible = true, threadId = context().threadId } = {}) {
@@ -241,19 +301,16 @@
       frame.remove(); frame = null; frameUrl = '';
     }
     if (!url || url === frameUrl && frame?.isConnected) return;
-    if (frame?.isConnected && frameUrl && new URL(frameUrl).origin === new URL(url).origin
-      && new URL(frameUrl).pathname === new URL(url).pathname
-      && new URL(frameUrl).hash === new URL(url).hash) {
-      frame.src = url; frameUrl = url; return;
-    }
+    // A changed controlled address gets a new browsing context, so a queued
+    // readiness message from its previous document cannot settle this load.
     frame?.remove();
-    frame = document.createElement('iframe'); frame.title = 'OpenChatCut 实时编辑器'; frame.src = url;
+    frame = document.createElement('iframe'); frame.title = 'OpenChatCut 实时编辑器';
     frame.setAttribute('allow', 'clipboard-read; clipboard-write; autoplay; fullscreen');
     // Only the native bridge supplies the local editor URL. Provider keys and
     // the MCP bearer token never enter the view or the conversation.
     frame.referrerPolicy = 'no-referrer';
-    frame.onload = () => { panel.dataset.editorLoaded = 'true'; render(); };
-    panel.querySelector('.occ-body').append(frame); frameUrl = url;
+    frameUrl = url; documentLoaded = false; controlsReady = false; verifiedReady = false; frameError = '';
+    watchFrame(frame); frame.src = url; panel.querySelector('.occ-body').append(frame);
     panel.dataset.editorLoaded = 'false';
   }
   function render() {
@@ -270,8 +327,15 @@
     if (['stopping', 'stopped'].includes(state.state)) panel.querySelector('.occ-sync').textContent = error || state.message;
     const frameOwner = state.session?.threadId || state.threadId;
     if (frame) frame.hidden = Boolean(visibleThreadId && frameOwner && visibleThreadId !== frameOwner);
-    panel.dataset.occEditorView = String(Boolean(frame && !frame.hidden));
+    const ready = editorReady();
+    panel.dataset.editorReady = String(ready);
+    if (ready) { clearTimeout(editorDeadline); editorDeadline = null; }
+    const details = loadingDetails();
+    if (details) panel.querySelector('.occ-sync').textContent = details.title;
+    panel.dataset.occEditorView = String(Boolean(frame && !frame.hidden && ready && !details));
     panel.querySelector('.occ-welcome').hidden = Boolean(frame && !frame.hidden);
+    syncLoadingClock(details);
+    renderLoading(panel.querySelector('[data-occ-loading]'), panel.hidden ? null : details, 'panel');
     window[SETTINGS_KEY]?.refresh?.();
     syncHostControls();
   }
@@ -288,7 +352,7 @@
   const onHostAction = event => {
     const url = frame?.isConnected && validEditorUrl(frame.src);
     if (destroyed || !url || event.source !== frame.contentWindow || event.origin !== new URL(url).origin) return;
-    if (event.data?.type === 'aiyou-openchatcut:host-controls-ready') { syncHostControls(); return; }
+    if (event.data?.type === 'aiyou-openchatcut:host-controls-ready') { controlsReady = true; frameError = ''; render(); syncHostControls(); return; }
     if (event.data?.type !== 'aiyou-openchatcut:host-action' || panel?.hidden || frame.hidden) return;
     const selectors = { stop: '[data-occ-stop]', settings: '[data-occ-settings]', close: '[data-occ-close]', expand: '[data-aiyou-panel-expand]' };
     const selector = Object.hasOwn(selectors, event.data.action) && selectors[event.data.action];
@@ -300,6 +364,7 @@
     if (value.type === 'stopped' || value.state === 'stopped') {
       viewGeneration += 1; queuedOpen = null;
       frame?.remove(); frame = null; frameUrl = '';
+      frameGeneration += 1; documentLoaded = controlsReady = verifiedReady = false; frameError = ''; clearTimeout(editorDeadline); editorDeadline = null;
       if (panel) panel.dataset.editorLoaded = 'false';
       state = { ...state, ...value, editorUrl: null, toolName: null }; error = ''; render(); return;
     }
@@ -308,7 +373,7 @@
     const eventThread = value.threadId || value.session?.threadId;
     // An old open or a different conversation cannot replace the user's
     // visible editor while its current open is waiting for a response.
-    if (url && panel && !panel.hidden && visibleThreadId && eventThread
+    if (panel && !panel.hidden && visibleThreadId && eventThread
       && eventThread !== visibleThreadId && eventThread !== context().threadId) return;
     state = { ...state, ...value }; error = '';
     if (url) {
@@ -318,12 +383,16 @@
       const unrelatedVisible = !matches && panel && !panel.hidden && visibleThreadId && owner && visibleThreadId !== owner;
       if (!unrelatedVisible && (opening || panel && !panel.hidden)) { show({ visible: opening && matches && value.autoOpen !== false, threadId: owner }); setEditor(url, value); }
     }
+    if (frame && (!eventThread || eventThread === visibleThreadId) && (value.state === 'ready' || value.session?.connected === true)
+      && (!url || validEditorUrl(url) === frameUrl)) verifiedReady = true;
     render();
   }
   async function act(action, intent) {
     if (action === 'open') intent ||= { threadId: context().threadId, generation: viewGeneration };
     if (busy) { if (action === 'open') queuedOpen = intent; return; }
-    busy = true; error = ''; render();
+    busy = true; busyAction = action; error = '';
+    if (action === 'open') { frameError = ''; if (frame && !editorReady()) watchFrame(frame); }
+    render();
     try {
       const result = await request(action, intent ? { threadId: intent.threadId } : {});
       if (action === 'open' && (intent.generation !== viewGeneration || intent.threadId !== context().threadId || panel?.hidden)) return;
@@ -339,7 +408,7 @@
       }
     } catch (e) { if (!intent || intent.generation === viewGeneration && intent.threadId === context().threadId) error = e.message; }
     finally {
-      busy = false; render();
+      busy = false; busyAction = ''; render();
       const next = queuedOpen; queuedOpen = null;
       if (next && next.generation === viewGeneration && next.threadId === context().threadId && !panel?.hidden) void act('open', next);
     }
@@ -371,6 +440,8 @@
   function close() {
     viewGeneration += 1; queuedOpen = null;
     if (panel) { panel.hidden = true; panel.open = false; }
+    clearTimeout(loadingTimer); loadingTimer = null; slowLoading = false;
+    renderLoading(panel?.querySelector('[data-occ-loading]'), null, 'panel');
     // Keep the live editor mounted: closing a view must not interrupt an MCP
     // operation or discard staged edits.
     returnFocus?.focus?.({ preventScroll: true }); returnFocus = null;
@@ -387,6 +458,7 @@
   style.textContent = `#${ID}{display:flex;flex-direction:column;overflow:hidden!important;--codex-workspace-panel-width:760px}#${ID}[hidden]{display:none!important}#${ID} .occ-header{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--color-border-default,#8884);flex-shrink:0}#${ID} .occ-header strong{display:flex;align-items:center;gap:8px;white-space:nowrap}#${ID} svg,[data-aiyou-openchatcut-settings] svg{width:20px;height:20px;vertical-align:middle}#${ID} .occ-sync{font-size:11px;opacity:.65;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#${ID} button,[data-aiyou-openchatcut-settings] button{border:1px solid var(--color-border-default,#8885);border-radius:var(--aiyou-radius-button,8px);background:var(--color-background-panel,Canvas);color:inherit;padding:7px 12px;cursor:pointer}#${ID} button:disabled,[data-aiyou-openchatcut-settings] button:disabled{opacity:.55;cursor:default}#${ID} .occ-body{flex:1;min-height:0;position:relative}#${ID} iframe{display:block;width:100%;height:100%;border:0}#${ID} .occ-welcome{padding:36px 28px;max-width:460px;margin:0 auto;text-align:center}#${ID} .occ-welcome[hidden]{display:none}#${ID} .occ-welcome p{font-size:13px;line-height:1.7;opacity:.8}#${ID} .occ-mark svg{width:48px;height:48px;opacity:.7}#${ID} [data-occ-primary]{background:var(--color-text-primary,CanvasText);color:var(--color-background-panel,Canvas)}[data-aiyou-openchatcut-settings]{padding:8px 0 20px}[data-aiyou-openchatcut-settings] .occ-actions{display:flex;gap:8px;flex-wrap:wrap}`;
   document.head.append(style);
   style.textContent += `#${ID} iframe[hidden]{display:none}`;
+  style.textContent += `#${ID} [data-occ-loading]{position:absolute;inset:0;z-index:2;width:100%;max-width:none;min-height:180px;align-content:center;justify-items:center;background:var(--color-background-panel,Canvas);color:var(--color-text-primary,CanvasText)}#${ID} [data-occ-loading][hidden]{display:none!important}[data-aiyou-openchatcut-settings] [data-occ-setting-loading][hidden]{display:none!important}`;
   // Live editors use their native topbar. The welcome/install screen keeps
   // controls available when there is no editor document to host the actions.
   style.textContent += `#${ID}[data-occ-editor-view="true"]>.occ-header{display:none!important}`;
@@ -394,8 +466,8 @@
     destroyed = true;
     for (const r of requests.values()) { clearTimeout(r.timer); r.reject(new Error('剪辑视图重新连接。')); }
     requests.clear(); window.removeEventListener('message', onPanel); window.removeEventListener('message', onHostAction); panel?.remove(); style.remove();
-    clearInterval(routeTimer);
+    frameGeneration += 1; clearTimeout(loadingTimer); clearTimeout(editorDeadline); clearInterval(routeTimer);
   }
-  window[KEY] = Object.assign(retainedRuntime || {}, { version: RUNTIME_VERSION, open, close, stop, update, resolve, renderSettings, syncHostControls, onBridgeReady: () => act('status'), snapshot: () => ({ state }), destroy });
+  window[KEY] = Object.assign(retainedRuntime || {}, { version: RUNTIME_VERSION, open, close, stop, update, resolve, renderSettings, syncHostControls, onBridgeReady: () => act('status'), snapshot: () => ({ state, editor: { loaded: documentLoaded, ready: editorReady() } }), destroy });
   installModelSettings(window[KEY], { legacy: Boolean(retainedPanel) });
 })();

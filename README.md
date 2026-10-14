@@ -34,9 +34,21 @@ GitHub 开源地址：[https://github.com/yubowen123/AIYOUCODEX](https://github.
 
 查看[主题安装与配置](docs/THEMES.md)。本次新增控件通过隔离浏览器测试；上述旧原生截图和素材预览不代表新增控件的实机验收。
 
-当前发行版：**v1.6.0**。项目管理、Skills 分组、本地资产库、快捷入口设置及对应的 macOS/Windows 后台运行时会作为同一安装包更新，不需要分别安装。
+当前发行版：**v1.7.0**。项目管理、Skills 分组、本地资产库、快捷入口设置及对应的 macOS/Windows 后台运行时会作为同一安装包更新，不需要分别安装。
 
 v1.4.0 将菜单功能统一为不打断对话的右侧面板：可以直接在项目对话里搜索项目、Skills 或资产，并把 Skill 与本地资产安全预填到当前输入框，不会自动发送。
+
+### v1.7.0 · DeepSeek、搜索与加载体验
+
+原生模型菜单新增 **DeepSeek V4.1 Flash**，保留 GPT 与现有登录；同一对话可双向切换，长上下文按目标模型窗口处理。设置页支持保存自己的 DeepSeek API Key。自动接入目前限 macOS，更新后完整退出并从 AIYOUcodex 入口重开；Windows 尚未启用自动代理。[DeepSeek 使用说明](docs/DEEPSEEK.md)
+
+Skills 与资产库新增 **Laya / 普通搜索**切换；资产搜索按名称、标签与已有资料文本匹配，并显示命中摘要。多个面板补齐加载、慢连接与失败重试状态，保留已加载内容和未发送草稿；设置新增明确退出入口。海岛心动陪伴 **v1.0.2** 随包提供，视频声音默认关闭。
+
+[发行说明与验证范围](docs/RELEASE-v1.7.0.md) · [下载 v1.7.0](https://github.com/yubowen123/AIYOUCODEX/releases/tag/v1.7.0)
+
+<img src=".github/assets/20261014/aiyoucodex-v1.7.0-knowledge-card.png" alt="AIYOUcodex v1.7.0 更新知识卡片：GPT 与 DeepSeek、搜索和加载体验" width="720" />
+
+知识卡片由 Codex Image 生成，原图 **1086×1448 PNG**，图形为说明性插画。DeepSeek 桌面完整冷启动、Windows 原生接入与实际历史仍待实机确认。
 
 ### v1.6.0 · 工作区与对话剪辑
 

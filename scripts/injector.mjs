@@ -18,6 +18,8 @@ import {
   selectPersistentOwnerTargetId,
 } from "../lib/injector-state.mjs";
 import { createDesktopAppRuntime } from "../lib/desktop-runtime.mjs";
+import { createAppLifecycleController, APP_LIFECYCLE_BINDING } from "../lib/app-lifecycle.mjs";
+import { createDeepSeekSettingsController } from "../lib/deepseek-settings.mjs";
 import { readActiveTaskThreads } from "../lib/taskboard-status.mjs";
 import { isHostReplyIdle } from "../lib/host-reply-state.mjs";
 import { AssetConsoleBridge } from "../lib/asset-console-bridge.mjs";
@@ -32,9 +34,12 @@ import { createClaudeController, CLAUDE_BINDING } from "../lib/claude-code.mjs";
 import { RENDERER_HEALTH_EXPRESSION, acceptDocumentHealth, canReuseRenderer, recordUpdateFailure, rendererReadiness } from "../lib/renderer-health.mjs";
 import { createAgentWorkspace, AGENT_BINDING } from "../lib/agent-workspace.mjs";
 import { readOptionalThemeSource } from "../lib/theme-package.mjs";
-import { createLayaSearchController, LAYA_SEARCH_BINDING } from "../lib/laya-search.mjs";
+import { createLayaSearchController, LocalLayaRuntime, LAYA_SEARCH_BINDING } from "../lib/laya-search.mjs";
+import { createLayaDocumentSearch } from "../lib/laya-document-search.mjs";
+import { createSkillSearchController } from "../lib/skill-search.mjs";
 import { createOpenChatCutController } from "../lib/openchatcut-controller.mjs";
 import { createOpenChatCutInstaller } from "../lib/openchatcut-install.mjs";
+import { registerRendererSource, evaluateRendererSource, removeRendererScripts } from "../lib/renderer-source.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(root, "inject", "conversation-preview.user.js");
@@ -58,7 +63,10 @@ function parseArgs(argv) {
 const options = parseArgs(process.argv.slice(2));
 const repository = new PreviewRepository();
 const agentWorkspace = createAgentWorkspace();
-const layaSearchController = createLayaSearchController({ repository });
+const deepSeekSettingsController = createDeepSeekSettingsController();
+const localLayaRuntime = new LocalLayaRuntime();
+const layaSearchController = createLayaSearchController({ repository, runtime: localLayaRuntime });
+const layaLibrarySearch = createLayaDocumentSearch({ runtime: localLayaRuntime });
 const readResetNotice = createResetAnnouncementReader();
 const conversationFolders = createConversationFolders();
 const syncConversationFolders = createConversationFolderSync({ folders: conversationFolders, repository });
@@ -142,6 +150,7 @@ const skillProvenance = createSkillProvenanceIndex({ listSessions: async () => {
 let discoveryFailures = 0;
 const desktopAppRecovery = new DesktopAppRecovery();
 const desktopAppRuntime = createDesktopAppRuntime();
+const appLifecycleController = createAppLifecycleController({ desktopRuntime: desktopAppRuntime, port: options.port });
 let recoveryWaitSignature = '';
 let recoveryHost = null;
 const assetConsoleOptions = {
@@ -169,19 +178,37 @@ async function disposeRendererSession(session, { destroy = false } = {}) {
   session.agentBridge?.dispose();
   session.layaSearchBridge?.dispose();
   session.openChatCutBridge?.dispose();
+  session.appLifecycleBridge?.dispose();
+  session.deepSeekSettingsBridge?.dispose();
   session.client.close();
   session.deliveredHistoryKey = "";
 }
 
 async function attachTarget(target) {
-  const client = await connectCodexTarget(target);
+  const client = await connectCodexTarget(target).catch(error => { error.rendererPhase = "connect"; throw error; });
+  let rendererPhase = "prepare";
   const assetConsoleBridge = createAssetConsoleBridge();
   const efficiencyController = createEfficiencyController({ repository, conversationFolders,
     readActiveContext: () => readActiveConversationContext({ client }),
     executeContext: (payload) => executeConfirmedContext({ client, ...payload }) });
   const efficiencyBridge = new EfficiencyBridge(efficiencyController);
-  const layaSearchBridge = new EfficiencyBridge(layaSearchController, { binding: LAYA_SEARCH_BINDING,
-    resolver: "resolveLayaSearchRequest", publicErrorCodes: ["LAYA_SEARCH_ERROR"], fallbackError: "Laya 检索未完成，普通搜索仍可使用。" });
+  const appLifecycleBridge = new EfficiencyBridge(appLifecycleController, {
+    binding: APP_LIFECYCLE_BINDING, resolver: "resolveAppLifecycleRequest",
+    publicErrorCodes: ["APP_EXIT_ERROR"], fallbackError: "退出未完成，请稍后重试。",
+  });
+  const deepSeekSettingsBridge = new EfficiencyBridge(deepSeekSettingsController, {
+    binding: "__AIYOUCODEX_DEEPSEEK_SETTINGS_REQUEST__", resolver: "resolveDeepSeekSettingsRequest",
+    publicErrorCodes: ["DEEPSEEK_SETTINGS_ERROR"], fallbackError: "DeepSeek 设置尚未确认保存，请刷新状态后核对。",
+  });
+  const skillSearchController = createSkillSearchController({ runtime: localLayaRuntime, search: layaLibrarySearch,
+    readCatalog: async () => {
+      const active = await readActiveConversationContext({ client });
+      const record = active?.threadId ? await repository.resolveEfficiencyThread(active.threadId) : null;
+      return readCachedSkillCatalog(record?.projectPath || "");
+    } });
+  const layaSearchBridge = new EfficiencyBridge({ request: payload => payload.action === "search-skills"
+    ? skillSearchController.request(payload) : layaSearchController.request(payload) }, { binding: LAYA_SEARCH_BINDING,
+    resolver: "resolveLayaSearchRequest", publicErrorCodes: ["LAYA_SEARCH_ERROR"], actionPayloadLimits: { "search-skills": 750000 }, fallbackError: "Laya 检索未完成，普通搜索仍可使用。" });
   const skillOrganizationController = createSkillOrganizationController({ store: skillOrganizationStore, trace: skillProvenance.trace, readCatalog: async ({ refresh = false } = {}) => {
     const active = await readActiveConversationContext({ client });
     const record = active?.threadId ? await repository.resolveEfficiencyThread(active.threadId) : null;
@@ -210,11 +237,10 @@ async function attachTarget(target) {
     publicErrorCodes: ["OPENCHATCUT_ERROR", "OPENCHATCUT_INSTALL_REQUIRED", "OPENCHATCUT_INSTALL_UNSUPPORTED", "OPENCHATCUT_THREAD_REQUIRED", "OPENCHATCUT_TARGET_CHANGED", "OPENCHATCUT_EDITOR_NOT_READY", "OPENCHATCUT_BINDING_ERROR", "OPENCHATCUT_PROJECT_ERROR", "OPENCHATCUT_PROJECT_MISMATCH", "OPENCHATCUT_REVIEW_PENDING", "OPENCHATCUT_RECOVERY_REQUIRED", "OPENCHATCUT_STOPPING", "OPENCHATCUT_STOPPED", "OPENCHATCUT_STOP_FAILED", "OPENCHATCUT_BACKGROUND_RUNTIME_FAILED", "OPENCHATCUT_APP_EXITED", "OPENCHATCUT_LAUNCH_FAILED", "OPENCHATCUT_STARTUP_TIMEOUT"], fallbackError: "OpenChatCut 尚未确认连接，请刷新安装与连接状态。" });
   try {
     // New-document registration must be enabled on this exact CDP connection.
+    rendererPhase = "page-enable";
     await client.send("Page.enable");
+    rendererPhase = "script-identity";
     const oldIdentifier = await client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] || null`);
-    if (oldIdentifier) {
-      try { await client.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: oldIdentifier }); } catch {}
-    }
     const [baseSource, claudeSource, managedShortcuts] = await Promise.all([
       readFile(sourcePath, "utf8"),
       readFile(claudeSourcePath, "utf8"),
@@ -228,21 +254,45 @@ async function attachTarget(target) {
     const userSource = baseSource + "\n" + claudeSource + "\n" + await readFile(agentSourcePath, "utf8") + "\n" + await readFile(openChatCutSourcePath, "utf8") + "\n" + await readOptionalThemeSource(root);
     const sourceHash = createHash("sha256").update(userSource).update(JSON.stringify(managedShortcuts)).digest("hex");
     const rendererSource = `if (window.top === window) { window.__CODEX_SIDEBAR_RENDERER_TARGET_ID__ = ${JSON.stringify(target.id)}; window.__CODEX_SIDEBAR_MANAGED_SHORTCUTS__ = ${JSON.stringify(managedShortcuts)}; ${userSource}\n window.__AIYOUCODEX_RUNTIME_SOURCE_HASH__ = ${JSON.stringify(sourceHash)}; }`;
+    rendererPhase = "renderer-health";
     const snapshot = await client.evaluate(RENDERER_HEALTH_EXPRESSION);
-    const registered = await client.send("Page.addScriptToEvaluateOnNewDocument", { source: rendererSource });
+    rendererPhase = "new-document-register";
+    const registered = await registerRendererSource(client, rendererSource);
     // Reconnect to the same document without destroying its mounted/parked pages.
-    if (!canReuseRenderer(snapshot, sourceHash)) await client.evaluate(rendererSource);
-    await client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] = ${JSON.stringify(registered.identifier)}`);
+    rendererPhase = "source-evaluate";
+    if (!canReuseRenderer(snapshot, sourceHash)) await evaluateRendererSource(client, rendererSource);
+    // Keep the previous preload intact until the replacement registered and
+    // executed successfully. Both legacy single IDs and new batches are valid.
+    // Preload IDs are scoped to the CDP connection and can be reused after
+    // reconnecting. Never remove a newly registered script with a reused ID.
+    await removeRendererScripts(client, oldIdentifier, { except: registered });
+    rendererPhase = "script-identity";
+    await client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] = ${JSON.stringify(registered)}`);
+    rendererPhase = "assetConsoleBridge";
     await assetConsoleBridge.install(client);
+    rendererPhase = "efficiencyBridge";
     await efficiencyBridge.install(client);
+    rendererPhase = "layaSearchBridge";
     await layaSearchBridge.install(client);
+    rendererPhase = "skillOrganizationBridge";
     await skillOrganizationBridge.install(client);
+    rendererPhase = "resetMonitorBridge";
     await resetMonitorBridge.install(client);
+    rendererPhase = "claudeBridge";
     await claudeBridge.install(client);
+    rendererPhase = "agentBridge";
     await agentBridge.install(client);
+    rendererPhase = "openChatCutBridge";
     await openChatCutBridge.install(client);
+    rendererPhase = "appLifecycleBridge";
+    await appLifecycleBridge.install(client);
+    rendererPhase = "deepSeekSettingsBridge";
+    await deepSeekSettingsBridge.install(client);
+    rendererPhase = "bridge-ready";
     await client.evaluate("window.__aiyouClaudeInjection__?.onBridgeReady?.();true");
+    rendererPhase = "bridge-ready";
     await client.evaluate("window.__aiyouAgentWorkspace__?.onBridgeReady?.();true");
+    rendererPhase = "bridge-ready";
     await client.evaluate("window.__aiyouOpenChatCut__?.onBridgeReady?.();true");
     process.stdout.write(`[${new Date().toISOString()}] Codex conversation preview attached to renderer ${target.id}\n`);
     const session = {
@@ -258,19 +308,25 @@ async function attachTarget(target) {
       claudeBridge,
       agentBridge,
       openChatCutBridge,
-      registeredScriptIdentifier: registered.identifier,
+      appLifecycleBridge,
+      deepSeekSettingsBridge,
+      registeredScriptIdentifier: registered,
       deliveredHistoryKey: "",
       persistentShortcutIds: managedShortcuts
         .filter((shortcut) => shortcut.openMode === "internal" && shortcut.keepAlive === true)
         .map((shortcut) => shortcut.id),
       persistentShortcutReady: new Set(),
     };
+    rendererPhase = "renderer-health";
     acceptDocumentHealth(session, await client.evaluate(RENDERER_HEALTH_EXPRESSION));
     session.bridgeDocumentEpoch = session.documentEpoch;
     return session;
   } catch (error) {
+    error.rendererPhase ||= rendererPhase;
     await assetConsoleBridge.dispose().catch(() => {});
     efficiencyBridge.dispose();
+    appLifecycleBridge.dispose();
+    deepSeekSettingsBridge.dispose();
     layaSearchBridge.dispose();
     skillOrganizationBridge.dispose();
     resetMonitorBridge.dispose();
@@ -335,6 +391,7 @@ async function reconcileTargets() {
       await disposeRendererSession(session).catch(() => {});
     }
   }
+  if (targets.length) await appLifecycleController.observeRunningHost().catch(() => {});
   const reconciliation = await reconcileRendererSessions({
     targets,
     discoveryAvailable,
@@ -353,6 +410,8 @@ async function reconcileTargets() {
         if (alive && session.bridgeDocumentEpoch !== session.documentEpoch) {
           await session.assetConsoleBridge.install(session.client);
           await session.layaSearchBridge.install(session.client);
+          await session.appLifecycleBridge.install(session.client);
+          await session.deepSeekSettingsBridge.install(session.client);
           session.bridgeDocumentEpoch = session.documentEpoch;
         }
         if (alive) {
@@ -377,6 +436,10 @@ async function reconcileTargets() {
       && process.env.CODEX_SIDEBAR_ALLOW_HOST_RESTART === "1") {
     let app = null;
     try { app = await desktopAppRuntime.readProcess(); } catch {}
+    if (!appLifecycleController.shouldRecover(app)) {
+      desktopAppRecovery.next({ targetAvailable: true, app: null });
+      return reconciliation;
+    }
     if (app && recoveryHost?.pid !== app.pid) {
       recoveryHost = {pid: app.pid, startedAt: await desktopAppRuntime.readStartedAt(app)};
     }
@@ -576,7 +639,7 @@ try {
     try {
       const reconciliation = await reconcileTargets();
       for (const failure of reconciliation.errors) {
-        process.stderr.write(`[renderer ${failure.targetId}] ${failure.phase} failed: ${failure.error?.message || failure.error}\n`);
+        process.stderr.write(`[renderer ${failure.targetId}] ${failure.phase} failed${failure.error?.rendererPhase ? ` at ${failure.error.rendererPhase}` : ""}: ${failure.error?.message || failure.error}\n`);
       }
       const persistentOwner = await persistentShortcutOwnerSession();
       if (persistentOwner) {

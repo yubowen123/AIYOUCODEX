@@ -47,6 +47,8 @@ test("Windows public installer creates a user-local runtime and login shortcuts"
       await access(path.join(installDir, "node_modules", "smol-toml", "package.json"));
     }
     for (const relative of [
+      path.join("models", "deepseek-flash.json"),
+      path.join("scripts", "deepseek-auth.mjs"),
       ...["index.html", "app.js", "style.css"].map(name => path.join("model-arena", "public", name)),
       ...["catalog", "providers", "local-extension", "media", "service", "http"].map(name => path.join("lib", "model-arena", `${name}.mjs`)),
     ]) {

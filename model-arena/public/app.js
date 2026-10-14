@@ -9,7 +9,7 @@
   const mediaUrl = item => new URL(item.mediaUrl, API).href;
   const localUrl = value => new URL(String(value).replace(/^\/+/, ""), ROOT).href;
   let state, view = "generate", mode = "video", selected = new Set(), selectedByMode = { video: new Set(), image: new Set() }, assetIds = [], preview, busy = false, visible = true, lastError = "";
-  let pickerMode = "library", nextOffset = 0, pickerGeneration = 0, urlAsset = "";
+  let pickerMode = "library", nextOffset = 0, pickerGeneration = 0, urlAsset = "", initializeGeneration = 0, refreshGeneration = 0, refreshPending = false, loadingGeneration = 0;
   const familyNames = { seedance: "Seedance 系列", wan: "Wan 3.0", h3: "MiniMax H3", "openai-image": "OpenAI 图片", "dashscope-image": "阿里云百炼图片", "ark-image": "火山方舟图片", "google-image": "Google Imagen", "stability-image": "Stability AI", "bfl-image": "Black Forest Labs" };
   const stateLabels = { queued: "准备中", uploading: "上传参考素材", submitting: "正在提交", submit_unknown: "提交结果待核对", running: "生成中", downloading: "保存结果", succeeded: "已完成", failed: "失败", download_failed: "下载待恢复", poll_paused: "查询已暂停" };
   const modelsForMode = () => mode === "image" ? (state.imageModels || state.models.filter(model => model.kind === "image" || model.type === "image")) : state.models.filter(model => !model.kind || model.kind === "video");
@@ -19,10 +19,37 @@
   const modelProtocol = model => state.protocols[familyConfig(model).protocol]?.name || familyConfig(model).protocol || "未配置通道";
   const options = (values, current, label = x => x) => values.map(value => `<option value="${esc(value)}" ${value === current ? "selected" : ""}>${esc(label(value))}</option>`).join("");
   async function request(route, method = "GET", body) {
-    const response = await fetch(new URL(route, API), { method, headers: body === undefined ? {} : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
-    const value = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(value.error || `请求失败 ${response.status}`); return value;
+    const timeout = method === "GET" ? AbortSignal.timeout(45000) : undefined;
+    try {
+      const response = await fetch(new URL(route, API), { signal: timeout, method, headers: body === undefined ? {} : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+      const value = await response.json().catch(error => { if (timeout?.aborted) throw error; return {}; });
+      if (!response.ok) throw new Error(value.error || `请求失败 ${response.status}`); return value;
+    } catch (error) { if (timeout?.aborted) throw new Error("读取超时，请检查本机服务后重新读取"); throw error; }
   }
+  function loadingMarkup(title, detail = "", retry = "") {
+    return `<div class="aiyou-loading-art" aria-hidden="true"><span class="aiyou-loading-fill"></span><span class="aiyou-loading-glyph">◇</span></div><div class="aiyou-loading-copy"><strong>${esc(title)}</strong><p>${esc(detail)}</p><span class="aiyou-loading-track" aria-hidden="true"><i></i></span>${retry ? `<button type="button" data-loading-retry="${esc(retry)}">重新读取</button>` : ""}</div>`;
+  }
+  function setArenaLoading(phase, title = "", detail = "") {
+    const generation = ++loadingGeneration;
+    const host = $("arena-loading");
+    host.hidden = !phase; host.classList.toggle("compact", Boolean(state)); host.classList.toggle("is-error", phase === "error");
+    host.setAttribute("role", phase === "error" ? "alert" : "status"); host.setAttribute("aria-busy", String(Boolean(phase && phase !== "error")));
+    if (phase) host.innerHTML = loadingMarkup(title, detail, phase === "error" && state ? "state" : "");
+    return generation;
+  }
+  window.addEventListener("message", event => {
+    if (event.source !== window.parent || !["app://-", "null"].includes(event.origin) || event.data?.type !== "aiyoucodex:theme-state") return;
+    const motion = event.data.preferences?.motion;
+    if (typeof motion === "boolean") document.documentElement.dataset.aiyouMotion = motion ? "on" : "off";
+  });
+  document.addEventListener("click", event => {
+    const button = event.target.closest("[data-loading-retry]");
+    if (!button || button.disabled) return;
+    const kind = button.dataset.loadingRetry;
+    if (kind === "state") action(button, () => refresh(true));
+    else if (kind === "library") searchLibrary();
+    else if (kind === "projects") $("library-open").click();
+  });
   function notice(message, error = false) { $("notice").textContent = message; $("notice").classList.toggle("error", error); $("notice").hidden = !message; }
   async function action(button, work) {
     if (button.disabled) return; button.disabled = true;
@@ -229,21 +256,38 @@
   async function searchLibrary(append = false) {
     if (pickerMode !== "library") return; const generation = ++pickerGeneration;
     const query = new URLSearchParams({ project: $("library-project").value, kind: $("library-kind").value, query: $("library-query").value, limit: "48", offset: String(append ? nextOffset : 0) });
-    if (!append) $("library-list").innerHTML = '<div class="empty">读取资产索引…</div>';
-    try { const response = await fetch(new URL(`api/library?${query}`, ROOT)); const result = await response.json(); if (!response.ok) throw new Error(result.error || "资产库读取失败");
+    let loading = $("picker-loading");
+    if (!loading) { loading = document.createElement("div"); loading.id = "picker-loading"; loading.className = "aiyou-module-loading compact"; $("library-list").before(loading); }
+    loading.hidden = false; loading.classList.remove("is-error"); loading.setAttribute("role", "status"); loading.setAttribute("aria-busy", "true");
+    loading.innerHTML = loadingMarkup(append ? "正在读取下一组素材" : "正在读取资产索引", "现有素材仍可浏览，完成后会更新列表。");
+    $("library-list").setAttribute("aria-busy", "true");
+    try { const response = await fetch(new URL(`api/library?${query}`, ROOT), { signal: AbortSignal.timeout(45000) }); const result = await response.json(); if (!response.ok) throw new Error(result.error || "资产库读取失败");
       if (generation !== pickerGeneration || pickerMode !== "library") return;
       const html = (result.assets || []).map(a => pickerRow(a)).join("") || '<div class="empty">当前筛选没有素材</div>';
       if (append) $("library-list").insertAdjacentHTML("beforeend", html); else $("library-list").innerHTML = html;
       nextOffset = result.page?.nextOffset || 0; $("library-more").hidden = !result.page?.hasMore;
-    } catch (error) { if (generation === pickerGeneration) $("library-list").textContent = error.message; }
+      loading.hidden = true; $("library-list").setAttribute("aria-busy", "false");
+    } catch (error) { if (generation === pickerGeneration && pickerMode === "library") {
+      loading.classList.add("is-error"); loading.setAttribute("role", "alert"); loading.setAttribute("aria-busy", "false");
+      loading.innerHTML = loadingMarkup("素材读取失败", error.message, "library"); $("library-list").setAttribute("aria-busy", "false");
+    } }
   }
   $("library-open").onclick = event => action(event.currentTarget, async () => {
     pickerMode = "library"; $("picker-title").textContent = "资产控制台 · 选择参考素材"; document.querySelector(".picker-filters").hidden = false;
-    const response = await fetch(new URL("api/projects", ROOT)); const result = await response.json(); if (!response.ok) throw new Error(result.error || "无法读取项目");
+    const generation = ++pickerGeneration;
+    $("library-dialog").showModal(); $("library-list").innerHTML = `<div class="aiyou-module-loading" role="status" aria-busy="true">${loadingMarkup("正在读取项目列表", "正在连接本机资产管理，请稍候。")}</div>`;
+    const previousLoading = $("picker-loading"); if (previousLoading) previousLoading.hidden = true;
+    try {
+    const response = await fetch(new URL("api/projects", ROOT), { signal: AbortSignal.timeout(45000) }); const result = await response.json(); if (!response.ok) throw new Error(result.error || "无法读取项目");
+    if (generation !== pickerGeneration || pickerMode !== "library" || !$("library-dialog").open) return;
     $("library-project").innerHTML = (result.projects || []).map(p => `<option value="${esc(p.id)}">${esc(p.name || p.label || p.id)}</option>`).join("");
-    $("library-dialog").showModal(); if (result.projects?.length) await searchLibrary(); else $("library-list").innerHTML = '<div class="empty">请先在资产控制台关联项目文件夹。</div>';
+    $("library-list").replaceChildren(); if (result.projects?.length) await searchLibrary(); else $("library-list").innerHTML = '<div class="empty">请先在资产控制台关联项目文件夹。</div>';
+    } catch (error) { if (generation !== pickerGeneration || !$("library-dialog").open) return;
+      $("library-list").innerHTML = `<div class="aiyou-module-loading is-error" role="alert">${loadingMarkup("项目列表读取失败", error.message, "projects")}</div>`;
+    }
   });
-  $("recent-open").onclick = () => { pickerGeneration++; pickerMode = "recent"; $("picker-title").textContent = "已导入本机的素材"; document.querySelector(".picker-filters").hidden = true; $("library-more").hidden = true;
+  $("library-dialog").addEventListener("close", () => { pickerGeneration++; if ($("picker-loading")) $("picker-loading").hidden = true; });
+  $("recent-open").onclick = () => { pickerGeneration++; pickerMode = "recent"; if ($("picker-loading")) $("picker-loading").hidden = true; $("picker-title").textContent = "已导入本机的素材"; document.querySelector(".picker-filters").hidden = true; $("library-more").hidden = true;
     $("library-list").innerHTML = state.assets.slice().reverse().map(a => pickerRow(a, true)).join("") || '<div class="empty">还没有导入素材</div>'; $("library-dialog").showModal(); };
   $("library-search").onclick = () => searchLibrary(); $("library-more").onclick = () => searchLibrary(true);
   for (const id of ["library-project", "library-kind"]) $(id).onchange = () => searchLibrary();
@@ -301,19 +345,35 @@
   };
   document.addEventListener("play", event => { if (!(event.target instanceof HTMLMediaElement)) return; document.querySelectorAll("video,audio").forEach(media => { if (media !== event.target) media.pause(); }); }, true);
   new IntersectionObserver(entries => { visible = entries.some(entry => entry.isIntersecting); if (!visible) document.querySelectorAll("video,audio").forEach(media => media.pause()); }).observe(document.querySelector("main"));
-  async function refresh() {
-    const incoming = await request("state"); if (!state) state = incoming;
+  async function refresh(showLoading = false) {
+    const generation = ++refreshGeneration; refreshPending = true;
+    const loading = showLoading ? setArenaLoading("state", "正在读取竞技场记录", "正在同步任务记录与素材信息，当前页面仍可浏览。") : 0;
+    let incoming;
+    try { incoming = await request("state"); }
+    catch (error) { if (generation === refreshGeneration) refreshPending = false; if (generation === refreshGeneration && showLoading && loading === loadingGeneration) setArenaLoading("error", "竞技场记录读取失败", error.message); throw error; }
+    if (generation !== refreshGeneration) return;
+    refreshPending = false;
+    if (!state) state = incoming;
     else { const merged = new Map([...state.runs, ...incoming.runs].map(run => [run.id, run])); state.runs = [...merged.values()].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)); state.runPage = incoming.runPage; incoming.assets.forEach(mergeAsset); }
     if (view === "results") renderRuns();
+    if (showLoading && loading === loadingGeneration) setArenaLoading(null);
   }
-  $("refresh").onclick = event => action(event.currentTarget, refresh);
-  $("runs-more").onclick = event => action(event.currentTarget, async () => { const next = await request(`state?offset=${state.runs.length}`);
-    for (const run of next.runs) if (!state.runs.some(r => r.id === run.id)) state.runs.push(run); state.runPage = next.runPage; renderRuns(); });
+  $("refresh").onclick = event => action(event.currentTarget, () => refresh(true));
+  $("runs-more").onclick = event => action(event.currentTarget, async () => {
+    const loading = setArenaLoading("page", "正在读取更多竞技记录", "已加载的记录仍可浏览，请稍候。");
+    try { const next = await request(`state?offset=${state.runs.length}`);
+      for (const run of next.runs) if (!state.runs.some(r => r.id === run.id)) state.runs.push(run); state.runPage = next.runPage; renderRuns();
+      if (loading === loadingGeneration) setArenaLoading(null);
+    } catch (error) { if (loading === loadingGeneration) setArenaLoading("error", "竞技记录读取失败", error.message); throw error; }
+  });
   document.querySelectorAll("[data-view]").forEach(button => { button.onclick = () => showView(button.dataset.view); });
   $("config-button").onclick = () => { if (!state) return; renderConfig(); showView("config"); };
   async function initialize() {
-    $("config-button").disabled = true;
+    const generation = ++initializeGeneration;
+    $("config-button").disabled = true; $("retry-connect").hidden = true;
+    const loading = setArenaLoading("config", "正在连接模型竞技场", "正在读取模型目录、本机配置与已有任务记录，请稍候。");
     try { await refresh();
+    if (generation !== initializeGeneration) return;
     let saved; try { saved = JSON.parse(localStorage.getItem(DRAFT_KEY)); } catch {}
     mode = saved?.mode === "image" ? "image" : "video";
     selectedByMode = { video: new Set(saved?.selectedByMode?.video || []), image: new Set(saved?.selectedByMode?.image || []) };
@@ -323,11 +383,12 @@
     if (threadTitle) $("draft-hint").textContent = `关联对话：${threadTitle} · 草稿保存在本机`;
     renderConfig(); switchMode(mode); if (saved?.ratio && Array.from($("ratio").options).some(o => o.value === saved.ratio)) $("ratio").value = saved.ratio;
     showView("generate");
-    $("retry-connect").hidden = true; $("config-button").disabled = false; notice("");
-    } catch (error) { notice("模型竞技场无法连接本机服务：" + error.message, true); $("retry-connect").hidden = false; }
+    $("retry-connect").hidden = true; $("config-button").disabled = false; if (loading === loadingGeneration) setArenaLoading(null); notice("");
+    } catch (error) { if (generation !== initializeGeneration) return; if (loading === loadingGeneration) setArenaLoading("error", "模型竞技场暂不可用", error.message); notice("模型竞技场无法连接本机服务：" + error.message, true); $("retry-connect").hidden = false; }
   }
   $("retry-connect").onclick = event => action(event.currentTarget, initialize);
+  if (window.parent !== window) window.parent.postMessage({ type: "aiyoucodex:module-ready", module: "arena", loadingKey: new URL(location.href).searchParams.get("aiyou_loading_key") }, "*");
   initialize();
-  setInterval(() => { if (!state || !visible || document.hidden || view !== "results") return;
+  setInterval(() => { if (!state || refreshPending || !visible || document.hidden || view !== "results") return;
     refresh().then(() => { lastError = ""; }).catch(error => { if (lastError !== error.message) notice(error.message, true); lastError = error.message; }); }, 5000);
 })();

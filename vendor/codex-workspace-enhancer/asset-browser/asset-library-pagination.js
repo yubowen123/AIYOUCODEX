@@ -3,6 +3,13 @@ const kinds = ["text", "image", "audio", "video"];
 const groups = ["asset", "review", "noise"];
 const nameCollator = new Intl.Collator("zh-CN", { numeric: true });
 
+export function cleanAssetSearchSnippet(value) {
+  if (typeof value !== 'string') return '';
+  const normalized = value.replace(/[\u0000-\u001f\u007f-\u009f]/gu, ' ')
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gu, '').replace(/\s+/gu, ' ').trim();
+  return Array.from(normalized).slice(0, 300).join('');
+}
+
 export function normalizeLibraryPage(filters = {}) {
   const requestedOffset = Math.floor(Number(filters.offset));
   return {
@@ -12,7 +19,8 @@ export function normalizeLibraryPage(filters = {}) {
     smartGroup: groups.includes(filters.smartGroup) ? filters.smartGroup : "",
     category: String(filters.category || ""),
     query: String(filters.query || "").trim().toLocaleLowerCase("zh-CN"),
-    sort: ["oldest", "name", "size", "largest"].includes(filters.sort) ? filters.sort : "newest",
+    searchMode: filters.searchMode === 'laya' ? 'laya' : 'keyword',
+    sort: ["relevance", "oldest", "name", "size", "largest"].includes(filters.sort) ? filters.sort : "newest",
     related: filters.related !== false && filters.related !== "0",
     characterId: String(filters.characterId || ""),
   };
@@ -32,15 +40,18 @@ function compareAssets(sort) {
 export class AssetLibraryPager {
   constructor({ maxEntries = 4 } = {}) { this.cache = new Map(); this.maxEntries = maxEntries; }
 
-  page({ projectId, assets, revision, filters = {}, projectAsset = (asset) => asset }) {
+  page({ projectId, assets, revision, filters = {}, searchResult, projectAsset = (asset) => asset }) {
     const options = normalizeLibraryPage(filters);
+    const activeSearch = options.query ? searchResult : null;
     const { offset, limit, ...selection } = options;
-    const key = JSON.stringify([projectId, revision, selection]);
+    const key = JSON.stringify([projectId, revision, selection, activeSearch?.key || '']);
     for (const [oldKey, old] of this.cache) {
       if (old.projectId === projectId && old.revision !== revision) this.cache.delete(oldKey);
     }
     let selected = this.cache.get(key);
     if (!selected) {
+      const ranks = activeSearch ? new Map(activeSearch.results.map((result, index) => [String(result.id), index])) : null;
+      const snippets = activeSearch ? new Map(activeSearch.results.map(result => [String(result.id), result.snippet])) : null;
       const counts = { all: 0, text: 0, image: 0, audio: 0, video: 0 };
       const smartCounts = { asset: 0, review: 0, noise: 0 };
       const categoryCounts = Object.create(null);
@@ -54,12 +65,13 @@ export class AssetLibraryPager {
         if (asset.category) categoryCounts[asset.category] = (categoryCounts[asset.category] || 0) + 1;
         if (options.category && asset.category !== options.category) continue;
         if (options.characterId && asset.character?.groupId !== options.characterId) continue;
-        if (options.query && ![asset.name, asset.title, asset.preview, asset.category, asset.character?.name, asset.character?.state, asset.character?.style, ...(asset.tags || []), ...(asset.autoTags || [])].join(" ").toLocaleLowerCase("zh-CN").includes(options.query)) continue;
+        if (ranks ? !ranks.has(String(asset.id)) : options.query && ![asset.name, asset.title, asset.preview, asset.category, asset.character?.name, asset.character?.state, asset.character?.style, ...(asset.tags || []), ...(asset.autoTags || [])].join(" ").toLocaleLowerCase("zh-CN").includes(options.query)) continue;
         matching.push(asset);
       }
-      matching.sort(compareAssets(options.sort));
+      const compare = compareAssets(options.sort);
+      matching.sort(options.sort === 'relevance' && ranks ? (a, b) => ranks.get(String(a.id)) - ranks.get(String(b.id)) || compare(a, b) : compare);
       if (options.related) matching = keepCharacterFamiliesAdjacent(matching);
-      selected = { projectId, revision, total: assets.length, matching, counts, smartCounts, categoryCounts };
+      selected = { projectId, revision, total: assets.length, matching, counts, smartCounts, categoryCounts, snippets };
       this.cache.set(key, selected);
       while (this.cache.size > this.maxEntries) this.cache.delete(this.cache.keys().next().value);
     } else {
@@ -67,7 +79,13 @@ export class AssetLibraryPager {
       this.cache.set(key, selected);
     }
     const filteredTotal = selected.matching.length;
-    const pageAssets = selected.matching.slice(offset, offset + limit).map(projectAsset);
+    const pageAssets = selected.matching.slice(offset, offset + limit).map(asset => {
+      const projected = projectAsset(asset);
+      const snippet = cleanAssetSearchSnippet(selected.snippets?.get(String(asset.id)));
+      if (snippet) return { ...projected, searchSnippet: snippet };
+      if (Object.hasOwn(projected, 'searchSnippet')) { const { searchSnippet: _oldSnippet, ...clean } = projected; return clean; }
+      return projected;
+    });
     return {
       assets: pageAssets,
       total: selected.total,
@@ -75,6 +93,7 @@ export class AssetLibraryPager {
       counts: { ...selected.counts },
       smartCounts: { ...selected.smartCounts },
       categoryCounts: { ...selected.categoryCounts },
+      ...(activeSearch ? { search: activeSearch.info } : {}),
       page: { offset, limit, hasMore: offset + pageAssets.length < filteredTotal, nextOffset: offset + pageAssets.length < filteredTotal ? offset + pageAssets.length : null },
     };
   }
