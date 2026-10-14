@@ -171,6 +171,11 @@ test("production attach and delivery survive CDP reconnect; real document reload
   await waitForBrowserState(inspect, "!document.querySelector('[data-aiyou-app-quit]').disabled&&document.querySelector('[data-aiyou-app-message]').textContent.includes('可重试')", "Failed exit permits retry");
   assert.equal(await inspect.evaluate("document.querySelector('[data-aiyou-enhancement-disable]').disabled"), false, 'A canceled exit also restores the independent plugin control');
   await clickExit();
+  // Browser input acknowledgement precedes delivery of the async binding event.
+  // Wait for the actual controller request, rather than assuming the CDP reply
+  // means Node has already received it on a separate connection.
+  const exitDeadline = Date.now() + 3000;
+  while (exitRequests.length < 2 && Date.now() < exitDeadline) await delay(10);
   assert.deepEqual(exitRequests, ["quit", "quit"]);
   releaseExitResponse.resolve({ closed: true });
   await waitForBrowserState(inspect, "document.querySelector('[data-aiyou-app-message]').textContent==='应用已退出。'", "Successful exit acknowledgement");
