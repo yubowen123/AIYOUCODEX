@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import {fileURLToPath} from 'node:url';
 import { MODELS, IMAGE_MODELS, PROTOCOLS, defaults } from '../lib/model-arena/catalog.mjs';
 import { connectFixtureBrowser, waitForBrowserState } from './helpers/browser-state.mjs';
 
@@ -45,7 +46,7 @@ async function fixture(t, publicRoot, api) {
   const take=async(predicate)=>{ for(let i=0;i<240;i++){const index=pending.findIndex(predicate);if(index>=0)return pending.splice(index,1)[0];await new Promise(r=>setTimeout(r,25));}assert.fail('Expected fixture request was not made');};
   return {client,wait,take,pending,methods};
 }
-const publicRoot=new URL('../vendor/codex-workspace-enhancer/asset-browser/public/',import.meta.url).pathname;
+const publicRoot=fileURLToPath(new URL('../vendor/codex-workspace-enhancer/asset-browser/public/',import.meta.url));
 const project={id:'fixture',name:'测试资产项目',folders:[]};
 const config={system:{platform:'darwin',name:'macOS'},assetManager:{columns:4,tags:[],taxonomy:{}}};
 const asset=(id='fixture-text')=>({id,name:'角色设定.md',title:'角色设定',kind:'text',extension:'MD',preview:'人物设定资料',category:'文档',smartGroup:'asset',tags:[],autoTags:[],size:120,mtimeMs:1,confidence:100});
@@ -103,7 +104,7 @@ test('asset page: bootstrap, retained cards, read-only error recovery, document 
 });
 
 test('model arena: config loading, honest failure and user read retry, empty configuration, theme motion and picker stages', {timeout:30000}, async t=>{
-  const f=await fixture(t,new URL('../model-arena/public/',import.meta.url).pathname);
+  const f=await fixture(t,fileURLToPath(new URL('../model-arena/public/',import.meta.url)));
   const evaluate=e=>f.client.evaluate(e);
   assert.equal(await evaluate("document.getElementById('arena-loading').hidden"),false);
   (await f.take(x=>x.url.pathname==='/api/arena/state')).resolve({error:'本机服务启动中'},503);
