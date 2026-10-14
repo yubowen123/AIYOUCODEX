@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "storageKey": "aiyoucodex.theme.island-affection.v1",
+  "defaults": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "motion": true,
+    "alpha": {
+      "overall": 1,
+      "chrome": 0.86,
+      "sidebar": 0.8,
+      "chat": 0,
+      "panel": 0.9,
+      "card": 0.94,
+      "message": 0.94,
+      "composer": 0.94,
+      "control": 0.9,
+      "menu": 0.98,
+      "text": 1,
+      "border": 0.65,
+      "shadow": 1,
+      "decoration": 0.15,
+      "image": 0.48,
+      "composer-area": 0
+    },
+    "colors": {
+      "primary": "#183047",
+      "secondary": "#3e5266",
+      "link": "#215d82",
+      "success": "#345e54",
+      "danger": "#a03d47",
+      "warning": "#8c5030",
+      "inverse": "#fffaf6"
+    },
+    "background": {
+      "fit": "cover",
+      "x": 50,
+      "y": 50,
+      "type": "video",
+      "source": "builtin",
+      "custom": null,
+      "customStates": {}
+    },
+    "audio": {
+      "enabled": false,
+      "volume": 0.35
+    },
+    "playback": {
+      "autoCycle": true
+    }
+  },
+  "defaultReadability": {
+    "minimum": 4.99,
+    "passes": true
+  },
+  "source": "createThemeCustomization"
+}

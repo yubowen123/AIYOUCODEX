@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "island-affection",
+  "language": "海盐蓝、象牙白与花粉色，固定机位第一视角的海岛陪伴",
+  "radius": {
+    "control": 18,
+    "card": 16,
+    "message": 16,
+    "dialog": 20,
+    "composer": 24,
+    "shell": 16
+  },
+  "spacing": {
+    "unit": 4,
+    "stack": 10,
+    "message-x": 14,
+    "message-y": 12
+  },
+  "borders": {
+    "width": 1,
+    "focusWidth": 2
+  },
+  "typography": {
+    "family": "system-ui, -apple-system, BlinkMacSystemFont, PingFang SC, sans-serif",
+    "bodySizePolicy": "inherit-host",
+    "bodyLineHeight": 1.65,
+    "brand": "assets/wordmark.svg"
+  },
+  "elevation": {
+    "message": "inset 0 1px 1px #ffffffcc,0 3px 10px #234a681a",
+    "card": "inset 0 1px 1px #ffffffcc,0 8px 20px #234a6820",
+    "dialog": "inset 0 1px 1px #ffffffdd,0 14px 36px #234a6830"
+  },
+  "motion": {
+    "hoverMs": 140,
+    "eventRateLimitMs": 900,
+    "decorateOnly": true,
+    "reducedMotion": "poster",
+    "confirmedSendOnly": true
+  },
+  "content": {
+    "messageTextOpacity": 1,
+    "messageBackgroundAlpha": 0.94,
+    "mediaOpacityMaximum": 0.48,
+    "preserveMediaPixels": true
+  },
+  "invariants": [
+    "no-business-action",
+    "no-hit-interception",
+    "no-structure-replacement",
+    "default-theme-fallback"
+  ]
+}

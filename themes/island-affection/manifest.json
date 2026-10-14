@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "id": "island-affection",
+  "name": "海岛心动陪伴",
+  "version": "1.0.2",
+  "renderer": "aiyoucodex-theme-v1",
+  "palette": "colors.json",
+  "design": "design.json",
+  "controls": "controls.json",
+  "poster": "assets/poster.png",
+  "decorations": {},
+  "motion": {
+    "enter": {
+      "file": "assets/static-fallback.png",
+      "durationMs": 5000,
+      "loop": false
+    },
+    "click": {
+      "file": "assets/static-fallback.png",
+      "durationMs": 5000,
+      "loop": false
+    },
+    "send": {
+      "file": "assets/static-fallback.png",
+      "durationMs": 5000,
+      "loop": false
+    },
+    "running": {
+      "file": "assets/static-fallback.png",
+      "durationMs": 5000,
+      "loop": true
+    },
+    "complete": {
+      "file": "assets/static-fallback.png",
+      "durationMs": 5000,
+      "loop": false
+    },
+    "error": {
+      "file": "assets/static-fallback.png",
+      "durationMs": 5000,
+      "loop": false
+    }
+  },
+  "defaults": {
+    "enabled": true,
+    "motion": true,
+    "backgroundType": "video",
+    "backgroundOpacity": 0.48,
+    "playback": {
+      "autoCycle": true
+    }
+  },
+  "limits": {
+    "maxAssetBytes": 10000000,
+    "maxBundleBytes": 20000000
+  },
+  "events": {
+    "chatEntry": "enter",
+    "interaction": "click",
+    "sendAccepted": "send",
+    "running": "running",
+    "completed-unread": "complete",
+    "error": "error",
+    "read": "poster"
+  },
+  "background": {
+    "defaultType": "video",
+    "image": "assets/poster.png",
+    "videos": {
+      "poster": "assets/continuous.mp4",
+      "enter": "assets/idle.mp4",
+      "click": "assets/idle.mp4",
+      "send": "assets/idle.mp4",
+      "running": "assets/idle.mp4",
+      "complete": "assets/idle.mp4",
+      "error": "assets/idle.mp4"
+    }
+  },
+  "sound": {
+    "defaultEnabled": false,
+    "defaultVolume": 0.35
+  },
+  "captions": {
+    "enter": "我在这里等你哦",
+    "click": "记得想我呦",
+    "send": "给你一个亲亲",
+    "complete": "今天也最喜欢你啦",
+    "error": "我在这里等你哦"
+  },
+  "description": "720p 连续四种动作与表白，去除叠化重影，声音默认关闭。",
+  "continuousPlayback": {
+    "durationFrames": 421,
+    "fps": 24,
+    "source": "poster",
+    "phases": [
+      {
+        "start": 0,
+        "end": 3.9166666666666665,
+        "event": "enter"
+      },
+      {
+        "start": 3.9166666666666665,
+        "end": 8.416666666666666,
+        "event": "click"
+      },
+      {
+        "start": 8.416666666666666,
+        "end": 13.125,
+        "event": "send"
+      },
+      {
+        "start": 13.125,
+        "end": 17.541666666666668,
+        "event": "complete"
+      }
+    ],
+    "captions": [
+      {
+        "start": 1.1,
+        "end": 3.15,
+        "text": "我在这里等你哦"
+      },
+      {
+        "start": 5.65,
+        "end": 7.65,
+        "text": "记得想我呦"
+      },
+      {
+        "start": 9.8,
+        "end": 11.85,
+        "text": "给你一个亲亲"
+      },
+      {
+        "start": 14.6,
+        "end": 16.9,
+        "text": "今天也最喜欢你啦"
+      }
+    ]
+  }
+}

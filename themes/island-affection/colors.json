@@ -1,0 +1,162 @@
+{
+  "schemaVersion": 1,
+  "mode": "light",
+  "primitives": {
+    "sky-50": "#edf5fb",
+    "sky-100": "#e0edf5",
+    "ivory-25": "#fffaf6",
+    "ink-900": "#183047",
+    "ink-650": "#3e5266",
+    "mist-300": "#aabccc",
+    "rose-700": "#934267",
+    "rose-500": "#a44f78",
+    "sea-700": "#215d82",
+    "leaf-700": "#345e54",
+    "error-700": "#a03d47",
+    "sand-700": "#8c5030",
+    "user-100": "#e4effb",
+    "sea-500": "#4387aa",
+    "leaf-500": "#4f8b7a",
+    "error-500": "#bc5b65",
+    "white": "#ffffff"
+  },
+  "semantic": {
+    "bg": "sky-50",
+    "surface": "sky-100",
+    "elevated": "ivory-25",
+    "text": "ink-900",
+    "muted": "ink-650",
+    "border": "mist-300",
+    "accent": "rose-700",
+    "running": "sea-700",
+    "complete": "leaf-700",
+    "error": "error-700",
+    "user-bg": "user-100",
+    "brand": "rose-500",
+    "running-outline": "sea-500",
+    "complete-outline": "leaf-500",
+    "error-outline": "error-500"
+  },
+  "pairs": [
+    {
+      "role": "body",
+      "foreground": "text",
+      "background": "bg",
+      "minimum": 7
+    },
+    {
+      "role": "panel-body",
+      "foreground": "text",
+      "background": "elevated",
+      "minimum": 7
+    },
+    {
+      "role": "secondary",
+      "foreground": "muted",
+      "background": "elevated",
+      "minimum": 4.5
+    },
+    {
+      "role": "placeholder",
+      "foreground": "muted",
+      "background": "elevated",
+      "minimum": 4.5
+    },
+    {
+      "role": "timestamp",
+      "foreground": "muted",
+      "background": "bg",
+      "minimum": 4.5
+    },
+    {
+      "role": "link",
+      "foreground": "running",
+      "background": "elevated",
+      "minimum": 4.5
+    },
+    {
+      "role": "success",
+      "foreground": "complete",
+      "background": "elevated",
+      "minimum": 4.5
+    },
+    {
+      "role": "error",
+      "foreground": "error",
+      "background": "elevated",
+      "minimum": 4.5
+    },
+    {
+      "role": "warning",
+      "foreground": "accent",
+      "background": "elevated",
+      "minimum": 4.5
+    },
+    {
+      "role": "user-message",
+      "foreground": "text",
+      "background": "user-bg",
+      "minimum": 4.5,
+      "translucent": true
+    },
+    {
+      "role": "assistant-message",
+      "foreground": "text",
+      "background": "elevated",
+      "minimum": 7,
+      "translucent": true
+    },
+    {
+      "role": "message-link",
+      "foreground": "running",
+      "background": "elevated",
+      "minimum": 4.5,
+      "translucent": true
+    },
+    {
+      "role": "accent-button",
+      "foreground": "elevated",
+      "background": "accent",
+      "minimum": 4.5
+    },
+    {
+      "role": "error-button",
+      "foreground": "elevated",
+      "background": "error",
+      "minimum": 4.5
+    }
+  ],
+  "contexts": [
+    "Codex",
+    "Dot",
+    "Claude",
+    "menus",
+    "inputs",
+    "tool-results",
+    "assets",
+    "arena",
+    "taskboard",
+    "settings",
+    "dialogs",
+    "permissions",
+    "notifications",
+    "search",
+    "skills",
+    "mcp",
+    "terminal",
+    "diff",
+    "media-controls"
+  ],
+  "dynamicBackground": {
+    "textSurfaceMustBeOpaque": false,
+    "textSurfaceAlpha": 0.94,
+    "textOpacity": 1,
+    "imageOpacityMaximum": 0.48
+  },
+  "states": {
+    "running": "running-outline",
+    "completed-unread": "complete-outline",
+    "error": "error-outline",
+    "read": "border"
+  }
+}
