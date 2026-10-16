@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { enhancementStatePath, isEnhancementEnabled, setEnhancementEnabled, createEnhancementController } from '../lib/enhancement-state.mjs';
 import { createInstallPlan } from '../lib/install-config.mjs';
 
@@ -56,7 +57,7 @@ test('state lives outside replaceable installs on both supported platforms', () 
 test('macOS login preserves pause; explicit launcher resumes without quitting native Codex', { skip: process.platform !== 'darwin' }, async t => {
   const dir = await mkdtemp(path.join(process.env.AIYOU_TEST_OUTPUT || os.tmpdir(), 'enhancement-launch-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const root = path.resolve(new URL('..', import.meta.url).pathname);
+  const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
   const file = path.join(dir, 'state.json'), log = path.join(dir, 'commands');
   const plan = createInstallPlan({ home: dir, installDir: root });
   await mkdir(plan.launchAgentsDir, { recursive: true });
