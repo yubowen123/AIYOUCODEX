@@ -197,8 +197,91 @@ test("Dot and Claude real clicks: folded process, preserved answers and approval
   await waitForBrowserState(client,"window.__aiyouClaudeInjection__.getState().pending===0","Bridge readiness recovers pending reads without waiting for timeout");
   assert.equal(await client.evaluate("window.__calls.filter(p=>p.action==='send').length"),1,"Reconnect never repeats a message send");
   assert.equal(await client.evaluate("window.__calls.filter(p=>p.action==='persona-save').length"),1,"Reconnect never repeats a profile write");
+  // New hosts render Dot only in Work mode. Claude remains reachable in Codex;
+  // a user Dot click delegates to the real mode selector and profile row.
+  await client.evaluate(`(()=>{
+    const original=document.querySelector('[data-sidebar-destination="builtin:orbit"]');original.remove();
+    const header=document.createElement('div');header.className='_header_mode_fixture';
+    const mode=document.createElement('button');mode.setAttribute('aria-label','切换模式，当前模式：Codex');header.append(mode);
+    document.querySelector('#app-shell-sidebar nav').prepend(header);
+    mode.__reactFiberFixture={memoizedProps:{mode:'codex',onModeSelect(next){window.__modeSelections=(window.__modeSelections||0)+1;window.__selectedMode=next;
+      header.hidden=true;
+      const workHeader=document.createElement('div');workHeader.className='_header_work_fixture';
+      const workMode=document.createElement('button');workMode.setAttribute('aria-label','切换模式，当前模式：ChatGPT');workHeader.append(workMode);
+      workMode.__reactFiberFixture={memoizedProps:{mode:'work',onModeSelect(){}}};
+      document.querySelector('#app-shell-sidebar nav').append(workHeader);
+      window.__aiyouClaudeInjection__.refresh();
+      window.__visibleWorkLaunchers=!!workHeader.querySelector('#aiyoucodex-agent-launchers')&&document.querySelector('#aiyoucodex-agent-launchers').getBoundingClientRect().height>0;
+      setTimeout(()=>{original.setAttribute('data-sidebar-destination','builtin:orbit:profile-1');document.querySelector('#native-actions').append(original);window.__aiyouClaudeInjection__.refresh();},50);}}};
+    window.__aiyouClaudeInjection__.refresh();
+  })()`);
+  await waitForBrowserState(client,"document.querySelectorAll('#aiyoucodex-agent-launchers button').length===2&&document.querySelector('._header_mode_fixture #aiyoucodex-agent-launchers')!==null","Codex mode keeps both launchers without a native Dot row");
+  await click('[data-aiyou-claude]');
+  await waitForBrowserState(client,"!document.querySelector('#aiyoucodex-claude-panel').hidden&&window.__aiyouClaudeInjection__.getState().pending===0","Claude opens independently of Dot availability");
+  await click('[data-aiyou-dot]');
+  await waitForBrowserState(client,"window.__dotClicks===3&&window.__selectedMode==='work'","Dot forwards through native Work mode to its profile-specific destination");
+  assert.equal(await client.evaluate("window.__modeSelections"),1,"No automatic mode change during mounting or refresh");
+  assert.equal(await client.evaluate("window.__visibleWorkLaunchers"),true,"Mode switch moves launchers to the active header while the old Codex header remains hidden in the same sidebar");
+  await client.evaluate(`(()=>{document.querySelector('[data-sidebar-destination^="builtin:orbit"]').remove();window.__aiyouClaudeInjection__.refresh();})()`);
+  assert.ok(await client.evaluate("document.querySelector('._header_work_fixture #aiyoucodex-agent-launchers').getBoundingClientRect().height>0"),"Work mode retains visible launchers even without a Dot profile");
+  await click('[data-aiyou-claude]');
+  await waitForBrowserState(client,"!document.querySelector('#aiyoucodex-claude-panel').hidden&&window.__aiyouClaudeInjection__.getState().pending===0","Claude remains operable after product switching");
+  await client.evaluate(`(()=>{window.__aiyouClaudeInjection__.close();document.querySelector('._header_work_fixture').hidden=true;document.querySelector('._header_mode_fixture').hidden=false;window.__aiyouClaudeInjection__.refresh();})()`);
+  assert.ok(await client.evaluate("document.querySelector('._header_mode_fixture #aiyoucodex-agent-launchers').getBoundingClientRect().height>0"),"Switching back restores launchers to the visible Codex header");
+  await client.evaluate("window.__aiyouClaudeInjection__.refresh();window.__aiyouClaudeInjection__.refresh()");
+  assert.equal(await client.evaluate("document.querySelectorAll('#aiyoucodex-agent-launchers').length"),1,"Mode redraw never duplicates the launchers");
+  assert.equal(await client.evaluate("document.querySelector('#native-draft').value"),"Codex 输入不能改变");
+  await client.evaluate(`(()=>{
+    const mode=document.querySelector('._header_mode_fixture button');let fiber=mode.__reactFiberFixture;
+    for(let i=0;i<180;i++){fiber.return={memoizedProps:{}};fiber=fiber.return;}
+    window.__dotRouter={navigateToLocalConversation(){},navigate(path){window.__dotRoutes=(window.__dotRoutes||[]).concat(path);return new Promise(resolve=>setTimeout(()=>{window.__dotRouter.pathname=path;window.__dotNavigationSettled=true;resolve();},100));}};
+    fiber.memoizedProps={value:{router:{navigate(){window.__outerRouterCalled=true;}}}};
+    const root=document.getElementById('root')||document.body.appendChild(Object.assign(document.createElement('div'),{id:'root'}));
+    window.__aiyouNativeDotNavigationAdapter__={atom:{scope:{id:'native-dot'},resolve:()=>null},homePath:'/dots/home'};
+    root.__reactContainerDotFixture={memoizedProps:{value:new Map([['native-dot',{store:{get:()=>window.__dotRouter}}]])}};
+  })()`);
+  await click('[data-aiyou-dot]');await click('[data-aiyou-dot]');
+  await waitForBrowserState(client,"window.__dotNavigationSettled===true","Dot uses the native router without waiting for an absent menu row");
+  assert.deepEqual(await client.evaluate("window.__dotRoutes"),['/dots/home'],"Repeated clicks do not duplicate native navigation");
+  assert.equal(await client.evaluate("!!window.__outerRouterCalled"),false,"The outer wildcard router must never substitute for the product-scoped native navigation controller");
+  assert.equal(await client.evaluate("window.__modeSelections"),1,"Direct Dot navigation does not merely switch product mode");
+  const primaryDot = '88888888-8888-4888-8888-888888888888';
+  await client.evaluate(`(()=>{
+    const queries=[{queryKey:['primary-aeon','account-a','user-a'],state:{status:'success',data:{selection:{available:true,thread_id:${JSON.stringify(primaryDot)},aeon_id:'profile-a'}}}},
+      {queryKey:['cloud-aeon-by-thread','account-a','user-a',${JSON.stringify(primaryDot)}],state:{status:'success',data:{id:'profile-a',status:'active'}}},
+      {queryKey:['primary-aeon','account-b','user-b'],state:{status:'success',data:{selection:{available:true,thread_id:'99999999-9999-4999-8999-999999999999',aeon_id:'profile-b'}}}},
+      {queryKey:['cloud-aeon-by-thread','wrong-account','user-b','99999999-9999-4999-8999-999999999999'],state:{status:'success',data:{id:'profile-b',status:'active'}}}];
+    document.getElementById('root').__reactContainerDotFixture.child={memoizedProps:{queryClient:{getQueryCache:()=>({getAll:()=>queries})}}};
+    window.__dotRouter.navigate=(path,options)=>{window.__primaryDotRequest={path,options};window.__dotRouter.pathname=path;return true;};
+  })()`);
+  await click('[data-aiyou-dot]');
+  await waitForBrowserState(client,"window.__aiyouClaudeInjection__.getState().dotNavigation.phase==='opened'&&!!window.__primaryDotRequest","Existing active Dot profile opens without generic-home initialization");
+  assert.deepEqual(await client.evaluate("window.__primaryDotRequest"),{path:`/dots/${primaryDot}`,options:{state:{orbitPrewarmThreadId:primaryDot}}},"Only a matching account's active primary profile supplies the target and native prewarm state");
+  await client.evaluate(`(()=>{
+    window.__dotUser={userID:'user-a',appVersion:'26.fixture',locale:'zh-CN',customIDs:{account_id:'account-a',stableID:'stable-a'},custom:{auth_method:'chatgpt',brand_name:'codex',codex_build_flavor:'prod',codex_app_session_id:'session-a',systemName:'macOS',systemVersion:'26',codex_window_type:'electron',desktop_app_beta_enabled:false}};
+    window.__dotGates=false;window.__bootstrapReads=0;
+    window.__dotSdk={loadingStatus:'Ready',getContext:()=>({user:window.__dotUser}),getFeatureGate:()=>({value:window.__dotGates}),dataAdapter:{setData(raw){window.__bootstrapPayload=JSON.parse(raw)}},updateUserSync(user){window.__dotUser=user;window.__dotGates=window.__bootstrapPayload.feature_gates.enabled;return{success:true}}};
+    const adapter=window.__aiyouNativeDotNavigationAdapter__;
+    adapter.sdkAtom={scope:{id:'dot-sdk'},resolve:()=>null};
+    adapter.bootstrapApi={async safePost(){window.__bootstrapReads++;await new Promise(r=>setTimeout(r,100));return{statsigPayload:JSON.stringify({user:{...window.__dotUser,custom:{...window.__dotUser.custom,serverEnriched:true}},feature_gates:{enabled:true}})}}};
+    document.getElementById('root').__reactContainerDotFixture.memoizedProps.value.set('dot-sdk',{store:{get:()=>window.__dotSdk}});
+    window.__dotRouter.navigate=(path)=>{window.__navigationSawRestoredGate=window.__dotGates;window.__dotRouter.pathname=path;window.__recoveredDotPath=path;return true};
+    const queries=document.getElementById('root').__reactContainerDotFixture.child.memoizedProps.queryClient.getQueryCache().getAll();
+    queries.find(q=>q.queryKey[0]==='cloud-aeon-by-thread'&&q.state.data.id==='profile-b').queryKey[1]='account-b';
+  })()`);
+  await click('[data-aiyou-dot]');await click('[data-aiyou-dot]');
+  await waitForBrowserState(client,"window.__aiyouClaudeInjection__.getState().dotRecovery.phase==='recovered'&&window.__navigationSawRestoredGate===true","Dot repairs failed bootstrap before navigating");
+  assert.equal(await client.evaluate("window.__bootstrapReads"),1,"Concurrent clicks share a single official bootstrap request");
+  assert.equal(await client.evaluate("window.__dotUser.custom.serverEnriched"),true,"Full official targeting identity survives recovery");
+  assert.equal(await client.evaluate("window.__recoveredDotPath"),`/dots/${primaryDot}`,"Another account's complete cached profile never displaces the current account's primary Dot");
+  assert.equal(await client.evaluate("document.querySelector('#native-draft').value"),"Codex 输入不能改变");
+  await client.evaluate("window.__dotRouter.navigate=async()=>{throw Error('Native router unavailable')}");
+  await click('[data-aiyou-dot]');
+  await waitForBrowserState(client,"document.querySelector('#aiyoucodex-dot-status')?.textContent.includes('导航失败')","Native navigation errors are visible instead of silent");
+  assert.equal(await client.evaluate("document.querySelector('#native-draft').value"),"Codex 输入不能改变");
+  await click('[data-aiyou-claude]');
+  await waitForBrowserState(client,"!document.querySelector('#aiyoucodex-claude-panel').hidden&&window.__aiyouClaudeInjection__.getState().pending===0","Claude remains usable after Dot navigation fails");
   await client.evaluate("window.__codexConversationPreviewInjection__.destroy()");
   assert.equal(await client.evaluate("document.querySelectorAll('#aiyoucodex-agent-launchers,#aiyoucodex-claude-panel').length"), 0);
-  assert.ok(await client.evaluate("document.querySelector('[data-sidebar-destination=\"builtin:orbit\"]').getBoundingClientRect().height>0"));
   if(process.env.AIYOUCODEX_RENDERER_EVIDENCE_DIR)await writeFile(path.join(process.env.AIYOUCODEX_RENDERER_EVIDENCE_DIR,'claude-process-result.json'),JSON.stringify({checkedAt:new Date().toISOString(),pass:true,fixtureOnly:true,nativeVisualAccepted:false,checks:['tools/progress/thinking grouped and collapsed by default','pre-call narration folded; final answer visible','pointer expands details','streaming redraw preserves expanded state','explicit error visible; new groups collapsed','permission and Auto acknowledgement remain visible and actionable','questions and business choices clickable, even before tool record','hot update retains process expansion, session and unsent draft','no replay of send or persona write','native Dot forwarding and independent draft preserved']},null,2)+'\n');
 });
