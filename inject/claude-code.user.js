@@ -17,6 +17,9 @@
   let slashItems = [], slashIndex = 0, slashSignature = "", slashDismissed = null, localCommandBusy = false;
   let persona = { name: "Claude Code", logo: "", description: "", revision: 0 }, logoDraft = "", logoLoading = false;
   const dotHeaders = new Set();
+  let dotOpening = false;
+  let dotNavigation = { phase: "idle" };
+  let dotRecovery = { phase: "idle" }, dotRecoveryPending, dotRecoveryAt = 0, dotRecoveryTimer;
   const panelHosts = new Set();
   let personaLoaded = false, personaLoading = false, personaRetryAt = 0;
   const style = document.createElement("style");
@@ -209,29 +212,265 @@
   function nativeAvailable(node) {
     for (let parent = node; parent; parent = parent.parentElement) {
       if (parent.hasAttribute("data-aiyou-dot-source")) continue;
-      if (parent.matches('[data-app-shell-active-page="false"]') || parent.hidden || getComputedStyle(parent).display === "none") return false;
+      const style = getComputedStyle(parent);
+      if (parent.matches('[data-app-shell-active-page="false"]') || parent.hidden || style.display === "none" || ["hidden", "collapse"].includes(style.visibility)) return false;
     }
     return node.isConnected;
   }
+  function nativeDot() {
+    return Array.from(document.querySelectorAll('[data-sidebar-destination="builtin:orbit"], [data-sidebar-destination^="builtin:orbit:"]')).find(nativeAvailable) || null;
+  }
+  function launcherHost() {
+    const sidebar = Array.from(document.querySelectorAll('[id="app-shell-sidebar"]')).find(nativeAvailable);
+    if (!sidebar) return null;
+    // A single sidebar retains both product headers. After a mode switch the
+    // first matching header belongs to the concealed previous product.
+    const heading = Array.from(sidebar.querySelectorAll('button[aria-label^="切换模式"],button[aria-label^="Switch mode"]')).find(nativeAvailable);
+    const activeScroll = Array.from(sidebar.querySelectorAll('[data-app-action-sidebar-scroll]')).find(nativeAvailable);
+    const header = heading?.closest('[class*="_header_"]') || activeScroll?.previousElementSibling;
+    return header && nativeAvailable(header) && !header.closest('[data-app-navigation-rail]') ? { header, heading } : null;
+  }
+  // Compatibility for older hosts that expose Dot only after a mode change.
+  function workModeAction(heading) {
+    let fiber = heading?.[Object.keys(heading || {}).find(key => key.startsWith("__reactFiber"))];
+    for (let depth = 0; fiber && depth < 64; depth++, fiber = fiber.return) {
+      const props = fiber.memoizedProps;
+      if (typeof props?.onModeSelect === "function" && ["codex", "work"].includes(props.mode) && !props.disabled) return props;
+    }
+    return null;
+  }
+  async function recoverDotBootstrap({ client, api, isCurrent = () => true }) {
+    const names = ["codex-app-aeon-cloud-mode", "codex-app-aeon-cloud-mode-no-executor", "codex-app-side-orb-enabled"];
+    const available = () => names.some(name => client.getFeatureGate(name, { disableExposureLog: true }).value === true);
+    try {
+      if (!client?.getContext || !client?.dataAdapter?.setData || !client?.updateUserSync || !api?.safePost || client.loadingStatus !== "Ready") return { phase: "unsupported" };
+      if (available()) return { phase: "available" };
+      const user = client.getContext().user, custom = user?.custom;
+      const sameIdentity = value => !!user?.userID && !!user?.customIDs?.account_id
+        && value?.userID === user.userID && value?.customIDs?.account_id === user.customIDs.account_id;
+      if (custom?.auth_method !== "chatgpt" || !sameIdentity(user)) return { phase: "unsupported" };
+      const body = { app_session_id: custom.codex_app_session_id, app_version: user.appVersion,
+        brand_name: custom.brand_name, build_flavor: custom.codex_build_flavor, locale: user.locale,
+        stable_id: user.customIDs.stableID, system_name: custom.systemName, system_version: custom.systemVersion,
+        window_type: custom.codex_window_type, ...(custom.desktop_app_beta_enabled === true ? { desktop_app_beta_enabled: true } : {}) };
+      if (Object.values(body).some(value => typeof value !== "string" || !value)) return { phase: "unsupported" };
+      const result = await api.safePost("/wham/statsig/bootstrap", { requestBody: body, retry: false, signal: AbortSignal.timeout(10000) });
+      const payload = JSON.parse(result.statsigPayload);
+      if (!isCurrent() || !sameIdentity(client.getContext().user) || !sameIdentity(payload.user)
+        || payload.user.appVersion !== user.appVersion || payload.user.custom?.brand_name !== custom.brand_name
+        || payload.user.custom?.codex_build_flavor !== custom.codex_build_flavor) return { phase: "identity-changed" };
+      if (!payload.feature_gates || typeof payload.feature_gates !== "object") return { phase: "failed" };
+      // Reuse the real server bootstrap, including its enriched targeting identity.
+      // initializeSync() is a no-op on a Ready client; updateUserSync emits the
+      // native values_updated event without remounting the app or replaying work.
+      client.dataAdapter.setData(result.statsigPayload);
+      const applied = client.updateUserSync(payload.user, { disableBackgroundCacheRefresh: true });
+      if (applied?.success !== true) return { phase: "failed" };
+      return { phase: available() ? "recovered" : "disabled" };
+    } catch { return { phase: "failed" }; }
+  }
+  async function dotRouter() {
+    const key = "__aiyouNativeDotNavigationAdapter__";
+    let adapter = window[key];
+    if (adapter && !adapter.recoveryChecked && location.protocol === "app:") adapter = null;
+    if (!adapter) {
+      const url = [...document.querySelectorAll('link[rel="modulepreload"]')].map(link => link.href)
+        .concat(performance.getEntriesByType("resource").map(entry => entry.name))
+        .find(name => /^app:\/\/-\/assets\/app-shared-[a-f0-9]+\.js$/.test(name));
+      if (!url) return null;
+      const response = await fetch(url);
+      if (!response.ok) return null;
+      const source = await response.text();
+      // The product-scoped controller is distinct from the outer wildcard
+      // React router, whose navigate() does not open native product pages.
+      const defaults = source.match(/([\w$]+)=\{navigate:([\w$]+),navigateToLocalConversation:\2,prepareNavigation:\2\}/);
+      const symbol = defaults && source.match(new RegExp(`([\\w$]+)=[\\w$]+\\([\\w$]+,${defaults[1]}\\)`))?.[1];
+      const alias = symbol && source.match(new RegExp(`(?:^|[,;{}])${symbol} as ([\\w$]+)`))?.[1];
+      const home = source.match(/([\w$]+)=`\/dots`,[\w$]+=`\$\{\1\}\/start`,([\w$]+)=`\$\{\1\}\/home`/)?.[2];
+      const homeAlias = home && source.match(new RegExp(`(?:^|[,;{}])${home} as ([\\w$]+)`))?.[1];
+      if (!alias || !homeAlias) return null;
+      const module = await import(url), atom = module[alias], homePath = module[homeAlias];
+      if (typeof atom?.resolve !== "function" || !atom.scope?.id || typeof homePath !== "string" || !homePath.startsWith("/dots/")) return null;
+      adapter = window[key] = { atom, homePath, recoveryChecked: true };
+      try {
+        const sdkSymbol = source.match(/\(([\w$]+)\)\?\.getFeatureGate\(e,\{disableExposureLog/)?.[1];
+        const sdkAlias = sdkSymbol && source.match(new RegExp(`(?:^|[,;{}])${sdkSymbol} as ([\\w$]+)`))?.[1];
+        const initialUrl = [...document.querySelectorAll('link[rel="modulepreload"]')].map(link => link.href)
+          .find(name => /^app:\/\/-\/assets\/app-initial-[a-f0-9]+\.js$/.test(name));
+        if (sdkAlias && initialUrl) {
+          const response = await fetch(initialUrl), initial = response.ok ? await response.text() : "";
+          const apiSymbol = initial.match(/return ([\w$]+)\.safePost\(`\/wham\/statsig\/bootstrap`/)?.[1];
+          const apiAlias = apiSymbol && initial.match(new RegExp(`(?:[,{}])([\\w$]+) as ${apiSymbol}(?:[,}])`))?.[1];
+          if (module[sdkAlias]?.scope?.id && typeof module[apiAlias]?.safePost === "function") {
+            adapter.sdkAtom = module[sdkAlias]; adapter.bootstrapApi = module[apiAlias];
+          }
+        }
+      } catch { /* Unsupported hosts retain their existing native navigation. */ }
+    }
+    const root = document.getElementById("root");
+    const containerKey = root && Object.keys(root).find(key => key.startsWith("__reactContainer"));
+    const queue = containerKey ? [root[containerKey]] : [];
+    const queryClients = new Set();
+    let sdkClient;
+    let navigation = null;
+    for (let count = 0; queue.length && count < 800; count++) {
+      const fiber = queue.shift(), props = fiber?.memoizedProps, scopes = props?.value;
+      for (const client of [props?.queryClient, props?.client, props?.value]) {
+        if (typeof client?.getQueryCache === "function") queryClients.add(client);
+      }
+      const node = scopes instanceof Map && scopes.get(adapter.atom.scope.id);
+      const sdkNode = scopes instanceof Map && adapter.sdkAtom && scopes.get(adapter.sdkAtom.scope.id);
+      if (!sdkClient && sdkNode?.store) sdkClient = sdkNode.store.get(adapter.sdkAtom.resolve(sdkNode, scopes));
+      if (node?.store) {
+        const router = node.store.get(adapter.atom.resolve(node, scopes));
+        if (!navigation && typeof router?.navigate === "function" && typeof router?.navigateToLocalConversation === "function") navigation = { router, homePath: adapter.homePath };
+      }
+      if (fiber?.child) queue.push(fiber.child);
+      if (fiber?.sibling) queue.push(fiber.sibling);
+    }
+    if (!navigation) return null;
+    if (sdkClient && adapter.bootstrapApi) navigation.bootstrap = { client: sdkClient, api: adapter.bootstrapApi,
+      isCurrent: () => {
+        if (destroyed || window[key] !== adapter) return false;
+        const currentRoot = document.getElementById("root"), containerKey = currentRoot && Object.keys(currentRoot).find(name => name.startsWith("__reactContainer"));
+        const queue = containerKey ? [currentRoot[containerKey]] : [];
+        for (let i = 0; queue.length && i < 800; i++) {
+          const fiber = queue.shift(), scopes = fiber?.memoizedProps?.value;
+          const node = scopes instanceof Map && scopes.get(adapter.sdkAtom.scope.id);
+          if (node?.store) return node.store.get(adapter.sdkAtom.resolve(node, scopes)) === sdkClient;
+          if (fiber?.child) queue.push(fiber.child);
+          if (fiber?.sibling) queue.push(fiber.sibling);
+        }
+        return false;
+      } };
+    navigation.bootstrapFailed = [...queryClients].some(client => client.getMutationCache?.().getAll().some(mutation =>
+      mutation.state?.status === "error" && mutation.state.error?.failureType === "CODEX_POST_LOGIN_STATSIG_BOOTSTRAP_FAILURE_TYPE_REQUEST_FAILED"));
+    // Reuse only an already loaded, active primary Dot belonging to the same
+    // account partition. The generic home route can stall in creation/prewarm.
+    const primaryIds = new Set();
+    const activeUser = sdkClient?.getContext?.().user;
+    for (const client of queryClients) {
+      const queries = client.getQueryCache().getAll();
+      for (const query of queries) {
+        const key = query.queryKey, selection = query.state?.data?.selection;
+        if (activeUser && (key?.[1] !== activeUser.customIDs?.account_id || key?.[2] !== activeUser.userID)) continue;
+        if (key?.[0] !== "primary-aeon" || query.state?.status !== "success" || selection?.available !== true
+          || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(selection.thread_id || "")) continue;
+        if (queries.some(profile => profile.queryKey?.[0] === "cloud-aeon-by-thread"
+          && profile.queryKey[1] === key[1] && profile.queryKey[2] === key[2] && profile.queryKey[3] === selection.thread_id
+          && profile.state?.status === "success" && profile.state?.data?.status === "active"
+          && (!selection.aeon_id || profile.state.data.id === selection.aeon_id))) primaryIds.add(selection.thread_id);
+      }
+    }
+    if (primaryIds.size === 1) {
+      navigation.primaryThreadId = [...primaryIds][0];
+      navigation.targetPath = adapter.homePath.slice(0, adapter.homePath.lastIndexOf("/")) + "/" + encodeURIComponent(navigation.primaryThreadId);
+    }
+    return navigation;
+  }
+  async function recoverDotConfiguration(background = false) {
+    if (dotRecoveryPending) return dotRecoveryPending;
+    if (dotRecoveryAt && Date.now() - dotRecoveryAt < 30000) return dotRecovery;
+    dotRecoveryPending = (async () => {
+      try {
+        const navigation = await dotRouter();
+        if (!navigation?.bootstrap || destroyed) return dotRecovery;
+        if (background && !navigation.bootstrapFailed) return dotRecovery = { phase: "not-needed" };
+        dotRecoveryAt = Date.now(); dotRecovery = { phase: "refreshing" };
+        const bootstrap = navigation.bootstrap;
+        dotRecovery = await recoverDotBootstrap({ ...bootstrap, isCurrent: () => bootstrap.isCurrent()
+          && window.__aiyouNativeDotNavigationAdapter__?.sdkAtom != null });
+        return dotRecovery;
+      } catch { return dotRecovery = { phase: "failed" }; }
+      finally { dotRecoveryPending = null; }
+    })();
+    return dotRecoveryPending;
+  }
+  function scheduleDotRecovery(attempt = 0) {
+    dotRecoveryTimer = setTimeout(async () => {
+      if (destroyed) return;
+      await recoverDotConfiguration(true);
+      // The native bootstrap can take ten seconds before mounting its fallback.
+      // Wait for the scoped SDK to exist instead of missing that startup window.
+      if (!destroyed && dotRecovery.phase === "idle" && attempt < 15) scheduleDotRecovery(attempt + 1);
+    }, 2000);
+  }
+  function dotNotice(message = "") {
+    let notice = document.getElementById("aiyoucodex-dot-status");
+    if (!message) { notice?.remove(); return; }
+    if (!notice) { notice = document.createElement("div");notice.id="aiyoucodex-dot-status";notice.setAttribute("role","status"); }
+    notice.textContent = message;
+    notice.style.cssText="grid-column:1/-1;padding:8px 10px;border:1px solid var(--aiyou-border,#80808030);border-radius:10px;font-size:12px;line-height:1.5;color:var(--aiyou-text,CanvasText);background:var(--aiyou-surface,Canvas)";
+    row?.append(notice);
+  }
+  async function openDot() {
+    if (dotOpening) return;
+    close();dotNotice();
+    const host = launcherHost(), mode = workModeAction(host?.heading);
+    dotOpening = true;
+    dotNavigation = { phase: "resolving" };
+    try {
+      await recoverDotConfiguration();
+      if (destroyed) return;
+      const direct = nativeDot();
+      if (direct) { direct.click(); return; }
+      const navigation = await dotRouter();
+      if (navigation) {
+        const { router, homePath, primaryThreadId } = navigation, targetPath = navigation.targetPath || homePath;
+        dotNavigation = { phase: "requested", target: targetPath, existingProfile: !!primaryThreadId };
+        let timeout;
+        try {
+          const options = primaryThreadId ? { state: { orbitPrewarmThreadId: primaryThreadId } } : undefined;
+          const accepted = await Promise.race([Promise.resolve(router.navigate(targetPath, options)), new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error("Dot navigation timed out")),5000);})]);
+          if (accepted === false) throw Error("Dot navigation rejected");
+        } finally { clearTimeout(timeout); }
+        // A navigation request is not proof that Dot opened. Read the product
+        // location again, because the host replaces its controller on redraw.
+        const deadline = Date.now() + 8000;
+        while (!destroyed && Date.now() < deadline) {
+          const current = await dotRouter();
+          if (current?.router?.pathname === targetPath) { dotNavigation.phase = "opened";return; }
+          await new Promise(resolve=>setTimeout(resolve,200));
+        }
+        if (!destroyed) { dotNavigation.phase = "unconfirmed";dotNotice("Dot 打开尚未完成，宿主仍未切换到角色页面。当前对话和 Claude 已保留。"); }
+        return;
+      }
+      if (!mode) { dotNotice("当前宿主未提供 Dot 导航接口，未能打开。Claude 仍可独立使用。");return; }
+      if (mode.mode !== "work") await mode.onModeSelect("work");
+      const deadline = Date.now() + 5000;
+      while (!destroyed && Date.now() < deadline) {
+        const target = nativeDot();
+        if (target) { target.click(); return; }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (!destroyed) dotNotice("宿主未返回 Dot 入口，未能打开。请确认当前账号与版本支持 Dot。");
+    } catch {
+      dotNavigation = { phase: "failed" };
+      if (!destroyed) dotNotice("Dot 导航失败，请稍后重试。当前对话和草稿已保留。");
+    } finally { dotOpening = false; }
+  }
   function refresh() {
     if (destroyed) return;
-    const current = Array.from(document.querySelectorAll('[data-sidebar-destination="builtin:orbit"]')).find(nativeAvailable);
-    if (!current) { row?.remove(); source?.removeAttribute("data-aiyou-dot-source"); source = null; return; }
+    const current = nativeDot(), fallback = !current && launcherHost();
+    if (!current && !fallback) { row?.remove(); source?.removeAttribute("data-aiyou-dot-source"); source = null; return; }
     if (!row) {
       row = document.createElement("div"); row.id = ENTRY;
       const dot = document.createElement("button"); dot.type = "button"; dot.dataset.aiyouDot = "true"; dot.title = "Dot（裤兜）";
-      dot.onclick = () => { close(); if (source?.isConnected) source.click(); };
+      dot.onclick = openDot;
       const claude = document.createElement("button"); claude.type = "button"; claude.dataset.aiyouClaude = "true";
       claude.setAttribute("aria-controls", PANEL); claude.setAttribute("aria-expanded", "false");
       claude.onclick = open; row.append(dot, claude);
       applyPersona();
     }
-    if (source !== current || !row.isConnected || row.parentElement !== current.parentElement) {
-      source?.removeAttribute("data-aiyou-dot-source"); source = current; source.setAttribute("data-aiyou-dot-source", "true");
+    const parent = current?.parentElement || fallback.header;
+    if (source !== current || !row.isConnected || row.parentElement !== parent) {
+      source?.removeAttribute("data-aiyou-dot-source"); source = current || null; source?.setAttribute("data-aiyou-dot-source", "true");
       const dot = row.querySelector("[data-aiyou-dot]"); dot.replaceChildren();
-      const icon = source.querySelector("img,svg"); if (icon) dot.append(icon.cloneNode(true));
+      const icon = source?.querySelector("img,svg");
+      if (icon) dot.append(icon.cloneNode(true));
+      else dot.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.6 4.9a4 4 0 0 1 6.8 0l6.1 10.6a4 4 0 0 1-3.4 6H5.9a4 4 0 0 1-3.4-6Z" fill="#15bba0"/><circle cx="9" cy="13" r="1" fill="#075e54"/><circle cx="15" cy="13" r="1" fill="#075e54"/></svg>';
       const label = document.createElement("span"); label.textContent = "Dot（裤兜）"; dot.append(label);
-      source.before(row);
+      if (source) source.before(row); else parent.append(row);
     }
     if (panel && !panel.hidden && !panel.isConnected) mount();
     if (panel && !panel.hidden) isolateDotHeader();
@@ -692,9 +931,9 @@
       personaRetryAt=0;
       setTimeout(()=>{if(!destroyed){refresh();if(panel&&!panel.hidden)void reload();}},0);
     },
-    getState: () => ({ projectId, sessionId, data, pending: requests.size, draftMode, processOpen: [...processOpen], skillIds: [...skillIds], mcpIds: [...mcpIds] }),
+    getState: () => ({ projectId, sessionId, data, pending: requests.size, draftMode, processOpen: [...processOpen], skillIds: [...skillIds], mcpIds: [...mcpIds], dotNavigation: { ...dotNavigation }, dotRecovery: { ...dotRecovery } }),
     destroy() {
-      destroyed = true; close(); source?.removeAttribute("data-aiyou-dot-source"); row?.remove(); panel?.remove(); style.remove();
+      destroyed = true; clearTimeout(dotRecoveryTimer); close(); source?.removeAttribute("data-aiyou-dot-source"); row?.remove(); panel?.remove(); style.remove();
       for(const header of dotHeaders)header.removeAttribute("data-aiyou-dot-header");dotHeaders.clear();
       for(const host of panelHosts)host.removeAttribute("data-aiyou-claude-host");panelHosts.clear();
       window.removeEventListener("message", onPanel);
@@ -702,5 +941,6 @@
       for (const pending of requests.values()) { clearTimeout(pending.timer); pending.resolve(null); } requests.clear();
     } };
   refresh();
+  if (location.protocol === "app:") scheduleDotRecovery();
   if (retainedUI.open) open();
 })();
