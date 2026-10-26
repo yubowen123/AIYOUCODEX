@@ -19,13 +19,25 @@ async function fixture(t) {
   return {home, env: {CODEX_HOME: home}, configPath: path.join(home, 'config.toml')};
 }
 
-test('a fresh user receives the bundled model without creating or editing their Codex files', async t => {
+async function seedNativeModels(home) {
+  const publicModel = {...await readBundledDeepSeekModel(), slug: 'gpt-fixture', display_name: 'Synthetic GPT'};
+  await writeFile(path.join(home, 'models_cache.json'), JSON.stringify({models: [publicModel]}));
+}
+
+test('a fresh user without native metadata keeps GPT and does not expose an unsafe DeepSeek fallback', async t => {
   const f = await fixture(t);
+  assert.deepEqual(await configuredExtraModel(f.env), {catalogUnavailable: true});
+  assert.deepEqual(await readdir(f.home), []);
+});
+
+test('a fresh user with native metadata receives the bundled model without editing configuration or login files', async t => {
+  const f = await fixture(t);
+  await seedNativeModels(f.home);
   const routing = await configuredExtraModel(f.env);
   assert.equal(routing.extraModel.model, 'deepseek-flash');
   assert.equal(routing.extraModel.isDefault, false);
   assert.equal(routing.catalogPath, DEEPSEEK_CATALOG_PATH);
-  assert.deepEqual(await readdir(f.home), []);
+  assert.deepEqual((await readdir(f.home)).sort(), ['models', 'models_cache.json']);
   const provider = parse(routing.providerArgs[1]).model_providers.deepseek;
   assert.equal(provider.base_url, 'https://api.deepseek.com');
   assert.equal(provider.wire_api, 'responses');
@@ -67,6 +79,7 @@ test('existing official provider credentials, default GPT and login files remain
   const auth = '{"fixture":"synthetic-login"}\n';
   await writeFile(f.configPath, config);
   await writeFile(authPath, auth);
+  await seedNativeModels(f.home);
   const routing = await configuredExtraModel(f.env);
   assert.equal(routing.extraModel.model, 'deepseek-flash');
   assert.deepEqual(routing.providerArgs, ['-c', 'thread_unload_delay_secs=0']);
