@@ -409,6 +409,14 @@ node scripts/verify-local-asset-manager.mjs
 
 [官方接入说明](https://www.mokeaigc.ai/mcp.html)提供 Skills 与提示词的只读 OAuth 接入。首次使用需要 `codex mcp login moke --scopes openid,skill:read,prompt:read`；插件安装不等于账号已授权。源包包含可移植清单和 Codex 兼容清单，详见 [插件说明](plugins/moke-aigc/README.md)。
 
+<!-- aiyou-contact:start -->
+## 联系作者 / Contact
+
+扫码添加作者微信，交流使用体验与项目合作。
+
+<img src="docs/assets/wechat-contact.jpg" width="280" alt="Glimmer · 光波的个人微信二维码">
+<!-- aiyou-contact:end -->
+
 ## License
 
 [MIT](./LICENSE)
