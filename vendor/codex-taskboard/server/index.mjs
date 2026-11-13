@@ -6,8 +6,16 @@ import { createTaskboardServer, resolveHost, resolvePort } from "./app.mjs";
 export { createTaskboardServer, resolveHost, resolvePort, resolveServerOptions } from "./app.mjs";
 
 async function main() {
-  const app = createTaskboardServer();
+  const { createCodexHallModels } = await import("./task-hall-models.mjs");
   const host = resolveHost();
+  const local = host === "127.0.0.1";
+  const { createHallRoster } = await import("./task-hall-roster.mjs");
+  const { builtinAgentProfiles, createAgentDiscovery } = await import("../../../lib/agent-discovery.mjs");
+  const app = createTaskboardServer({
+    nativeHallActivity: local,
+    taskHallAgents: local ? createCodexHallModels() : undefined,
+    hallRoster: local ? createHallRoster({ discovery:createAgentDiscovery(), profiles:builtinAgentProfiles }) : undefined,
+  });
   const address = await app.listen({ host, port: resolvePort() });
   console.log(`Codex Taskboard listening on http://127.0.0.1:${address.port}`);
   if (host === "0.0.0.0") {

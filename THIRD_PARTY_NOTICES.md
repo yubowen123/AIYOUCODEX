@@ -15,6 +15,12 @@ license copy is available at
 The vendored web build also contains its own font notice at
 [`vendor/codex-taskboard/dist/web/Inter-LICENSE.txt`](./vendor/codex-taskboard/dist/web/Inter-LICENSE.txt).
 
+## Three.js
+
+The prebuilt 3D Task Hall web client includes Three.js under the MIT License.
+The bundled notice is available at
+[`vendor/codex-taskboard/THREE-LICENSE.txt`](./vendor/codex-taskboard/THREE-LICENSE.txt).
+
 ## Codex Workspace Enhancer asset layer
 
 This package vendors the Asset Console service and embedded web surface from

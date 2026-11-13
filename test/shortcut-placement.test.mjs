@@ -106,7 +106,7 @@ test("shortcut grid stays above conversations with optional quick chat, rerender
     assert.equal(state.parent, 'native-rail', 'Use full-height rail, not inner native group');
     assert.ok(state.bottom <= state.railBottom + 1, JSON.stringify(state));
     assert.equal(state.native, 5, 'Preserve host rail actions');
-    for (const name of ['新对话', 'Private tool', 'MOKE AIGC', '模型竞技场', 'Skills 分组', '项目管理', '设置']) assert.ok(state.names.includes(name), name);
+    for (const name of ['新对话', 'Private tool', 'MOKE AIGC', '模型竞技场', 'Skills 分组', '任务大厅', '设置']) assert.ok(state.names.includes(name), name);
     assert.equal(state.headerControls, 0);
     assert.equal(state.health.components.header, 'ready', 'Settings-only toggle is not a missing header');
   }
@@ -135,9 +135,9 @@ test("shortcut grid stays above conversations with optional quick chat, rerender
   }
   await client.evaluate(`window.__CODEX_SIDEBAR_MANAGED_SHORTCUTS__=[{id:'private-example',name:'Private tool',url:'https://example.test',icon:'tv',openMode:'in-app'}]`);
   await waitForBrowserState(client, `!!${grid}?.querySelector('[data-codex-sidebar-shortcut-name="Private tool"]')`, 'Private entry preserved');
-  await client.evaluate(`document.querySelector('[data-codex-sidebar-shortcut-name="项目管理"]').click()`);
+  await client.evaluate(`document.querySelector('[data-codex-sidebar-shortcut-name="任务大厅"]').click()`);
   assert.equal(await client.evaluate("document.documentElement.getAttribute('data-codex-taskboard-open')"), 'true');
-  await client.evaluate(`document.querySelector('[data-codex-sidebar-shortcut-name="项目管理"]').click()`);
+  await client.evaluate(`document.querySelector('[data-codex-sidebar-shortcut-name="任务大厅"]').click()`);
   assert.equal(await client.evaluate("document.documentElement.hasAttribute('data-codex-taskboard-open')"), false);
   await client.evaluate(`document.querySelector('[data-codex-sidebar-shortcut-settings]').scrollIntoView();document.querySelector('[data-codex-sidebar-shortcut-settings]').click()`);
   assert.equal(await client.evaluate("document.querySelector('#codex-conversation-view-toggle').closest('[data-codex-workspace-side-panel]').open"), true);
