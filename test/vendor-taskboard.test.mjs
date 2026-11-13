@@ -48,7 +48,7 @@ test("custom Taskboard retains the six-lane project management implementation", 
   assert.match(profilePanel, /项目描述/);
   assert.match(profilePanel, /下一步规划/);
   assert.match(profilePanel, /匹配 Codex 项目/);
-  assert.match(injection, /const ENTRY_LABEL = "项目管理"/);
+  assert.match(injection, /const ENTRY_LABEL = "任务大厅"/);
 });
 
 test("custom Taskboard keeps side-panel embedding and the loopback null-origin fix", async () => {

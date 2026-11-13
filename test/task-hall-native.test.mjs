@@ -1,0 +1,50 @@
+import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, appendFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
+import { test } from "node:test";
+import { createCodexHallActivity } from "../vendor/codex-taskboard/server/task-hall-native.mjs";
+
+const desktop = "11111111-1111-4111-8111-111111111111";
+const excluded = "22222222-2222-4222-8222-222222222222";
+const old = "33333333-3333-4333-8333-333333333333";
+const event = (type, timestamp) => JSON.stringify({ type:"event_msg", timestamp:new Date(timestamp).toISOString(), payload:{type} })+"\n";
+
+test("live Codex activity is desktop scoped and drops finished conversations on the next refresh", async t => {
+  const home = await mkdtemp(path.join(process.env.AIYOU_TEST_OUTPUT || tmpdir(), "aiyou-native-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  await mkdir(path.join(home, "sessions"));
+  const state=path.join(home,".codex-global-state.json");
+  const db = new DatabaseSync(path.join(home, "state_5.sqlite"));
+  db.exec(`CREATE TABLE threads(id TEXT, title TEXT, rollout_path TEXT, archived INT, source TEXT, originator TEXT,
+    updated_at INT, updated_at_ms INT, thread_source TEXT, name TEXT, project_id TEXT, attached_thread_parent_id TEXT)`);
+  let now=Date.now();
+  const file=(id)=>path.join(home,"sessions","rollout-"+id+".jsonl");
+  const put=db.prepare("INSERT INTO threads VALUES (?,?,?,0,?,?,?,?,?,?,?,NULL)");
+  put.run(desktop,"原始名称",file(desktop),"vscode","Codex Desktop",Math.floor(now/1000),now,"user","实际对话","old-project");
+  put.run(excluded,"子 Agent",file(excluded),"vscode","Codex Desktop",Math.floor(now/1000),now,"subagent",null,null);
+  put.run(old,"历史任务",file(old),"vscode","Codex Desktop",0,0,"user",null,null);
+  db.close();
+  const huge=JSON.stringify({type:"response_item",payload:{text:"x".repeat(3*512*1024)}})+"\n";
+  await writeFile(file(desktop),event("task_started",now-1000)+huge+'{"type":"event_msg","payload":{"type":"task_complete"}');
+  await writeFile(file(excluded),event("task_started",now-1000));
+  await writeFile(file(old),event("task_started",now-3_600_000));
+  await writeFile(state,JSON.stringify({"thread-project-assignments":{[desktop]:{projectKind:"local",projectId:"current-project"}}}));
+  const read = createCodexHallActivity({codexHome:home,codexStatePath:state,clock:()=>now});
+  const snapshot=await read();
+  assert.equal(snapshot.available,true);
+  assert.deepEqual(snapshot.items.map(({threadId,title})=>({threadId,title})),[{threadId:desktop,title:"实际对话"}]);
+  assert.equal((await read("current-project")).items.length,1);
+  assert.equal((await read("old-project")).items.length,0);
+  await appendFile(file(desktop),"}\n"+event("turn_aborted",now+1000));
+  now+=2000;
+  const stopped = await read();
+  assert.deepEqual(stopped.items,[]);
+  assert.equal(stopped.lastCompletedAt,undefined);
+  await appendFile(file(desktop),event("task_complete",now+1000));
+  const expected = new Date(now+1000).toISOString();
+  now+=2000;
+  assert.equal((await read("current-project")).lastCompletedAt,expected);
+  assert.equal((await read("old-project")).lastCompletedAt,undefined);
+});

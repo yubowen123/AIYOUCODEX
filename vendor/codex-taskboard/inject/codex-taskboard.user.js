@@ -33,7 +33,7 @@
   const PANEL_WIDTH_KEY = "codex-workspace-enhancer:side-panel-width-v1";
   const PANEL_EVENT = "codex-workspace-panel:open";
   const PLUGIN_LABELS = ["插件", "plugins"];
-  const ENTRY_LABEL = "项目管理";
+  const ENTRY_LABEL = "任务大厅";
   const NATIVE_PAGE_LABELS = [
     "新建任务",
     "new task",
@@ -989,8 +989,8 @@
     close.id = CLOSE_ID;
     close.type = "button";
     close.textContent = "×";
-    close.setAttribute("aria-label", "关闭项目管理");
-    close.title = "收起项目管理";
+    close.setAttribute("aria-label", "关闭任务大厅");
+    close.title = "收起任务大厅";
     close.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -1108,9 +1108,12 @@
       throw new Error("任务面板页面资源未就绪");
     }
     const baseHref = `${taskboardUrl.origin}/`;
+    const pipelineToken = window.__AIYOU_TASKBOARD_PIPELINE_TOKEN__;
+    const pipelineMeta = typeof pipelineToken === "string" && /^[a-f0-9]{64}$/.test(pipelineToken)
+      ? `<meta name="aiyou-pipeline-host" content="${pipelineToken}">` : "";
     const html = taskboardDocument.replace(
       /<head(\s[^>]*)?>/i,
-      (head) => `${head}<base href="${baseHref}">`,
+      (head) => `${head}<base href="${baseHref}">${pipelineMeta}`,
     );
     frameOrigin = window.location.origin;
     taskboardServiceOrigin = taskboardUrl.origin;

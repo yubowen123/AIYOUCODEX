@@ -6882,11 +6882,11 @@
       { id: "asset-console", name: "资产控制台", kind: "enhancement", icon: "assets", activate: openAssetConsolePanel },
       { id: "model-arena", name: "模型竞技场", kind: "enhancement", icon: "arena", activate: () => openAssetConsolePanel({ kind: "arena" }) },
       { id: "openchatcut", name: "OpenChatCut", kind: "enhancement", icon: "scissors", activate: () => window.__aiyouOpenChatCut__?.open?.() },
-      { id: "project-management", name: "项目管理", kind: "enhancement", icon: "project",
+      { id: "project-management", name: "任务大厅", kind: "enhancement", icon: "project",
         activate: () => {
           if (typeof window.__codexTaskboardInjection__?.open === "function") window.__codexTaskboardInjection__.open();
           else if (document.getElementById("codex-taskboard-entry")) document.getElementById("codex-taskboard-entry").click();
-          else showNativeShortcutNotice("项目管理尚未连接，请等待 AIYOUcodex 后台加载完成。");
+          else showNativeShortcutNotice("任务大厅尚未连接，请等待 AIYOUcodex 后台加载完成。");
         } },
     ];
     const settingsItem = { id: "settings", name: "设置", kind: "settings" };
@@ -6921,7 +6921,7 @@
       { name: "新对话", button: newConversation, quickButton },
       ...navigationButtons.map((button) => ({ name: shortcutLabel(button), button, quickButton: null })),
     ].filter((item, index, values) => item.name && values.findIndex((candidate) => candidate.name === item.name) === index);
-    const builtInItems = sourceItems.filter((item) => !HIDDEN_SHORTCUT_NAMES.has(item.name) && item.name !== "项目管理");
+    const builtInItems = sourceItems.filter((item) => !HIDDEN_SHORTCUT_NAMES.has(item.name) && !["项目管理", "任务大厅"].includes(item.name));
     const catalogItems = orderedShortcuts([
       ...builtInItems.slice(0, 1),
       ...managedItems,
@@ -6955,7 +6955,7 @@
     }
     // Own built-in artwork: native nodes may carry hidden/mask/size styles.
     const builtInIcon = {
-      "新对话": "newChat", "项目管理": "project", "Agent 工作区": "agent",
+      "新对话": "newChat", "项目管理": "project", "任务大厅": "project", "Agent 工作区": "agent",
       "Skills 分组": "skills", "资产控制台": "assets", "模型竞技场": "arena",
       "拉取请求": "pullRequest", "已安排": "scheduled", "插件": "plugins", "站点": "sites",
     }[name];
@@ -7063,7 +7063,7 @@
       || item.button.getAttribute("data-active") === "true"
       || state === "open" || state === "active" || state === "selected";
     button.dataset.active = String(active);
-    if (item.name === "项目管理") {
+    if (item.name === "项目管理" || item.name === "任务大厅") {
       button.setAttribute("aria-expanded", String(active));
       button.setAttribute("aria-controls", "codex-taskboard-page");
     }
@@ -9893,8 +9893,8 @@
   function workspaceCommand(value) {
     const text = String(value || "").replace(/\s+/gu, " ").trim();
     if (!text) return null;
-    const slash = text.match(/^\/(项目|项目管理|skills?|技能|资产|资产控制台)\s+(.+)$/iu);
-    const target = slash?.[1] || text.match(/(?:^|[，,。；;：:\s])(项目管理|任务面板|项目看板|skills?\s*分组|skills?|技能列表|资产控制台|资产库|素材库)(?:[，,。；;：:\s]|$)/iu)?.[1];
+    const slash = text.match(/^\/(项目|项目管理|任务大厅|skills?|技能|资产|资产控制台)\s+(.+)$/iu);
+    const target = slash?.[1] || text.match(/(?:^|[，,。；;：:\s])(项目管理|任务面板|任务大厅|项目看板|skills?\s*分组|skills?|技能列表|资产控制台|资产库|素材库)(?:[，,。；;：:\s]|$)/iu)?.[1];
     if (!target) return null;
     const hasAction = Boolean(slash) || /(?:帮我|请|打开|进入|找|查找|搜索|检索|定位)/u.test(text);
     if (!hasAction) return null;
