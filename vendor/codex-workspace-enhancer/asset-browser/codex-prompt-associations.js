@@ -1,14 +1,16 @@
-import { createReadStream, promises as fs } from "node:fs";
+import { constants, createReadStream, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { hasSameCharacterInstruction } from "./character-associations.js";
 
 const MEDIA_EXTENSIONS = {
-  image: new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif"]),
+  image: new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif", ".heic", ".heif"]),
   video: new Set([".mp4", ".mov", ".m4v", ".webm", ".mkv"]),
   audio: new Set([".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".oga", ".opus"]),
 };
+const MAX_PROMPT_SIDECAR_BYTES = 256 * 1024;
+const MAX_SIBLING_ENTRIES = 12000;
 
 function mediaKind(filePath) {
   const extension = path.extname(String(filePath || "")).toLowerCase();
@@ -39,6 +41,104 @@ async function readJson(filePath) {
     if (["ENOENT", "EISDIR"].includes(error.code) || error instanceof SyntaxError) return null;
     throw error;
   }
+}
+
+async function readPromptSidecar(filePath) {
+  const stat = await fs.lstat(filePath).catch(error => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!stat?.isFile() || !stat.size || stat.size > MAX_PROMPT_SIDECAR_BYTES) return null;
+  let handle;
+  try {
+    handle = await fs.open(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0));
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.dev !== stat.dev || opened.ino !== stat.ino || opened.size > MAX_PROMPT_SIDECAR_BYTES) return null;
+    const buffer = Buffer.alloc(MAX_PROMPT_SIDECAR_BYTES + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (!bytesRead || bytesRead > MAX_PROMPT_SIDECAR_BYTES) return null;
+    const source = new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, bytesRead));
+    return source.includes("\u0000") ? null : source;
+  } catch (error) {
+    if (["ENOENT", "EISDIR", "ELOOP"].includes(error.code) || error instanceof TypeError) return null;
+    throw error;
+  } finally {
+    await handle?.close();
+  }
+}
+
+function portableBasename(name) {
+  return cleanString(name).replace(/^[\x60"“]|[\x60"”]$/g, "").split(/[\\/]/).at(-1);
+}
+
+// A shared legacy stem is not sufficient to distinguish e.g. shot.png and shot.mp4.
+async function stemMatchesAsset(assetPath, outputs = []) {
+  const basename = path.basename(assetPath);
+  const names = outputs.map(portableBasename).filter(Boolean);
+  if (names.length) return names.every(name => name === basename);
+  const stem = path.parse(basename).name.toLowerCase();
+  const directory = await fs.opendir(path.dirname(assetPath));
+  let inspected = 0;
+  for await (const entry of directory) {
+    if (++inspected > MAX_SIBLING_ENTRIES) return false;
+    if (entry.name !== basename && mediaKind(entry.name) && path.parse(entry.name).name.toLowerCase() === stem
+      && (entry.isFile() || entry.isSymbolicLink())) return false;
+  }
+  return true;
+}
+
+function promptText(value) {
+  const result = cleanString(value);
+  return /^(?:[（(]?(?:未登记|无)[）)]?|[-—]+)$/u.test(result) ? "" : result;
+}
+
+function parseMarkdownPrompt(source) {
+  const lines = source.split(/\r?\n/);
+  const fields = {};
+  const sections = {};
+  let section = "";
+  let fence;
+  for (const line of lines) {
+    const fenceMatch = /^\s{0,3}([\x60~]{3,})/.exec(line);
+    if (fenceMatch) {
+      if (!fence) fence = fenceMatch[1];
+      else if (fenceMatch[1][0] === fence[0] && fenceMatch[1].length >= fence.length) fence = null;
+    }
+    const heading = fence || fenceMatch ? "" : /^#{1,3}[ \t]+(.+?)\s*#*\s*$/u.exec(line)?.[1];
+    const key =
+      /^(?:正向提示词(?:\s*[/／]\s*Prompt)?|提示词|Prompt|Positive Prompt)$/iu.test(heading) ? "prompt"
+      : /^(?:负向提示词(?:\s*[/／]\s*.+)?|Negative Prompt)$/iu.test(heading) ? "negativePrompt"
+        : /^(?:参考素材|参考资料|References)$/iu.test(heading) ? "references"
+          : heading === "生成参数" ? "settings"
+            : heading === "备注" ? "notes" : "";
+    if (key && !Object.hasOwn(sections, key)) {
+      section = key;
+      sections[key] = [];
+      continue;
+    }
+    if (section) {
+      sections[section].push(line);
+    } else if (!fence) {
+      const metadata = /^\s*[-*]\s*(结果文件|生成工具|模型|任务创建)\s*[:：]\s*(.+)$/u.exec(line);
+      if (metadata && !Object.hasOwn(fields, metadata[1])) fields[metadata[1]] = metadata[2].trim();
+    }
+  }
+  const structured = Object.keys(sections).length > 0 || /^\s*#\s*生成提示词与结果记录(?:\s|$)/u.test(source);
+  const prompt = promptText(structured ? sections.prompt?.join("\n") : source);
+  const references = (sections.references || []).flatMap(line => /^\s*[-*]\s+(.+)$/.exec(line)?.[1] || [])
+    .filter(item => item !== "无登记参考素材");
+  let settings;
+  try { settings = JSON.parse((sections.settings || []).join("\n").trim().replace(/^\x60{3}json\s*|\s*\x60{3}$/gi, "")); } catch {}
+  return {
+    prompt,
+    negativePrompt: promptText(sections.negativePrompt?.join("\n")),
+    references,
+    settings,
+    generator: promptText(fields.生成工具),
+    model: promptText(fields.模型),
+    createdAt: fields.任务创建,
+    result: fields.结果文件,
+  };
 }
 
 function normalizeAssociation(value = {}, fallbackPath = "") {
@@ -244,11 +344,23 @@ export class CodexPromptAssociationStore {
     const resolvedPath = path.resolve(assetPath);
     const registry = await this.readRegistry();
     const stored = registry.associations[resolvedPath];
-    if (stored) return normalizeAssociation(stored, resolvedPath);
+    if (stored?.prompt) return normalizeAssociation(stored, resolvedPath);
     const extension = path.extname(resolvedPath);
     if (!mediaKind(resolvedPath) || !extension) return null;
-    const sidecar = await readJson(`${resolvedPath.slice(0, -extension.length)}.meta.json`);
-    return associationFromSidecar(resolvedPath, sidecar);
+    const stem = resolvedPath.slice(0, -extension.length);
+    const sidecar = await readJson(stem + ".meta.json");
+    const json = associationFromSidecar(resolvedPath, sidecar);
+    if (json) return json;
+
+    for (const [file, shared] of [[resolvedPath + ".prompt.md", false], [stem + ".prompt.md", true]]) {
+      const source = await readPromptSidecar(file);
+      if (!source) continue;
+      const { result, ...content } = parseMarkdownPrompt(source);
+      if (!content.prompt) continue;
+      if ((result || shared) && !await stemMatchesAsset(resolvedPath, [result])) continue;
+      return normalizeAssociation({ ...content, assetPath: resolvedPath, source: "markdown-sidecar" });
+    }
+    return null;
   }
 
   async summary(assetPath) {
@@ -301,6 +413,7 @@ export class CodexPromptAssociationStore {
           const association = associationFromEvent(event, context);
           if (!association || !await exists(association.assetPath)) continue;
           const current = registry.associations[association.assetPath];
+          if (current?.source === "manual-registration") continue;
           registry.associations[association.assetPath] = association;
           if (!current) {
             imported += 1;

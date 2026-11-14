@@ -6,6 +6,12 @@ import { createPathPrefixMatcher } from "./asset-index-update-utils.js";
 
 const SCHEMA_VERSION = 1;
 
+function assetWithIndexTime(asset, previous, now) {
+  // Old records without an arrival date stay unknown.
+  const indexedAt = previous ? previous.indexedAt : now;
+  return indexedAt ? { ...asset, indexedAt } : asset;
+}
+
 function normalizedFolders(folders = []) {
   return [...new Set((Array.isArray(folders) ? folders : [])
     .map((folder) => path.resolve(String(folder || "")))
@@ -90,13 +96,14 @@ export class PersistentAssetIndex {
   async replaceProject(project, assets, now = new Date().toISOString()) {
     return this.mutate((state) => {
       const previous = state.projects[project.id];
+      const indexed = new Map((previous?.assets || []).map(asset => [String(asset.id), asset]));
       state.projects[project.id] = normalizeProjectEntry(project.id, {
         projectName: project.name,
         folders: project.folders,
         initializedAt: previous?.initializedAt || now,
         updatedAt: now,
         revision: (previous?.revision || 0) + 1,
-        assets,
+        assets: assets.map(asset => assetWithIndexTime(asset, indexed.get(String(asset.id)), now)),
       });
       return state.projects[project.id];
     }, { copyOnWrite: true });
@@ -141,7 +148,7 @@ export class PersistentAssetIndex {
           })
           .map((asset) => [String(asset.id), asset]));
         for (const asset of upserts) {
-          if (asset?.id) byId.set(String(asset.id), asset);
+          if (asset?.id) byId.set(String(asset.id), assetWithIndexTime(asset, byId.get(String(asset.id)), now));
         }
         const nextAssets = [...byId.values()];
         if (state.projects[project.id] && current.projectName === project.name && sameAssetIndexFolders(current.folders, folders) && isDeepStrictEqual(current.assets, nextAssets)) {

@@ -8,8 +8,14 @@ const bootstrapRequests = createLatestRequestGate();
 const textRequests = createLatestRequestGate();
 const mediaRequests = createLatestRequestGate();
 const characterRequests = createLatestRequestGate();
+const inspectionRequests = createLatestRequestGate();
 const mediaPlayback = createMediaPlaybackManager();
 const pendingMediaHover = new WeakMap();
+const inFolder = (directory, folder) => {
+  const clean = value => String(value || "").replaceAll(String.fromCharCode(92), "/").replace(/\/+$/, "");
+  const root = clean(folder), target = clean(directory);
+  return root === target || target.startsWith(root + "/");
+};
 const ASSET_PAGE_SIZE = 120;
 const MAX_ASSET_WINDOW = 240;
 
@@ -50,6 +56,11 @@ const state = {
   previewAsset: null,
   refreshTimer: null,
   visibleLimit: 120,
+  inspectedId: "",
+  selectedIds: new Set(),
+  selectionAnchor: "",
+  finalOnly: false,
+  folder: "",
 };
 
 const els = Object.fromEntries([
@@ -66,6 +77,8 @@ const els = Object.fromEntries([
   "mediaPromptPanel", "mediaPromptMeta", "mediaPromptText", "mediaNegativePromptGroup", "mediaNegativePromptText", "mediaPromptReferences",
   "assetPagingControls", "previousAssetWindow", "nextAssetWindow", "assetWindowLabel",
   "thumbnailViewButton", "detailViewButton", "relatedAssetsToggle", "clearCharacterFilter",
+  "libraryCategoriesButton", "libraryDetailsButton", "libraryFullscreenButton", "libraryInspectorClose", "libraryInspectorBody",
+  "libraryPlatformList", "libraryPlatformPanel", "libraryAllButton", "libraryFinalButton", "mediaPreviewNav", "textPreviewNav",
   "characterDialog", "characterForm", "characterDialogTitle", "characterPreviewImage", "characterName", "characterState", "characterStyle", "characterParent", "characterEvidence", "characterFamilyTitle", "characterFamilyList", "characterCandidateList", "characterError", "saveCharacterButton", "findSimilarCharacters", "viewCharacterFamily", "excludeCharacterImage",
 ].map((id) => [id, document.getElementById(id)]));
 
@@ -220,9 +233,17 @@ function renderProjects() {
   els.projectFoldersPanel.hidden = !project;
   els.projectFolderList.replaceChildren();
   for (const folder of project?.folders || []) {
-    const row = document.createElement("div");
+    const row = document.createElement("button");
+    row.type = "button";
     row.className = "folder-row";
-    row.innerHTML = `<span aria-hidden="true">⌑</span><span title="${escapeHtml(folder)}">${escapeHtml(folder)}</span>`;
+    row.setAttribute("aria-pressed", String(state.folder === folder));
+    row.addEventListener("click", () => {
+      state.folder = state.folder === folder ? "" : folder;
+      state.category = "";
+      renderProjects();
+      resetAssetWindow();
+    });
+    row.innerHTML = `<span aria-hidden="true">⌑</span><span title="${escapeHtml(folder)}">${escapeHtml(folder.replaceAll(String.fromCharCode(92), "/").split("/").filter(Boolean).at(-1) || folder)}</span>`;
     els.projectFolderList.append(row);
   }
 }
@@ -490,6 +511,35 @@ function previewAsset(asset) {
   else if (asset) openMediaAsset(asset);
 }
 
+function renderPreviewNav(nav, asset) {
+  const assets = visibleAssets().slice(0, state.visibleLimit);
+  const index = assets.findIndex(item => item.id === asset.id);
+  nav.hidden = index < 0;
+  if (index < 0) { nav.replaceChildren(); return; }
+  const start = Math.max(0, Math.min(index - 3, assets.length - 7));
+  const adjacent = assets.slice(start, start + 7);
+  nav.innerHTML = `<span>${state.pageStart + index + 1} / ${state.serverPaging ? state.filteredTotal : assets.length}</span>
+    <button type="button" data-preview-step="-1" aria-label="上一个素材" ${index === 0 ? "disabled" : ""}>←</button>
+    ${adjacent.map(item => `<button type="button" data-preview-id="${escapeHtml(item.id)}" title="${escapeHtml(item.name)}" aria-current="${item.id === asset.id}">${item.kind === "image" ? `<img alt="" src="${escapeHtml(item.mediaUrl)}" loading="lazy">` : ""}${escapeHtml(item.title || item.name)}</button>`).join("")}
+    <button type="button" data-preview-step="1" aria-label="下一个素材" ${index === assets.length - 1 ? "disabled" : ""}>→</button>`;
+}
+
+function switchPreview(id, step) {
+  if (els.textViewerDialog.open && !els.textViewerEditor.hidden) {
+    showToast("请先保存或退出文档编辑，再切换素材。");
+    return;
+  }
+  const current = els.textViewerDialog.open ? state.textAsset : state.previewAsset;
+  const assets = visibleAssets().slice(0, state.visibleLimit);
+  const index = assets.findIndex(item => item.id === current?.id);
+  const asset = id ? assets.find(item => item.id === id) : index < 0 ? null : assets[index + step];
+  if (!asset || asset.id === current?.id) return;
+  if (asset.kind === "text" && els.mediaPreviewDialog.open) els.mediaPreviewDialog.close();
+  if (asset.kind !== "text" && els.textViewerDialog.open) els.textViewerDialog.close();
+  inspectAsset(asset);
+  previewAsset(asset);
+}
+
 function renderMediaPreview(asset) {
   if (asset.kind === "image") return `<img src="${asset.mediaUrl}" alt="${escapeHtml(asset.title)}">`;
   if (asset.kind === "video") return `<video controls playsinline preload="none"></video>`;
@@ -509,7 +559,8 @@ async function openMediaAsset(asset) {
   els.mediaPromptText.textContent = "";
   els.mediaNegativePromptText.textContent = "";
   els.mediaPromptReferences.replaceChildren();
-  els.mediaPreviewDialog.showModal();
+  renderPreviewNav(els.mediaPreviewNav, asset);
+  if (!els.mediaPreviewDialog.open) els.mediaPreviewDialog.showModal();
   const isCurrent = () => request.isCurrent() && state.previewAsset?.id === asset.id && els.mediaPreviewDialog.open;
   const status = document.createElement("div");
   status.className = "aiyou-module-loading compact media-loading";
@@ -547,12 +598,14 @@ async function openMediaAsset(asset) {
   image?.addEventListener("load", clearDeadline, { once: true });
   media?.addEventListener("loadeddata", clearDeadline, { once: true });
   if (image?.complete || (media && media.readyState >= 2)) clearDeadline();
-  if (!asset.promptAssociation?.available) return;
+  if (!["image", "video", "audio"].includes(asset.kind)) return;
   els.mediaPromptPanel.hidden = false; els.mediaPreviewLayout.classList.add("has-prompt");
   els.mediaPromptText.innerHTML = `<div class="aiyou-module-loading compact" role="status" aria-busy="true">${loadingMarkup("正在读取提示词资料", "正在载入此资产登记的生成信息。")}</div>`;
   try {
-    const association = await api(`/api/assets/prompt?id=${encodeURIComponent(asset.id)}`, { signal: request.signal });
+    const result = await api(`/api/assets/prompt?${new URLSearchParams({id: asset.id, project: state.selectedProject, optional: "1"})}`, { signal: request.signal });
     if (!request.isCurrent() || state.previewAsset?.id !== asset.id || !els.mediaPreviewDialog.open) return;
+    const association = Object.hasOwn(result, "association") ? result.association : result;
+    if (!association) { els.mediaPromptPanel.hidden = true; els.mediaPreviewLayout.classList.remove("has-prompt"); return; }
     const meta = [association.generator, association.model].filter(Boolean);
     els.mediaPromptMeta.innerHTML = `${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}${association.threadId ? `<span title="${escapeHtml(association.threadId)}">Codex 任务</span>` : ""}`;
     els.mediaPromptText.textContent = association.prompt || "（未登记提示词）";
@@ -574,7 +627,9 @@ function visibleAssets() {
   if (state.serverPaging) return state.assets;
   const query = state.query.trim().toLocaleLowerCase("zh-CN");
   const assets = state.assets.filter((asset) => {
-    if (state.smartGroup && asset.smartGroup !== state.smartGroup) return false;
+    if (!state.finalOnly && state.smartGroup && asset.smartGroup !== state.smartGroup) return false;
+    if (state.finalOnly && !asset.final) return false;
+    if (state.folder && !inFolder(asset.directory, state.folder)) return false;
     if (state.characterId && asset.character?.groupId !== state.characterId) return false;
     if (state.kind !== "all" && asset.kind !== state.kind) return false;
     if (state.category && asset.category !== state.category) return false;
@@ -582,6 +637,7 @@ function visibleAssets() {
     return [asset.name, asset.preview, asset.category, ...(asset.tags || []), ...(asset.autoTags || [])].join(" ").toLocaleLowerCase("zh-CN").includes(query);
   });
   return assets.sort((a, b) => {
+    if (state.sort === "joined") return (Date.parse(b.indexedAt) || 0) - (Date.parse(a.indexedAt) || 0);
     if (state.sort === "oldest") return a.mtimeMs - b.mtimeMs;
     if (state.sort === "name") return a.name.localeCompare(b.name, "zh-CN", { numeric: true });
     if (state.sort === "size") return b.size - a.size;
@@ -595,7 +651,7 @@ function resetAssetWindow() {
 }
 
 function libraryQueryKey() {
-  return JSON.stringify([state.selectedProject, state.smartGroup, state.kind, state.category, state.query, state.searchMode, state.sort, state.related, state.characterId]);
+  return JSON.stringify([state.selectedProject, state.smartGroup, state.kind, state.category, state.query, state.searchMode, state.sort, state.related, state.characterId, state.finalOnly, state.folder]);
 }
 
 function renderLibrarySearchStatus() {
@@ -615,7 +671,275 @@ function renderLibrarySearchStatus() {
 
 function createAssetCard(asset) {
   const renderer = { text: renderTextCard, image: renderImageCard, audio: renderAudioCard, video: renderVideoCard }[asset.kind];
-  return renderer?.(asset);
+  const card = renderer?.(asset);
+  if (card) {
+    card.tabIndex = 0;
+    card.setAttribute("aria-label", `素材：${asset.title}`);
+  }
+  return card;
+}
+
+const compactInspector = matchMedia("(max-width: 1060px)");
+const compactCategories = matchMedia("(max-width: 640px)");
+let inspectorOpen = !compactInspector.matches, categoriesOpen = !compactCategories.matches;
+let inspectorSignature = "";
+const libraryShell = document.querySelector(".app-shell");
+
+function updateLibraryPanels() {
+  libraryShell.toggleAttribute("data-inspector-hidden", !inspectorOpen);
+  libraryShell.toggleAttribute("data-categories-hidden", !categoriesOpen);
+  els.libraryDetailsButton.setAttribute("aria-expanded", String(inspectorOpen));
+  els.libraryCategoriesButton.setAttribute("aria-expanded", String(categoriesOpen));
+}
+
+const kindNames = { image: "图片", video: "视频", audio: "音频", text: "文档" };
+const inspectorDate = value => value && Number.isFinite(new Date(value).valueOf()) ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "";
+const positive = value => Number.isFinite(Number(value)) && Number(value) > 0;
+const unit = (value, suffix, decimals = 0) => positive(value) ? `${Number(Number(value).toFixed(decimals))} ${suffix}` : "";
+const mediaBitrate = value => positive(value) ? unit(value / 1000, "kbps", 1) : "";
+const presentFact = value => value !== "" && value !== undefined && value !== null;
+function factsMarkup(rows) {
+  return `<dl class="inspector-facts">${rows.filter(([, value]) => presentFact(value)).map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd title="${escapeHtml(value)}">${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
+}
+function fieldBlock(title, rows) {
+  return rows.some(([, value]) => presentFact(value)) ? `<div class="inspector-field-group"><h5>${title}</h5>${factsMarkup(rows)}</div>` : "";
+}
+function renderInspectionDetails(asset, data = {}) {
+  const media = data.video || data.image || asset;
+  const audio = data.audio || {}, track = data.track || {};
+  const dimensions = (positive(media.width) && positive(media.height)) ? `${media.width} × ${media.height}` : "";
+  const ratio = media.displayAspect || (dimensions ? (() => {
+    let x = Number(media.width), y = Number(media.height);
+    while (y) [x, y] = [y, x % y];
+    return `${media.width / x}:${media.height / x}`;
+  })() : "");
+  const pixels = dimensions ? Number(media.width) * Number(media.height) : 0;
+  const pixelsLabel = pixels ? `${pixels.toLocaleString("zh-CN")} px` : "";
+  const duration = data.duration ?? asset.duration ?? asset.durationSeconds;
+  const time = positive(duration) ? formatDuration(Number(duration)) : "";
+  const size = Number.isFinite(data.size ?? asset.size) ? formatBytes(data.size ?? asset.size) : "";
+  const audioState = data.audioTrackCount === 0 ? "无音轨" : data.audioTrackCount > 0 ? "有音轨" : "";
+  const summary = ({
+    image: [["尺寸", dimensions], ["像素", pixelsLabel], ["比例", ratio], ["大小", size], ["位深", unit(media.depth, "bit")], ["色彩", media.colors]],
+    video: [["尺寸", dimensions], ["帧率", unit(media.frameRate, "fps", 3)], ["码率", mediaBitrate(media.bitrate || data.bitrate)], ["时长", time], ["大小", size], ["比例", ratio]],
+    audio: [["码率", mediaBitrate(audio.bitrate || data.bitrate)], ["采样率", unit(audio.sampleRate, "Hz")], ["声道", unit(audio.channels, "声道")], ["时长", time], ["大小", size], ["位深", unit(audio.depth, "bit")]],
+  })[asset.kind] || [["文件大小", size], ["修改时间", inspectorDate(data.modifiedAt || asset.mtimeMs)]];
+  const header = [data.video?.codec || audio.codec, data.format || asset.extension, audioState].filter(Boolean).join(" · ");
+  const sections =
+    (asset.kind === "image" ? fieldBlock("图像", [["尺寸", dimensions], ["像素数", pixelsLabel], ["比例", ratio], ["像素格式", media.pixelFormat], ["位深", unit(media.depth, "bit")], ["色彩", media.colors], ["动画时长", time]]) : "") +
+    (asset.kind === "video" ? fieldBlock("视频", [["编码", media.codec], ["尺寸", dimensions], ["旋转", media.rotation === undefined ? "" : `${media.rotation}°`], ["比例", ratio], ["帧率", unit(media.frameRate, "fps", 3)], ["总帧数", unit(media.frames, "帧")], ["视频码率", mediaBitrate(media.bitrate)], ["位深", unit(media.depth, "bit")], ["像素格式", media.pixelFormat], ["色彩", media.colors], ["扫描方式", media.scan], ["像素宽高比", media.pixelAspect]]) : "") +
+    (["audio", "video"].includes(asset.kind) ? fieldBlock("音频", [["音轨", data.audioTrackCount === 0 ? "无音轨" : unit(data.audioTrackCount, "条")], ["编码", audio.codec], ["采样率", unit(audio.sampleRate, "Hz")], ["声道", audio.layout || unit(audio.channels, "声道")], ["音频码率", mediaBitrate(audio.bitrate)], ["位深", unit(audio.depth, "bit")], ["压缩方式", audio.compression], ["时长", asset.kind === "audio" ? time : ""]]) : "") +
+    fieldBlock("曲目信息", [["标题", track.title], ["艺人", track.artist], ["专辑", track.album], ["风格", track.genre], ["音轨号", track.track]]) +
+    fieldBlock("文件", [["原始名称", data.filename || asset.name], ["格式", data.format || asset.extension || kindNames[asset.kind]], ["大小", size], ["总码率", mediaBitrate(data.bitrate)], ["时长", time], ["文件位置", data.path || asset.sourcePath || asset.directory], ["修改时间", inspectorDate(data.modifiedAt || asset.mtimeMs)], ["创建时间", inspectorDate(data.createdAt)], ["内嵌日期", inspectorDate(data.embeddedDate)], ["加入素材库", inspectorDate(asset.indexedAt)], ["生成软件", data.software]]);
+  const specs = els.libraryInspectorBody.querySelector("[data-inspector-specs]");
+  const details = els.libraryInspectorBody.querySelector("[data-inspector-details]");
+  if (specs) specs.innerHTML = `${header ? `<strong>${escapeHtml(header)}</strong>` : ""}<div class="inspector-spec-grid">${summary.filter(([, value]) => presentFact(value)).map(([key, value]) => `<div><span>${escapeHtml(key)}</span><b title="${escapeHtml(value)}">${escapeHtml(value)}</b></div>`).join("")}</div>`;
+  if (details) details.innerHTML = sections;
+}
+
+const tagsMarkup = tags => tags.map(tag => `<span class="inspector-tag">${escapeHtml(tag)}</span>`).join("");
+function selectionFacts(selected) {
+  const same = accessor => {
+    const values = [...new Set(selected.map(accessor))];
+    return values.length === 1 ? values[0] : "各不相同";
+  };
+  const commonTags = (selected[0]?.tags || []).filter(tag => selected.every(item => item.tags?.includes(tag)));
+  return [["项目", selectedProject()?.name], ["媒体类型", same(item => kindNames[item.kind])], ["分类", same(item => item.category || "未分类")],
+    ["共同标签", commonTags.join("、") || "无共同标签"], ["模型", same(item => item.promptAssociation?.model || "未登记")]];
+}
+
+function renderInspector(assets = visibleAssets().slice(0, state.visibleLimit)) {
+  const selected = assets.filter(item => state.selectedIds.has(item.id));
+  state.selectedIds = new Set(selected.map(item => item.id));
+  const selectionValid = selected.some(item => item.id === state.inspectedId);
+  state.inspectedId = selectionValid ? state.inspectedId : selected.at(-1)?.id || "";
+  const asset = selected.length === 1 ? selected[0] : null;
+  const finalIds = new Set(assets.filter(item => item.final).map(item => item.id));
+  for (const card of els.assetGrid.querySelectorAll("[data-asset-id]")) {
+    const active = state.selectedIds.has(card.dataset.assetId);
+    card.toggleAttribute("data-inspected", active);
+    card.toggleAttribute("data-final", finalIds.has(card.dataset.assetId));
+    if (active) card.setAttribute("aria-current", "true");
+    else card.removeAttribute("aria-current");
+  }
+  const related = asset?.character?.groupId
+    ? assets.filter(row => row.id !== asset.id && row.character?.groupId === asset.character.groupId).slice(0, 5) : [];
+  const signature = selected.length ? JSON.stringify([state.selectedProject, selected, related.map(row => [row.id, row.title])]) : "";
+  if (signature === inspectorSignature && els.libraryInspectorBody.hasChildNodes()) return;
+  inspectionRequests.cancel();
+  const sameAsset = asset && els.libraryInspectorBody.dataset.owner === asset.id;
+  const previousScroll = sameAsset ? els.libraryInspectorBody.scrollTop : 0;
+  const showDetails = sameAsset && els.libraryInspectorBody.querySelector(".inspector-file-details")?.open;
+  const previousNotes = sameAsset && els.libraryInspectorBody.querySelector(".inspector-notes textarea");
+  const openDraft = previousNotes && !previousNotes.disabled && previousNotes.value !== previousNotes.defaultValue ? previousNotes.value : null;
+  inspectorSignature = signature;
+  els.libraryInspectorBody.dataset.owner = asset?.id || "";
+  if (!selected.length) {
+    els.libraryInspectorBody.innerHTML = '<div class="inspector-empty"><span aria-hidden="true">◫</span><strong>选择一项素材</strong><p>在这里查看提示词、文件规格和项目归属。可按 ⌘ / Ctrl 加选、Shift 连选。</p></div>';
+    return;
+  }
+  if (!asset) {
+    const total = selected.reduce((sum, item) => sum + (Number(item.size) || 0), 0);
+    els.libraryInspectorBody.innerHTML = `<div class="inspector-title"><h3>已选 ${selected.length} 项</h3><p>总大小 ${formatBytes(total)}</p></div>
+      <div class="inspector-actions"><button type="button" class="primary-button" data-inspector-action="final">${selected.every(item => item.final) ? "取消定稿" : "设为定稿"}</button><button type="button" class="secondary-button" data-inspector-action="clear">取消选择</button></div>
+      <section><h4>共同资料</h4>${factsMarkup(selectionFacts(selected))}</section>`;
+    return;
+  }
+  const mediaUrl = escapeHtml(asset.mediaUrl);
+  const visual = asset.kind === "image" ? `<img src="${mediaUrl}" alt="">`
+    : asset.kind === "video" ? `<video src="${mediaUrl}" preload="metadata" muted playsinline></video>`
+      : asset.kind === "text" && asset.preview ? `<span class="inspector-document-excerpt">${escapeHtml(asset.preview.slice(0, 420))}</span>`
+        : `<span class="inspector-preview-label">${escapeHtml(kindNames[asset.kind] || "素材")}</span>`;
+  const association = asset.promptAssociation || {};
+  const promptable = ["image", "video", "audio"].includes(asset.kind);
+  const tags = asset.tags?.length ? asset.tags : asset.autoTags || [];
+  els.libraryInspectorBody.innerHTML = `
+    <button class="inspector-preview" type="button" data-inspector-action="preview" aria-label="打开大图或完整预览">${visual}<span class="inspector-media-fallback">当前媒体无法内嵌预览</span><span class="inspector-preview-cta">打开预览 ↗</span></button>
+    <div class="inspector-title"><h3>${escapeHtml(asset.title || asset.name)}</h3>${asset.name !== asset.title ? `<p>${escapeHtml(asset.name)}</p>` : ""}<button class="text-button" type="button" data-inspector-action="rename">重命名</button></div>
+    <div class="inspector-spec" data-inspector-specs></div>
+    <div class="inspector-actions inspector-main-actions">
+      <button type="button" class="secondary-button" data-inspector-action="final" aria-pressed="${asset.final === true}">${asset.final ? "取消定稿" : "设为定稿"}</button>
+      ${asset.sourcePath ? '<button type="button" class="secondary-button" data-inspector-action="reveal">文件位置</button>' : ""}
+      <button type="button" class="secondary-button" data-inspector-action="preview">打开</button>
+      ${window.parent !== window && asset.sourcePath ? '<button type="button" class="primary-button" data-inspector-action="use-in-codex">添加到对话</button>' : ""}
+    </div>
+    ${promptable ? `<section><div class="inspector-section-heading"><h4>关联提示词</h4><div class="inspector-actions"><button type="button" class="text-button" data-inspector-action="copy-prompt" hidden>复制</button><button type="button" class="text-button" data-inspector-action="edit-prompt" disabled>关联提示词</button></div></div><p class="inspector-copy" data-inspector-prompt aria-live="polite">正在查找原始提示词…</p><div class="inspector-prompt-meta" data-inspector-prompt-meta></div><details data-inspector-provenance hidden><summary>平台来源与生成参数</summary></details><form class="inspector-notes" data-prompt-form hidden><textarea name="prompt" aria-label="正向提示词" maxlength="24000" placeholder="粘贴原始提示词" required></textarea><textarea name="negativePrompt" aria-label="负向提示词（可选）" maxlength="12000" placeholder="负向提示词（可选）"></textarea><div class="inspector-actions"><button type="submit" class="secondary-button">保存关联</button><button type="button" class="text-button" data-inspector-action="cancel-prompt">取消</button></div></form></section>` : ""}
+    <section><div class="inspector-section-heading"><h4>归属和标签</h4><button type="button" class="text-button" data-inspector-action="metadata">编辑</button></div>
+      ${factsMarkup([["项目", selectedProject()?.name], ["媒体类型", kindNames[asset.kind]], ["资产分类", asset.category || "未分类"]])}
+      <div class="inspector-tags">${tags.length ? tagsMarkup(tags) : '<span class="inspector-copy">暂无标签</span>'}</div>
+      <button type="button" class="text-button" data-inspector-action="move">移动到项目</button></section>
+    <section><h4>备注</h4><label class="inspector-notes"><textarea aria-label="素材备注" maxlength="2000" rows="2" placeholder="添加备注" disabled></textarea><button type="button" class="secondary-button" data-inspector-action="notes" disabled>保存备注</button></label></section>
+    ${asset.kind === "image" ? `<section><h4>角色关联</h4><button class="secondary-button" type="button" data-inspector-action="character">${escapeHtml(asset.character?.name || "管理角色关联")}</button>${related.length ? `<div class="inspector-related">${related.map(row => `<button type="button" class="text-button" data-inspector-asset="${escapeHtml(row.id)}">${escapeHtml(row.title || row.name)}</button>`).join("")}</div>` : ""}</section>` : ""}
+    <details class="inspector-file-details" ${showDetails ? "open" : ""}><summary>详细信息</summary><div data-inspector-details></div></details>
+    <p class="inspector-copy" data-inspector-read-status aria-live="polite"></p>`;
+  const inlinePreview = els.libraryInspectorBody.querySelector(".inspector-preview");
+  const inlineMedia = inlinePreview.querySelector("img, video");
+  inlineMedia?.addEventListener("error", () => inlinePreview.setAttribute("data-media-unavailable", ""), { once: true });
+  els.libraryInspectorBody.scrollTop = previousScroll;
+  if (openDraft !== null) {
+    const notes = els.libraryInspectorBody.querySelector(".inspector-notes textarea");
+    notes.value = openDraft;
+    notes.dataset.preservedDraft = "true";
+  }
+  renderInspectionDetails(asset);
+  if (association.model || association.generator) {
+    els.libraryInspectorBody.querySelector("[data-inspector-prompt-meta]").innerHTML = factsMarkup([["模型", association.model], ["生成渠道", association.generator]]);
+  }
+  if (inspectorOpen) void loadInspector(asset);
+}
+
+let inspectorPrompt = null;
+function showInspectorPrompt(related, platform = null) {
+  inspectorPrompt = related;
+  const host = els.libraryInspectorBody;
+  const paragraph = host.querySelector("[data-inspector-prompt]");
+  paragraph.textContent = related?.prompt || "未找到原始提示词，可以手动关联。";
+  host.querySelector(".inspector-negative")?.remove();
+  if (related?.negativePrompt) {
+    const negative = document.createElement("details");
+    negative.className = "inspector-negative";
+    const caption = document.createElement("summary"); caption.textContent = "负向提示词";
+    const body = document.createElement("p"); body.textContent = related.negativePrompt;
+    negative.append(caption, body); paragraph.after(negative);
+  }
+  host.querySelector("[data-inspector-action=copy-prompt]").hidden = !related?.prompt;
+  const edit = host.querySelector("[data-inspector-action=edit-prompt]");
+  edit.textContent = related?.prompt ? "编辑关联" : "关联提示词"; edit.disabled = false; delete edit.dataset.retry;
+  const sources = { "generation-sidecar": "生成记录", "markdown-sidecar": "同名提示词文件", "codex-session": "Codex 对话", "manual-registration": "手动登记" };
+  host.querySelector("[data-inspector-prompt-meta]").innerHTML = factsMarkup([["模型", related?.model || platform?.model], ["生成渠道", platform?.platform || related?.generator], ["资料来源", sources[related?.source] || related?.source]]);
+  const provenance = host.querySelector("[data-inspector-provenance]");
+  const existing = provenance.querySelector(".inspector-facts");
+  existing?.remove();
+  const references = platform?.references?.length ? platform.references : related?.references || [];
+  const keys = {resolution:"分辨率",video_resolution:"视频分辨率",ratio:"画幅",aspectRatio:"画幅",duration:"时长",seed:"种子",fps:"帧率",inputMode:"输入模式",width:"宽度",height:"高度",episodeId:"分集 ID"};
+  const rows = [["平台项目", platform?.project], ["画布 / 分组", platform?.folder], ["节点 ID", platform?.nodeId], ["画布 ID", platform?.canvasId], ["结果 ID", platform?.assetId], ["状态", platform?.status], ["生成时间", inspectorDate(platform?.createdAt)],
+    ...Object.entries(platform?.settings || {}).map(([key,value])=>[keys[key]||key,value]), ["参考素材", references.length ? references.join("、") : ""], ["后续节点", platform?.downstream?.length ? platform.downstream.join("、") : ""]].filter(([,value])=>presentFact(value));
+  provenance.hidden = !rows.length;
+  if (rows.length) provenance.insertAdjacentHTML("beforeend", factsMarkup(rows));
+}
+
+async function loadInspector(asset, force = false) {
+  const key = JSON.stringify([state.selectedProject, asset.id, asset.mtimeMs]);
+  const host = els.libraryInspectorBody;
+  if (!force && host.dataset.loaded === key && !host.querySelector(".inspector-notes textarea:disabled")) return;
+  const request = inspectionRequests.begin(key);
+  const status = host.querySelector("[data-inspector-read-status]");
+  const current = () => request.isCurrent() && host.dataset.owner === asset.id && state.selectedIds.size === 1;
+  const query = new URLSearchParams({ project: state.selectedProject, id: asset.id });
+  inspectorPrompt = null;
+  status.textContent = "正在读取文件规格…";
+  if (host.querySelector("[data-inspector-prompt]")) {
+    query.set("optional", "1");
+    void api(`/api/assets/prompt?${query}`, { signal: request.signal }).then(result => {
+      if (current()) showInspectorPrompt(Object.hasOwn(result, "association") ? result.association : result, result.platform);
+    }, () => {
+      if (!current()) return;
+      host.querySelector("[data-inspector-prompt]").textContent = "提示词暂无法读取。";
+      const edit = host.querySelector("[data-inspector-action=edit-prompt]");
+      edit.textContent = "重试"; edit.disabled = false; edit.dataset.retry = "true";
+    });
+    query.delete("optional");
+  }
+  try {
+    const data = await api(`/api/assets/inspection?${query}`, { signal: request.signal });
+    if (!current()) return;
+    renderInspectionDetails(asset, data);
+    const notes = host.querySelector(".inspector-notes textarea");
+    const draft = notes.dataset.preservedDraft === "true" ? notes.value : null;
+    notes.defaultValue = data.notes || "";
+    notes.value = draft ?? notes.defaultValue;
+    delete notes.dataset.preservedDraft;
+    notes.disabled = false;
+    host.querySelector("[data-inspector-action=notes]").disabled = false;
+    status.textContent = ({ unavailable: "未检测到 FFprobe，仅显示已知规格。", partial: "部分媒体规格不可读取，已显示可用信息。", busy: "其他素材正在读取，重新选择可重试。" })[data.status] || "";
+    if (data.status !== "busy") host.dataset.loaded = key;
+  } catch (error) {
+    if (current()) status.textContent = "文件资料暂无法读取，请重新选择素材。";
+  }
+}
+
+function inspectAsset(asset, { add = false, range = false } = {}) {
+  if (!asset) return;
+  const current = visibleAssets().slice(0, state.visibleLimit);
+  if (range) {
+    const a = current.findIndex(item => item.id === state.selectionAnchor);
+    const b = current.findIndex(item => item.id === asset.id);
+    if (a < 0 || b < 0) state.selectedIds = new Set([asset.id]);
+    else {
+      if (!add) state.selectedIds.clear();
+      current.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(item => state.selectedIds.add(item.id));
+    }
+  } else if (add) {
+    if (state.selectedIds.has(asset.id)) state.selectedIds.delete(asset.id); else state.selectedIds.add(asset.id);
+  } else state.selectedIds = new Set([asset.id]);
+  if (!range) state.selectionAnchor = asset.id;
+  state.inspectedId = asset.id;
+  inspectorOpen = true;
+  if (compactCategories.matches) categoriesOpen = false;
+  updateLibraryPanels();
+  renderInspector(current);
+  if (state.selectedIds.size === 1 && els.libraryInspectorBody.querySelector(".inspector-notes textarea:disabled")) {
+    const active = assetById(state.inspectedId);
+    // renderInspector has already started a read for newly rendered selections.
+    if (active && els.libraryInspectorBody.querySelector("[data-inspector-read-status]").textContent !== "正在读取文件规格…") void loadInspector(active);
+  }
+}
+
+async function updateCuration(patch, ids) {
+  await api("/api/assets/curation", { method: "PATCH", body: JSON.stringify({ project: state.selectedProject, ids, ...patch }) });
+  if (typeof patch.final === "boolean") await loadLibrary({ quiet: true });
+}
+async function toggleLibraryFullscreen() {
+  if (document.fullscreenElement === document.documentElement) {
+    try { await document.exitFullscreen(); } catch {}
+    return;
+  }
+  if (window.__CODEX_ASSET_CONSOLE_EMBEDDED__ === true && window.parent !== window) {
+    window.parent.postMessage({ source: "asset-console", action: "toggle-workspace-fullscreen" }, "*");
+    return;
+  }
+  try { await document.documentElement.requestFullscreen(); }
+  catch { showToast("当前窗口不支持进入全屏，请使用宿主的展开按钮。", "error"); }
 }
 
 function disposeAssetCard(card) {
@@ -665,6 +989,8 @@ function renderAssets() {
   const assets = matchingAssets.slice(0, state.visibleLimit);
   const filteredTotal = state.serverPaging ? state.filteredTotal : matchingAssets.length;
   const hasMore = state.serverPaging ? state.pageStart + assets.length < filteredTotal : matchingAssets.length > assets.length;
+  els.libraryAllButton.setAttribute("aria-pressed", String(!state.finalOnly));
+  els.libraryFinalButton.setAttribute("aria-pressed", String(state.finalOnly));
   const scrollTop = document.scrollingElement?.scrollTop || 0;
   document.body.dataset.libraryView = state.view;
   setColumns(state.settings.columns);
@@ -674,6 +1000,7 @@ function renderAssets() {
   els.clearCharacterFilter.hidden = !state.characterId;
   els.assetGrid.className = `asset-grid ${state.view === "detail" && !state.related && ["image", "video"].includes(state.kind) ? "masonry" : ""}`;
   reconcileAssetCards(assets, state.assetsProjectId);
+  renderInspector(assets);
   let more = els.assetGrid.querySelector(".load-more-card");
   if (hasMore && (!state.serverPaging || assets.length < MAX_ASSET_WINDOW)) {
     if (!more) {
@@ -720,7 +1047,7 @@ async function loadLibrary({ quiet = false, force = false, reset = false, append
   const previousSearchRevision = !queryChanged ? state.searchMeta?.revision : '';
   if (projectChanged || queryChanged || reset) {
     state.assetsProjectId = project?.id || "";
-    if (projectChanged) state.assets = [];
+    if (projectChanged) { state.assets = []; state.selectedIds.clear(); state.selectionAnchor = ""; }
     state.libraryRevision = "";
     state.searchMeta = null;
     state.assetsQueryKey = queryKey;
@@ -760,7 +1087,7 @@ async function loadLibrary({ quiet = false, force = false, reset = false, append
   els.scanState.classList.add("busy");
   try {
     const query = new URLSearchParams({ project: project.id, limit: String(ASSET_PAGE_SIZE),
-      smartGroup: state.characterId ? "" : state.smartGroup || "asset", kind: state.kind || "all", category: state.category || "", query: state.query || "", searchMode: state.searchMode || 'laya', sort: state.sort || "relevance", related: state.related ? "1" : "0", characterId: state.characterId });
+      smartGroup: state.finalOnly || state.characterId ? "" : state.smartGroup || "asset", kind: state.kind || "all", category: state.category || "", query: state.query || "", searchMode: state.searchMode || 'laya', sort: state.sort || "relevance", related: state.related ? "1" : "0", characterId: state.characterId, final: state.finalOnly ? "1" : "0", directory: state.folder });
     if (force) query.set("rescan", "1");
     const previousAssets = state.assets;
     const pageStart = state.pageStart || 0;
@@ -862,8 +1189,11 @@ async function selectProject(projectId) {
   els.characterDialog.close();
   state.characterId = "";
   if (state.selectedProject === projectId && state.assets.length) return;
+  state.inspectedId = "";
+  if (compactCategories.matches) { categoriesOpen = false; updateLibraryPanels(); }
   state.selectedProject = projectId;
   state.category = "";
+  state.folder = "";
   localStorage.setItem("asset-library:selected-project", projectId);
   renderProjects();
   await loadLibrary({ quiet: true });
@@ -931,7 +1261,8 @@ async function openTextAsset(asset) {
   els.toggleTextEditButton.textContent = "编辑";
   els.textSaveState.textContent = asset.editableReason || "";
   els.saveTextButton.disabled = false;
-  els.textViewerDialog.showModal();
+  renderPreviewNav(els.textPreviewNav, asset);
+  if (!els.textViewerDialog.open) els.textViewerDialog.showModal();
   try {
     const data = await api(`/api/text?id=${encodeURIComponent(asset.id)}`, { signal: request.signal });
     if (!isCurrent()) return;
@@ -1112,7 +1443,195 @@ async function saveSettings(event) {
   }
 }
 
+function bindPlatformSources() {
+  const nav = els.libraryPlatformList, panel = els.libraryPlatformPanel;
+  if (!nav || !panel) return;
+  let sources = [], chosen = "", projects = [], project = "", busy = false, status = "", job = null, generation = 0, timer = null, exportFolder = "", projectName = "";
+  function paint() {
+    const source = sources.find(item => item.id === chosen);
+    nav.innerHTML = sources.map(item => `<button type="button" data-platform="${escapeHtml(item.id)}" aria-pressed="${item.id===chosen}"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.mode)}</span></button>`).join("");
+    panel.hidden = !source;
+    if (!source) return;
+    panel.innerHTML = `<p>${escapeHtml(source.note)}</p>
+      ${source.canRead ? `<button class="secondary-button" type="button" data-platform-action="projects" ${busy?"disabled":""}>读取项目</button>` : ""}
+      ${source.localExport ? `<form data-platform-import><label>官方导出目录<input required name="folder" placeholder="已解压目录的绝对路径" value="${escapeHtml(exportFolder)}"></label><label>项目名称（可选）<input name="projectName" placeholder="默认使用目录名称" value="${escapeHtml(projectName)}"></label><button type="submit" class="secondary-button" ${busy||job?.state==="running"?"disabled":""}>导入导出素材</button></form>` : ""}
+      ${source.setup ? `<a href="${escapeHtml(source.setup)}" target="_blank" rel="noopener noreferrer">查看官方接入方式 ↗</a>` : ""}
+      ${projects.length ? `<label>项目<select aria-label="平台项目"><option value="">请选择项目</option>${projects.map(p=>`<option value="${escapeHtml(p.id)}" ${project===p.id?"selected":""}>${escapeHtml(p.name)}</option>`).join("")}</select></label><button class="primary-button" type="button" data-platform-action="start" ${!project||job?.state==="running"||busy?"disabled":""}>同步下载</button>` : ""}
+      <div class="platform-sync-status" role="status">${escapeHtml(status)}</div>
+      ${job?.state==="running" && job.total ? `<progress max="${Number(job.total)}" value="${Number(job.processed)}"></progress>` : ""}
+      ${job?.localProjectId ? '<button class="secondary-button" type="button" data-platform-action="open">打开本地项目</button>' : ""}`;
+  }
+  async function poll() {
+    if (!job) return;
+    try {
+      job = await api(`/api/asset-platforms/sync?id=${encodeURIComponent(job.id)}`);
+      status = job.state==="running" ? job.total ? `已处理 ${job.processed} / ${job.total}` : "正在从平台读取素材和关联资料…"
+        : `已下载 ${job.downloaded} · 已存在 ${job.skipped} · 失败 ${job.failed}${job.error ? " · "+job.error : ""}${job.notice ? " · "+job.notice : ""}`;
+      if (job.state==="running") timer=setTimeout(poll,1400);
+      else if (job.localProjectId) void loadBootstrap();
+    } catch { status="暂时无法读取同步进度，重新打开素材库可检查已完成项目。"; }
+    paint();
+  }
+  nav.addEventListener("click",event=>{
+    const button=event.target.closest("[data-platform]");
+    if(!button||chosen===button.dataset.platform)return;
+    chosen=button.dataset.platform; projects=[];project="";exportFolder="";projectName="";busy=false;generation++;
+    if(!job||job.state!=="running"){job=null;status="";}
+    paint();
+  });
+  panel.addEventListener("input", event=>{
+    if(event.target.name==="folder")exportFolder=event.target.value;
+    if(event.target.name==="projectName")projectName=event.target.value;
+  });
+  panel.addEventListener("submit", async event=>{
+    if(!event.target.matches("[data-platform-import]"))return;
+    event.preventDefault();
+    if(busy||job?.state==="running"||!exportFolder.trim())return;
+    busy=true; status="正在导入本机导出目录…"; paint();
+    try{
+      job=await api("/api/asset-platforms/sync",{method:"POST",body:JSON.stringify({source:chosen,exportFolder:exportFolder.trim(),projectName:projectName.trim()})});
+      clearTimeout(timer);void poll();
+    }catch(error){status=error.message||"无法开始导入";}
+    finally{busy=false;paint();}
+  });
+  panel.addEventListener("change", event=>{ if(event.target.matches("select")){project=event.target.value; const button=panel.querySelector("[data-platform-action=start]"); if(button)button.disabled=!project||job?.state==="running"||busy;} });
+  panel.addEventListener("click", async event=>{
+    const action=event.target.closest("[data-platform-action]")?.dataset.platformAction;
+    const token=generation;
+    if(action==="open" && job?.localProjectId){ await loadBootstrap(); return selectProject(job.localProjectId); }
+    if (action==="projects"){
+      busy=true;status="正在读取平台项目，不会下载文件…";paint();
+      try {
+        let body = await api("/api/asset-platforms/projects",{method:"POST",body:JSON.stringify({source:chosen})});
+        while(token===generation && body.state==="running"){
+          await new Promise(resolve=>setTimeout(resolve,900));
+          if(token!==generation)return;
+          body=await api(`/api/asset-platforms/projects?id=${encodeURIComponent(body.id)}`);
+        }
+        if(token!==generation)return;
+        if(body.state==="error")throw new Error(body.error);
+        projects=body.projects||[];project="";status=body.notice || (projects.length?`找到 ${projects.length} 个项目`:"没有读取到项目");
+      }catch(error){if(token===generation)status=error.message||"无法读取平台项目";}
+      finally{if(token===generation){busy=false;paint();}}
+    } else if (action==="start" && project && !busy && job?.state!=="running"){
+      busy=true;status="正在开始同步…";paint();
+      try{
+        job=await api("/api/asset-platforms/sync",{method:"POST",body:JSON.stringify({source:chosen,project})});
+        clearTimeout(timer);void poll();
+      }catch(error){status=error.message||"无法开始同步";}
+      finally{busy=false;paint();}
+    }
+  });
+  api("/api/asset-platforms").then(result=>{sources=result.sources||[];paint();},()=>{nav.textContent="平台入口暂不可用";});
+  window.addEventListener("pagehide",()=>clearTimeout(timer));
+}
+
 function bindEvents() {
+  updateLibraryPanels();
+  renderInspector();
+  bindPlatformSources();
+  compactCategories.addEventListener("change", event => { categoriesOpen = !event.matches; updateLibraryPanels(); });
+  compactInspector.addEventListener("change", event => { inspectorOpen = !event.matches; updateLibraryPanels(); });
+  els.libraryCategoriesButton.addEventListener("click", () => { categoriesOpen = !categoriesOpen; if (compactCategories.matches && categoriesOpen) inspectorOpen = false; updateLibraryPanels(); });
+  els.libraryDetailsButton.addEventListener("click", () => {
+    inspectorOpen = !inspectorOpen;
+    if (compactCategories.matches && inspectorOpen) categoriesOpen = false;
+    updateLibraryPanels();
+    const asset = state.selectedIds.size === 1 && assetById(state.inspectedId);
+    if (inspectorOpen && asset) void loadInspector(asset, true);
+  });
+  els.libraryInspectorClose.addEventListener("click", () => { inspectorOpen = false; updateLibraryPanels(); els.libraryDetailsButton.focus(); });
+  els.libraryFullscreenButton.addEventListener("click", () => void toggleLibraryFullscreen());
+  const updateFullscreenButton = active => {
+    els.libraryFullscreenButton.setAttribute("aria-pressed", String(active));
+    els.libraryFullscreenButton.textContent = active ? "还原窗口" : "⛶ 全屏";
+  };
+  document.addEventListener("fullscreenchange", () => updateFullscreenButton(document.fullscreenElement === document.documentElement));
+  for (const [button, value] of [[els.libraryAllButton, false], [els.libraryFinalButton, true]]) {
+    button.addEventListener("click", () => {
+      if (state.finalOnly === value) return;
+      state.finalOnly = value;
+      state.selectedIds.clear();
+      state.selectionAnchor = "";
+      renderAssets();
+      resetAssetWindow();
+    });
+  }
+  for (const nav of [els.mediaPreviewNav, els.textPreviewNav]) {
+    nav.addEventListener("click", event => {
+      const button = event.target.closest("button");
+      if (button) switchPreview(button.dataset.previewId, Number(button.dataset.previewStep));
+    });
+  }
+  els.libraryInspectorBody.addEventListener("click", async event => {
+    const related = event.target.closest("[data-inspector-asset]");
+    if (related) { inspectAsset(assetById(related.dataset.inspectorAsset)); return; }
+    const button = event.target.closest("[data-inspector-action]");
+    const action = button?.dataset.inspectorAction;
+    const asset = assetById(state.inspectedId);
+    if (!asset || !action) return;
+    if (action === "clear") { state.selectedIds.clear(); state.selectionAnchor = ""; renderInspector(); }
+    else if (action === "preview") previewAsset(asset);
+    else if (action === "character") openCharacterDialog(asset);
+    else if (action === "use-in-codex") useAssetInCodex(asset);
+    else if (action === "edit-prompt") {
+      if (button.dataset.retry) { button.disabled = true; void loadInspector(asset, true); return; }
+      const form = els.libraryInspectorBody.querySelector("[data-prompt-form]");
+      form.elements.prompt.value = inspectorPrompt?.prompt || "";
+      form.elements.negativePrompt.value = inspectorPrompt?.negativePrompt || "";
+      form.hidden = false; form.elements.prompt.focus();
+    }
+    else if (action === "cancel-prompt") button.closest("form").hidden = true;
+    else if (["final", "notes", "reveal", "copy-prompt"].includes(action)) {
+      button.disabled = true;
+      try {
+        if (action === "final") {
+          const ids = [...state.selectedIds];
+          const final = !ids.every(id => assetById(id)?.final);
+          await updateCuration({ final }, ids);
+          showToast(final ? "已设为定稿" : "已取消定稿");
+        } else if (action === "notes") {
+          const notes = els.libraryInspectorBody.querySelector("textarea");
+          const saved = notes.value;
+          await updateCuration({ notes: saved }, [asset.id]);
+          const draft = notes.value;
+          notes.defaultValue = saved; notes.value = draft;
+          showToast("备注已保存");
+        } else if (action === "reveal") {
+          await api("/api/assets/reveal", { method: "POST", body: JSON.stringify({ project: state.selectedProject, id: asset.id }) });
+        } else {
+          await navigator.clipboard.writeText(inspectorPrompt?.prompt || "");
+          showToast("提示词已复制");
+        }
+      } catch (error) { showToast(error.message || "操作未完成", "error"); }
+      finally { button.disabled = false; }
+    }
+    else openAssetAction(action, asset);
+  });
+  els.libraryInspectorBody.addEventListener("submit", async event => {
+    const form = event.target.closest("[data-prompt-form]");
+    if (!form) return;
+    event.preventDefault();
+    const submit = form.querySelector("[type=submit]");
+    if (submit.disabled || !form.elements.prompt.value.trim()) return;
+    const id = state.inspectedId, project = state.selectedProject;
+    submit.disabled = true;
+    try {
+      const result = await api("/api/assets/prompt", { method: "POST", body: JSON.stringify({ assetId: id, project,
+        prompt: form.elements.prompt.value, negativePrompt: form.elements.negativePrompt.value }) });
+      if (form.isConnected && state.inspectedId === id && state.selectedProject === project) { form.hidden = true; void loadInspector(assetById(id), true); }
+      showToast("已保存提示词关联");
+    } catch (error) { showToast(error.message, "error"); }
+    finally { submit.disabled = false; }
+  });
+  els.assetGrid.addEventListener("keydown", event => {
+    if (!event.target.matches(".asset-card") || ![" ", "Enter"].includes(event.key)) return;
+    const asset = assetById(event.target.dataset.assetId);
+    if (!asset) return;
+    event.preventDefault(); event.stopPropagation();
+    if (event.key === " ") previewAsset(asset);
+    else inspectAsset(asset, { add: event.metaKey || event.ctrlKey, range: event.shiftKey });
+  }, true);
   document.addEventListener("click", event => {
     const button = event.target.closest("[data-loading-retry]");
     if (!button || button.disabled) return;
@@ -1139,6 +1658,7 @@ function bindEvents() {
   els.smartGroupTabs.addEventListener("click", (event) => {
     const button = event.target.closest("[data-smart-group]");
     if (!button) return;
+    state.finalOnly = false;
     state.smartGroup = button.dataset.smartGroup;
     state.category = "";
     renderSmartGroupTabs(); updateKindCounts(); renderCategoryChips(); resetAssetWindow();
@@ -1173,7 +1693,14 @@ function bindEvents() {
   els.assetGrid.addEventListener("pointerdown", openManualReviewAction, true);
   els.assetGrid.addEventListener("click", (event) => {
     const actionButton = event.target.closest("[data-action]");
-    if (!actionButton) return;
+    if (!actionButton) {
+      if (!event.target.closest("button, details, audio[controls], video[controls], a, input")) {
+        const card = event.target.closest(".asset-card");
+        if (card) inspectAsset(assetById(card.dataset.assetId), { add: event.metaKey || event.ctrlKey, range: event.shiftKey });
+        else { state.selectedIds.clear(); state.selectionAnchor = ""; renderInspector(); }
+      }
+      return;
+    }
     event.preventDefault(); event.stopPropagation();
     if (["manual-category", "manual-tags"].includes(actionButton.dataset.action) && event.detail !== 0) return;
     const asset = assetById(actionButton.closest("[data-asset-id]")?.dataset.assetId);
@@ -1192,12 +1719,14 @@ function bindEvents() {
   });
   els.settingsForm.addEventListener("submit", saveSettings);
   els.mediaPreviewDialog.addEventListener("close", () => {
+    if (els.mediaPreviewDialog.open) return;
     mediaRequests.cancel();
     els.mediaPreviewStage.querySelectorAll("audio, video").forEach((media) => mediaPlayback.stop(media));
     els.mediaPreviewStage.replaceChildren();
     state.previewAsset = null;
   });
   els.textViewerDialog.addEventListener("close", () => {
+    if (els.textViewerDialog.open) return;
     textRequests.cancel();
     state.textAsset = null;
   });
@@ -1205,6 +1734,14 @@ function bindEvents() {
   document.addEventListener("visibilitychange", () => { if (document.hidden) mediaPlayback.stop(); });
   document.querySelectorAll("[data-close-dialog]").forEach((button) => button.addEventListener("click", () => document.getElementById(button.dataset.closeDialog)?.close()));
   document.addEventListener("keydown", (event) => {
+    if (["ArrowLeft", "ArrowRight"].includes(event.key) && (els.mediaPreviewDialog.open || els.textViewerDialog.open)
+      && !event.target.closest("input, textarea, audio, video, [contenteditable]")) {
+      event.preventDefault(); switchPreview("", event.key === "ArrowLeft" ? -1 : 1);
+      return;
+    }
+    if (event.key === "Escape" && !document.querySelector("dialog[open]") && compactInspector.matches && inspectorOpen) {
+      inspectorOpen = false; updateLibraryPanels(); els.libraryDetailsButton.focus();
+    }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
       event.preventDefault(); els.librarySearchInput.focus();
     }
@@ -1212,7 +1749,9 @@ function bindEvents() {
   window.addEventListener("message", (event) => {
     const message = event.data;
     if (event.source !== window.parent || message?.source !== "codex-sidebar-enhancer") return;
-    if (message.action === "search") {
+    if (message.action === "workspace-fullscreen") {
+      updateFullscreenButton(message.fullscreen === true);
+    } else if (message.action === "search") {
       const query = String(message.query || "").trim();
       state.query = query;
       els.librarySearchInput.value = query;

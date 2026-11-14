@@ -9,7 +9,7 @@
 </head>
 <body>
   <div class="app-shell">
-    <aside class="library-sidebar" aria-label="项目管理">
+    <aside id="libraryCategories" class="library-sidebar" aria-label="项目与分类">
       <header class="sidebar-brand">
         <div class="brand-icon" aria-hidden="true">◫</div>
         <div>
@@ -19,6 +19,11 @@
         <button id="newProjectButton" class="icon-button" type="button" title="新建项目" aria-label="新建项目">＋</button>
       </header>
 
+      <div class="sidebar-section-heading"><span>总览</span></div>
+      <div class="library-overview" role="group" aria-label="浏览范围">
+        <button id="libraryAllButton" type="button" aria-pressed="true">浏览素材</button>
+        <button id="libraryFinalButton" type="button" aria-pressed="false">定稿</button>
+      </div>
       <div class="sidebar-section-heading">
         <span>项目</span>
         <small id="projectCount">0</small>
@@ -26,6 +31,12 @@
       <nav id="localProjectList" class="project-list" aria-label="本地项目"></nav>
       <div class="sidebar-section-heading"><span>素材分类</span></div>
       <nav id="categoryChips" class="category-chips" aria-label="子分类"></nav>
+
+      <section class="platform-sources" aria-label="平台来源">
+        <div class="sidebar-section-heading"><span>平台来源</span></div>
+        <nav id="libraryPlatformList" aria-label="平台列表"></nav>
+        <div id="libraryPlatformPanel" hidden></div>
+      </section>
 
       <section id="projectFoldersPanel" class="project-folders-panel" hidden>
         <div class="sidebar-section-heading">
@@ -48,6 +59,9 @@
           <p id="workspaceSubtitle">关联本地文件夹后，系统会自动识别并分类资产。</p>
         </div>
         <div class="header-actions">
+          <button id="libraryCategoriesButton" type="button" class="secondary-button" aria-controls="libraryCategories" aria-expanded="true">分类</button>
+          <button id="libraryDetailsButton" type="button" class="secondary-button" aria-controls="libraryInspector" aria-expanded="true">详情</button>
+          <button id="libraryFullscreenButton" type="button" class="secondary-button" aria-pressed="false" title="全屏浏览素材库">⛶ 全屏</button>
           <button id="refreshLibraryButton" type="button" class="secondary-button">↻ 重新扫描</button>
           <button id="settingsButton" type="button" class="secondary-button">⚙ 设置</button>
         </div>
@@ -80,6 +94,7 @@
             <select id="librarySortSelect">
               <option value="relevance" selected>相关度</option>
               <option value="newest">最近更新</option>
+              <option value="joined">最近加入</option>
               <option value="oldest">最早更新</option>
               <option value="name">名称</option>
               <option value="size">文件大小</option>
@@ -95,7 +110,7 @@
           <div class="view-switch" role="group" aria-label="浏览样式"><button id="thumbnailViewButton" type="button" aria-pressed="true">▦ 缩略图</button><button id="detailViewButton" type="button" aria-pressed="false">☷ 详细</button></div>
           <label class="related-toggle"><input id="relatedAssetsToggle" type="checkbox" checked>同角色相邻</label>
           <button id="clearCharacterFilter" type="button" class="text-button" hidden>显示全部角色 ×</button>
-          <span class="browse-hint">双击预览详情 · 角色角标管理关联</span>
+          <span class="browse-hint">单击看详情 · 双击或空格预览 · Shift 连选</span>
         </div>
       </section>
 
@@ -118,6 +133,10 @@
         </div>
       </section>
     </main>
+    <aside id="libraryInspector" class="library-inspector" aria-labelledby="libraryInspectorTitle">
+      <header class="inspector-header"><h2 id="libraryInspectorTitle">素材详情</h2><button id="libraryInspectorClose" class="icon-button" type="button" aria-label="关闭素材详情" title="关闭详情">×</button></header>
+      <div id="libraryInspectorBody" class="inspector-body"></div>
+    </aside>
   </div>
 
   <dialog id="projectDialog" class="modal project-modal">
@@ -156,6 +175,7 @@
         <span id="textSaveState" class="save-state"></span>
         <button id="saveTextButton" type="button" class="primary-button" hidden>保存到原文件</button>
       </footer>
+      <nav id="textPreviewNav" class="library-preview-nav" aria-label="浏览相邻素材"></nav>
     </div>
   </dialog>
 
@@ -201,6 +221,7 @@
           <section id="mediaPromptReferences" class="prompt-section prompt-references"></section>
         </aside>
       </div>
+      <nav id="mediaPreviewNav" class="library-preview-nav" aria-label="浏览相邻素材"></nav>
     </div>
   </dialog>
 

@@ -135,7 +135,7 @@ test('actual card markup escapes HTML in summaries and hides the summary with an
   assert.equal(context.commonCardMarkup(item, 'TEXT').includes('asset-search-match'), false);
 });
 function uiHarness() {
-  const requests = [], state = { selectedProject: 'p', assetsProjectId: '', assets: [], query: 'story', searchMode: 'laya', sort: 'relevance', related: false,
+  const requests = [], state = { selectedProject: 'p', assetsProjectId: '', assets: [], selectedIds: new Set(), query: 'story', searchMode: 'laya', sort: 'relevance', related: false,
     projects: [{ id: 'p', name: 'Project' }], settings: {}, visibleLimit: 120 };
   const els = { workspaceTitle: {}, librarySearchStatus: { dataset: {} }, scanState: { classList: { add() {}, remove() {} } } };
   const context = vm.createContext({ state, els, URLSearchParams, document: { scrollingElement: { scrollTop: 0 } }, libraryRequests: createLatestRequestGate(),
