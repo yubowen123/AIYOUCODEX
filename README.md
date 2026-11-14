@@ -237,6 +237,8 @@ Windows 安装器会自动：
 
 ## macOS 一行安装
 
+Intel 和 Apple Silicon 有独立的[离线安装包](docs/OFFLINE-INSTALL.md)，包含对应架构的 Node.js 和生产依赖。macOS 14 及以上可从 [GitHub Actions](https://github.com/yubowen123/AIYOUCODEX/actions/workflows/macos-offline.yml) 获取。
+
 在“终端”中粘贴并回车：
 
 ```bash

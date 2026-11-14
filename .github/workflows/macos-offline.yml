@@ -1,0 +1,86 @@
+name: macOS Offline Installer
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/macos-offline.yml'
+      - 'packaging/macos/**'
+      - 'scripts/build-macos-offline.mjs'
+      - 'scripts/smoke-macos-offline.sh'
+      - 'scripts/setup-claude-dependencies.mjs'
+      - 'scripts/install.mjs'
+      - 'lib/install-config.mjs'
+      - 'lib/launch-agent.mjs'
+      - 'install.sh'
+      - 'uninstall.sh'
+      - 'package*.json'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Package and test (${{ matrix.edition }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            arch: x64
+            edition: intel-x64
+            sha256: c53383238206b9ae4db23c5d8a63645e2e753bec8ab51a49cc81939aa64e9422
+          - os: macos-15
+            arch: arm64
+            edition: apple-silicon-arm64
+            sha256: e7131995759b61a0170b646010d2ad35a5d37b4cb0d471f3e8317eac6f742f3d
+    env:
+      NODE_VERSION: 22.23.5
+      TARGET_ARCH: ${{ matrix.arch }}
+      EDITION: ${{ matrix.edition }}
+      NODE_SHA256: ${{ matrix.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download and verify the native Node runtime
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP"
+          archive="node-v${NODE_VERSION}-darwin-${TARGET_ARCH}.tar.gz"
+          curl --fail --silent --show-error --location --retry 2 "https://nodejs.org/dist/v${NODE_VERSION}/$archive" -o "$archive"
+          printf '%s  %s\n' "$NODE_SHA256" "$archive" | shasum -a 256 -c
+          tar -xzf "$archive"
+          runtime="$RUNNER_TEMP/${archive%.tar.gz}"
+          native="$(uname -m)"
+          [[ "$native" == "$TARGET_ARCH" || ( "$native" == x86_64 && "$TARGET_ARCH" == x64 ) ]]
+          [[ "$("$runtime/bin/node" -p 'process.arch')" == "$TARGET_ARCH" ]]
+          echo "$runtime/bin" >> "$GITHUB_PATH"
+          echo "NODE_LICENSE=$runtime/LICENSE" >> "$GITHUB_ENV"
+      - name: Build ZIP and verify its extracted installer
+        shell: bash
+        run: |
+          node scripts/verify-public-boundary.mjs
+          version="$(node -p 'require("./package.json").version')"
+          revision="$(git rev-parse --short=12 HEAD)"
+          name="AIYOUcodex-v${version}-macos-${EDITION}-${revision}"
+          mkdir -p "$RUNNER_TEMP/offline-artifacts" "$RUNNER_TEMP/extracted"
+          node scripts/build-macos-offline.mjs --arch "$TARGET_ARCH" --online \
+            --node-runtime "$(command -v node)" --node-license "$NODE_LICENSE" --output "$RUNNER_TEMP/$name"
+          (
+            cd "$RUNNER_TEMP/offline-artifacts"
+            ditto -c -k --keepParent "$RUNNER_TEMP/$name" "$name.zip"
+            shasum -a 256 "$name.zip" > "$name.zip.sha256"
+            shasum -a 256 -c "$name.zip.sha256"
+            ditto -x -k "$name.zip" "$RUNNER_TEMP/extracted"
+          )
+          bash scripts/smoke-macos-offline.sh "$RUNNER_TEMP/extracted/$name" "$TARGET_ARCH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIYOUcodex-macos-${{ matrix.edition }}
+          path: ${{ runner.temp }}/offline-artifacts/
+          if-no-files-found: error
