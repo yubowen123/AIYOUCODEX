@@ -13,7 +13,7 @@ function deferred() {
 }
 function libraryHarness() {
   const requests = [], toasts = [], renders = [];
-  const state = { selectedProject: "A", assetsProjectId: "", assets: [], projects: [{ id: "A", name: "Project A" }, { id: "B", name: "Project B" }], settings: {}, visibleLimit: 120 };
+  const state = { selectedProject: "A", assetsProjectId: "", assets: [], selectedIds: new Set(), projects: [{ id: "A", name: "Project A" }, { id: "B", name: "Project B" }], settings: {}, visibleLimit: 120 };
   const busyClasses = new Set();
   const els = { workspaceTitle: {}, scanState: { classList: { add: (value) => busyClasses.add(value), remove: (value) => busyClasses.delete(value) } } };
   const context = vm.createContext({
@@ -247,7 +247,7 @@ function textHarness() {
   const els = Object.fromEntries(["textViewerTitle", "textViewerFormat", "textViewerPreview", "textViewerEditor", "saveTextButton", "toggleTextEditButton", "textSaveState"].map((id) => [id, { focus() {} }]));
   els.textViewerDialog = { open: false, showModal() { this.open = true; } };
   const context = vm.createContext({
-    state, els, loadingMarkup: (title, detail) => `${title}: ${detail}`, textRequests: createLatestRequestGate(), markdownToSafeHtml: (text) => text,
+    state, els, renderPreviewNav() {}, loadingMarkup: (title, detail) => `${title}: ${detail}`, textRequests: createLatestRequestGate(), markdownToSafeHtml: (text) => text,
     api: (url, options) => { const pending = deferred(); requests.push({ ...pending, url, options }); return pending.promise; },
     showToast: (...args) => toasts.push(args), loadLibrary: async () => {},
   });
