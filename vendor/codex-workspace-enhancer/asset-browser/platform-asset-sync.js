@@ -35,6 +35,7 @@ function cleanReference(value) {
   return short(value);
 }
 const refs = values => Array.isArray(values) ? values.slice(0,100).map(cleanReference).filter(Boolean) : [];
+const mediaSuffix = Object.values(media).flatMap(types=>Object.values(types));
 const configFields = new Set(["aspectRatio","resolution","duration","seed","inputMode","episodeId","ratio","video_resolution","model_version","fps","width","height","batchSize","size","createdAt","taskId","mode","guidanceScale","quality"]);
 function cleanSettings(settings) {
   return Object.fromEntries(Object.entries(settings || {}).filter(([key,v]) => configFields.has(key) && (typeof v==="boolean"||typeof v==="number"||typeof v==="string"&&!/^(https?:|data:)/i.test(v))).map(([key,v])=>[key,typeof v==="string"?short(v):v]));
@@ -97,6 +98,20 @@ function writeMetadata(target,record,row){
     item:{id:record.id,name:short(row.name),nodeId:short(row.sourceNodeId),canvasId:short(row.canvasId),status:short(row.status),folder:short(row.folder),downstream:refs(row.downstream)},ticket};
   return fs.writeFile(target,JSON.stringify(metadata,null,2)+"\n",{flag:"wx",mode:0o600});
 }
+export async function isPlatformPromptCompanion(file, root) {
+  if (!file.endsWith(".prompt.md")) return false;
+  const [trusted, candidate]=await Promise.all([fs.realpath(root),fs.realpath(file)]).catch(()=>[]);
+  if (!trusted || !candidate) return false;
+  const relative=path.relative(trusted,candidate);
+  if (!relative || relative===".." || relative.startsWith(".."+path.sep) || path.isAbsolute(relative)) return false;
+  const base=file.slice(0,-".prompt.md".length);
+  const candidates=mediaSuffix.includes(path.extname(base).toLowerCase()) ? [base,...mediaSuffix.map(ext=>base+ext)] : mediaSuffix.map(ext=>base+ext);
+  for(const asset of candidates) {
+    if (await ordinaryFile(asset) && await readPlatformAssetDetails(asset)) return true;
+  }
+  return false;
+}
+
 export async function readPlatformAssetDetails(file) {
   const extension=path.extname(file);
   if (!extension) return null;
@@ -235,7 +250,7 @@ export class PlatformAssetSync {
           const stem=current?.slice(0,-".meta.json".length) || safe(row.name,"素材")+stemKey;
           const extensions=Object.values(media[row.kind]);
           const complete=await Promise.all(extensions.map(async extension=>await ordinaryFile(path.join(collection,stem+extension)) && await ordinaryFile(path.join(collection,stem+".meta.json"))));
-          const missingPromptFile=row.promptFile && row.extension && !await ordinaryFile(path.join(collection,stem+row.extension+".prompt.md"));
+          const missingPromptFile=row.promptFile && row.extension && !await ordinaryFile(path.join(collection,stem+".prompt.md")) && !await ordinaryFile(path.join(collection,stem+row.extension+".prompt.md"));
           if(complete.some(Boolean)&&!missingPromptFile){ job.skipped++;continue; }
           const record={platform:source,project,id:String(row.id)};
           if(row.local){
@@ -246,7 +261,7 @@ export class PlatformAssetSync {
               await fs.copyFile(row.local,temp);
               await this.publish(collection,stem,row.extension,temp,record,row);
               if(row.promptFile) {
-                const destination=path.join(collection,stem+row.extension+".prompt.md");
+                const destination=path.join(collection,stem+".prompt.md");
                 const original=path.basename(row.local);
                 const text=await fs.readFile(row.promptFile,"utf8");
                 const updated=text.replace(/^(\s*[-*]\s*结果文件[：:]\s*)[^\n]+$/m,(line,prefix)=>line.trimEnd().endsWith(original)?prefix+path.basename(path.join(collection,stem+row.extension)):line);

@@ -15,7 +15,8 @@ async function fixture(t, publicRoot, api) {
   const outputRoot = process.env.AIYOUCODEX_TEST_OUTPUT_DIRECTORY || os.tmpdir();
   await mkdir(outputRoot, {recursive:true});
   const root = await mkdtemp(path.join(outputRoot, 'module-loading-'));
-  const candidates = [process.env.AIYOUCODEX_TEST_BROWSER, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium'].filter(Boolean);
+  const candidates = [process.env.AIYOUCODEX_TEST_BROWSER, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium',
+    ...[process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)'], process.env.LOCALAPPDATA].filter(Boolean).map(directory => path.join(directory, 'Google/Chrome/Application/chrome.exe'))].filter(Boolean);
   let executable; for (const candidate of candidates) if (await access(candidate).then(()=>true,()=>false)) { executable = candidate; break; }
   assert.ok(executable, 'Loading UI regression requires isolated Chrome');
   const pending = [], methods = [];

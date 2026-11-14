@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promis
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { PlatformAssetSync, readPlatformAssetDetails } from "../vendor/codex-workspace-enhancer/asset-browser/platform-asset-sync.js";
+import { PlatformAssetSync, isPlatformPromptCompanion, readPlatformAssetDetails } from "../vendor/codex-workspace-enhancer/asset-browser/platform-asset-sync.js";
 import { CodexPromptAssociationStore } from "../vendor/codex-workspace-enhancer/asset-browser/codex-prompt-associations.js";
 
 async function finish(sync,id) {
@@ -59,4 +59,13 @@ test("manual LibTV export import keeps only declared sibling metadata",async t=>
   const names=await readdir(projectFolder), target=path.join(projectFolder,names.find(name=>name.endsWith(".jpg")));
   const store=new CodexPromptAssociationStore({registryPath:path.join(tmp,"registry.json")});
   assert.equal((await store.get(target)).prompt,"本地导出的原始提示词");
+  const companion=target.replace(/\.jpg$/,".prompt.md");
+  assert.equal(await isPlatformPromptCompanion(companion,path.join(tmp,"downloads")),true);
+  assert.equal(await isPlatformPromptCompanion(path.join(exported,"clip.prompt.md"),path.join(tmp,"downloads")),false);
+  const legacy=target+".prompt.md";
+  await writeFile(legacy,"旧版资料");
+  assert.equal(await isPlatformPromptCompanion(legacy,path.join(tmp,"downloads")),true);
+  const unrelated=path.join(projectFolder,"普通笔记.prompt.md");
+  await writeFile(unrelated,"普通文档");
+  assert.equal(await isPlatformPromptCompanion(unrelated,path.join(tmp,"downloads")),false);
 });

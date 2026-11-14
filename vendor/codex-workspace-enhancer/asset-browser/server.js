@@ -17,7 +17,7 @@ import { replaceFileAtomically } from "./atomic-file-replace.js";
 import { buildImageSequenceProfiles, classifyLocalAsset } from "./asset-smart-classifier.js";
 import { readImageDimensions } from "./image-dimensions.js";
 import { readAssetFileInspector } from "./asset-file-inspector.js";
-import { PlatformAssetSync, readPlatformAssetDetails } from "./platform-asset-sync.js";
+import { PlatformAssetSync, isPlatformPromptCompanion, readPlatformAssetDetails } from "./platform-asset-sync.js";
 import { createAssetScanCoordinator } from "./asset-scan-coordinator.js";
 import { filterLibraryResult } from "./asset-library-filter.js";
 import { AssetLibraryPager } from "./asset-library-pagination.js";
@@ -765,8 +765,9 @@ async function addProject({ name, path: projectPath, scanRoots, folders }) {
   return project;
 }
 
+const platformProjectsRoot = path.join(path.dirname(configPath), "platform-projects");
 const platformAssetSync = new PlatformAssetSync({
-  root: path.join(path.dirname(configPath), "platform-projects"),
+  root: platformProjectsRoot,
   async register(name, folder) {
     const config = await loadConfig();
     const existing = config.projects.find(project => project.folders.includes(folder));
@@ -1600,6 +1601,7 @@ async function buildLibraryAssets(project, config, candidates, contextPaths = ca
     try {
       const stats = await fs.lstat(filePath);
       if (!stats.isFile() || stats.isSymbolicLink()) { missingPaths.push(filePath); continue; }
+      if (await isPlatformPromptCompanion(filePath, platformProjectsRoot)) { missingPaths.push(filePath); continue; }
       const assignment = config.assetAssignments?.[filePath] || "";
       assets.push(await buildLibraryAsset(filePath, project, config, assignment, classificationContext));
     } catch (error) {

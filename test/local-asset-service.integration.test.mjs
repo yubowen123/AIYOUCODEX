@@ -195,6 +195,26 @@ test("local asset API scans multiple folders and keeps project moves logical", {
     })).project;
     assert.deepEqual(sourceProject.folders, [first, second]);
 
+    const exportedFolder = path.join(root, "official-export");
+    await mkdir(exportedFolder);
+    await Promise.all([
+      writeFile(path.join(exportedFolder, "clip.jpg"), "image-fixture"),
+      writeFile(path.join(exportedFolder, "clip.prompt.md"), "导出的原始提示词"),
+    ]);
+    let importJob = await request("/api/asset-platforms/sync", { method: "POST",
+      body: JSON.stringify({ source: "libtv", exportFolder: exportedFolder, projectName: "导出测试项目" }) });
+    for (let attempt = 0; attempt < 50 && importJob.state === "running"; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 30));
+      importJob = await request("/api/asset-platforms/sync?id=" + encodeURIComponent(importJob.id));
+    }
+    assert.equal(importJob.state, "done");
+    const importedLib = await request("/api/library?project=" + encodeURIComponent(importJob.localProjectId) + "&limit=20");
+    assert.deepEqual(importedLib.assets.map(asset => asset.kind), ["image"], "imported companion files do not duplicate the asset");
+    const importedPrompt = await request("/api/assets/prompt?" + new URLSearchParams({
+      id: importedLib.assets[0].id, project: importJob.localProjectId, optional: "1",
+    }));
+    assert.equal(importedPrompt.association.prompt, "导出的原始提示词");
+
     let synchronizedProject = null;
     for (let attempt = 0; attempt < 80; attempt += 1) {
       const projects = (await request("/api/projects")).projects;
