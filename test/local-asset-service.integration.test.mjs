@@ -322,6 +322,26 @@ test("local asset API scans multiple folders and keeps project moves logical", {
     assert.equal(repaired.index.mode, "manual-rescan", "only the explicit repair action should traverse every folder");
 
     const prompt = initial.assets.find((asset) => asset.name === "hero-prompt.md");
+    const inspectQuery = new URLSearchParams({ project: sourceProject.id, id: prompt.id });
+    const facts = await request(`/api/assets/inspection?${inspectQuery}`);
+    assert.equal(facts.filename, "hero-prompt.md");
+    assert.equal(facts.format, "MD");
+    assert.equal(facts.path, promptPath);
+    assert.ok(facts.modifiedAt && facts.createdAt && prompt.indexedAt);
+    assert.equal(facts.video, undefined);
+    await assert.rejects(request(`/api/assets/inspection?${new URLSearchParams({ project: targetProject.id, id: prompt.id })}`), /不属于当前项目/);
+    await assert.rejects(request("/api/assets/curation", {
+      method: "PATCH", body: JSON.stringify({ project: sourceProject.id, ids: [prompt.id, "invalid"], final: true }),
+    }));
+    assert.equal((await request(`/api/assets/inspection?${inspectQuery}`)).final, false);
+    await request("/api/assets/curation", { method: "PATCH", body: JSON.stringify({ project: sourceProject.id, ids: [prompt.id], final: true, notes: "锁定版" }) });
+    const curated = await request(`/api/assets/inspection?${inspectQuery}`);
+    assert.deepEqual([curated.final, curated.notes], [true, "锁定版"]);
+    const finalView = await request(`/api/library?${new URLSearchParams({ project: sourceProject.id, final: "1", limit: "20" })}`);
+    assert.deepEqual(finalView.assets.map(item => item.id), [prompt.id]);
+    const folderView = await request(`/api/library?${new URLSearchParams({ project: sourceProject.id, directory: first, limit: "100", sort: "joined" })}`);
+    assert.ok(folderView.assets.some(item => item.id === prompt.id));
+    assert.ok(folderView.assets.every(item => item.sourcePath.startsWith(first + path.sep)));
     const read = await request(`/api/text?id=${encodeURIComponent(prompt.id)}`);
     assert.match(read.content, /Original prompt/);
     await request("/api/text", { method: "PUT", body: JSON.stringify({ assetId: prompt.id, content: "# Hero\nEdited locally", expectedRevision: read.revision }) });

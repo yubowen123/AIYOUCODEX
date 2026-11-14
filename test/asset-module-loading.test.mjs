@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { access, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import vm from 'node:vm';
-import {fileURLToPath} from 'node:url';
 import { MODELS, IMAGE_MODELS, PROTOCOLS, defaults } from '../lib/model-arena/catalog.mjs';
 import { connectFixtureBrowser, waitForBrowserState } from './helpers/browser-state.mjs';
 
@@ -15,8 +15,7 @@ async function fixture(t, publicRoot, api) {
   const outputRoot = process.env.AIYOUCODEX_TEST_OUTPUT_DIRECTORY || os.tmpdir();
   await mkdir(outputRoot, {recursive:true});
   const root = await mkdtemp(path.join(outputRoot, 'module-loading-'));
-  const candidates = [process.env.AIYOUCODEX_TEST_BROWSER, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium',
-    ...[process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)'], process.env.LOCALAPPDATA].filter(Boolean).map(directory => path.join(directory, 'Google/Chrome/Application/chrome.exe'))].filter(Boolean);
+  const candidates = [process.env.AIYOUCODEX_TEST_BROWSER, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium'].filter(Boolean);
   let executable; for (const candidate of candidates) if (await access(candidate).then(()=>true,()=>false)) { executable = candidate; break; }
   assert.ok(executable, 'Loading UI regression requires isolated Chrome');
   const pending = [], methods = [];
@@ -62,6 +61,35 @@ test('asset page: bootstrap, retained cards, read-only error recovery, document 
   await f.wait("document.getElementById('libraryLoadingState').textContent.includes('正在读取资产索引')",'Index stage is visible');
   (await f.take(x=>x.url.pathname==='/api/library')).resolve(page([asset()]));
   await f.wait("document.getElementById('libraryLoadingState').hidden&&document.querySelector('.asset-card')!==null",'Success removes loader and shows actual cards');
+  const click = id => evaluate(`document.getElementById(${JSON.stringify(id)}).click()`);
+  await evaluate("document.querySelector('.asset-card').click()");
+  assert.equal(await evaluate("document.querySelector('#libraryInspector h3').textContent"), "角色设定");
+  assert.equal(await evaluate("document.querySelector('.asset-card').hasAttribute('data-inspected') && !document.getElementById('textViewerDialog').open"), true);
+  assert.equal(await evaluate("document.querySelector('#libraryCategories').getBoundingClientRect().right <= document.querySelector('.library-main').getBoundingClientRect().left && document.querySelector('.library-main').getBoundingClientRect().right <= document.querySelector('#libraryInspector').getBoundingClientRect().left"), true);
+  await click("libraryInspectorClose");
+  assert.equal(await evaluate("document.querySelector('#libraryInspector').getBoundingClientRect().width"), 0);
+  await click("libraryDetailsButton");
+  assert.equal(await evaluate("document.querySelector('#libraryInspector h3').textContent"), "角色设定");
+  const full = await evaluate("(() => {const b=document.querySelector('#libraryFullscreenButton').getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2};})()");
+  const toggleFullscreen = async () => {
+    await f.client.send('Input.dispatchMouseEvent', {type:'mousePressed',button:'left',clickCount:1,...full});
+    await f.client.send('Input.dispatchMouseEvent', {type:'mouseReleased',button:'left',clickCount:1,...full});
+  };
+  await toggleFullscreen();
+  await f.wait("document.fullscreenElement === document.documentElement && document.getElementById('libraryFullscreenButton').getAttribute('aria-pressed') === 'true'", 'Explicit browser fullscreen works');
+  await f.client.send('Runtime.evaluate',{expression:"document.exitFullscreen()", awaitPromise:true});
+  await f.wait("!document.fullscreenElement && document.querySelector('#libraryInspector h3').textContent === '角色设定'",'Fullscreen return keeps selection');
+  if (process.env.AIYOU_ASSET_LAYOUT_SCREENSHOT) {
+    const {data} = await f.client.send('Page.captureScreenshot',{format:'png'});
+    await writeFile(process.env.AIYOU_ASSET_LAYOUT_SCREENSHOT, Buffer.from(data, 'base64'));
+  }
+  await f.client.send('Emulation.setDeviceMetricsOverride',{width:560,height:760,deviceScaleFactor:1,mobile:false});
+  await f.wait("document.querySelector('.app-shell').hasAttribute('data-inspector-hidden') && document.querySelector('.app-shell').hasAttribute('data-categories-hidden')",'Compact layout folds both rails');
+  await click("libraryCategoriesButton");
+  assert.equal(await evaluate("document.querySelector('#libraryCategories').getBoundingClientRect().width > 0"), true);
+  await evaluate("document.querySelector('.asset-card').click()");
+  assert.equal(await evaluate("document.querySelector('#libraryInspector h3').textContent === '角色设定' && document.querySelector('.app-shell').hasAttribute('data-categories-hidden') && document.documentElement.scrollWidth === innerWidth"), true);
+  await f.client.send('Emulation.clearDeviceMetricsOverride');
   await evaluate("document.getElementById('librarySearchInput').value='alpha';document.getElementById('librarySearchInput').dispatchEvent(new Event('input'))");
   const old=await f.take(x=>x.url.searchParams.get('query')==='alpha');
   assert.equal(await evaluate("document.querySelectorAll('.asset-card').length"),1,'Existing cards remain during search');
@@ -76,6 +104,7 @@ test('asset page: bootstrap, retained cards, read-only error recovery, document 
   const retry=await f.take(x=>x.url.pathname==='/api/library');
   assert.equal(retry.url.searchParams.has('rescan'),false);retry.resolve(page([asset('beta-match')]));
   await f.wait("document.getElementById('libraryLoadingState').hidden&&document.querySelector('[data-asset-id=beta-match]')!==null",'Read retry resolves current query');
+  assert.equal(await evaluate("document.querySelector('#libraryInspector .inspector-empty strong').textContent"), '选择一项素材');
   await evaluate("document.querySelector('.text-card').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
   await f.wait("document.querySelector('#textViewerPreview [aria-busy=true]')!==null",'Document read has themed loader');
   (await f.take(x=>x.url.pathname==='/api/text')).resolve({error:'原文件不可访问'},404);
@@ -194,4 +223,61 @@ test('body timeouts become visible read errors and write operations keep their e
     assert.equal(deadlines, 1, 'The loading change does not abort or replay a write');
     assert.equal(signals[1], undefined);
   }
+});
+
+test('asset inspector shows only the selected file facts and switches between single, multi and quick previews', {timeout:30000}, async t => {
+  const videoSample = process.env.AIYOU_ASSET_INSPECTOR_SAMPLE ? await readFile(process.env.AIYOU_ASSET_INSPECTOR_SAMPLE) : null;
+  const f=await fixture(t,publicRoot,(req,res,url,json)=>{
+    if (url.pathname==='/api/fixture-inspector-media' && videoSample) {
+      res.writeHead(200,{'content-type':'video/mp4','content-length':videoSample.length}); res.end(videoSample); return true;
+    }
+    if (url.pathname==='/api/assets/curation') {json(res,{ok:true,count:2});return true;}
+    if (url.pathname==='/api/assets/prompt' && req.method==='POST') {
+      let body=''; req.on('data',chunk=>body+=chunk);
+      req.on('end',()=>{const data=JSON.parse(body); json(res,{ok:true,association:{prompt:data.prompt,negativePrompt:data.negativePrompt,source:'manual-registration'}});});
+      return true;
+    }
+    return false;
+  });
+  const e=x=>f.client.evaluate(x);
+  (await f.take(x=>x.url.pathname==='/api/config')).resolve(config);
+  (await f.take(x=>x.url.pathname==='/api/projects')).resolve({projects:[project]});
+  const video={...asset('video'),name:'交付镜头.mp4',title:'交付镜头',kind:'video',extension:'MP4',size:1600000,tags:['示例'],sourcePath:'/fixture/交付镜头.mp4',mediaUrl:videoSample ? '/api/fixture-inspector-media' : '/preview.mp4',promptAssociation:{available:false}};
+  const doc={...asset('doc'),name:'拍摄资料.md',title:'拍摄资料',tags:['示例']};
+  (await f.take(x=>x.url.pathname==='/api/library')).resolve(page([video,doc]));
+  await f.wait("document.querySelectorAll('.asset-card').length===2","Assets ready");
+  await e("document.querySelector('[data-asset-id=doc]').click()");
+  const old=await f.take(x=>x.url.pathname==='/api/assets/inspection' && x.url.searchParams.get('id')==='doc');
+  await e("document.querySelector('[data-asset-id=video]').click()");
+  (await f.take(x=>x.url.pathname==='/api/assets/inspection' && x.url.searchParams.get('id')==='video')).resolve({size:1600000,createdAt:'2026-10-04T01:30:00Z',modifiedAt:'2026-11-14T09:40:00Z',kind:'video',format:'MP4',path:'/fixture/交付镜头.mp4',duration:8,video:{width:1920,height:1080,frameRate:24,codec:'h264',bitrate:1600000,pixelFormat:'yuv420p',depth:8},audioTrackCount:1,audio:{codec:'aac',sampleRate:48000,channels:2},notes:'客户审阅版本'});
+  (await f.take(x=>x.url.pathname==='/api/assets/prompt')).resolve({prompt:'电影质感的暖色镜头',model:'示例模型',generator:'创作画布'});
+  old.resolve({notes:'不应串进来的旧资料'});
+  await f.wait("document.querySelector('[data-inspector-specs]').textContent.includes('24 fps') && document.querySelector('[data-inspector-prompt]').textContent.includes('暖色')", "Video shows real-looking type-specific facts");
+  await e("document.querySelector('.inspector-file-details').open=true");
+  assert.equal(await e("document.querySelector('[data-inspector-details]').textContent.includes('48000 Hz') && document.querySelector('[data-inspector-details]').textContent.includes('创建时间') && document.querySelector('.inspector-notes textarea').value==='客户审阅版本'"),true);
+  if (process.env.AIYOU_ASSET_INSPECTOR_SCREENSHOT) {
+    if (videoSample) {
+      await e("document.querySelector('.inspector-preview video').preload='auto'");
+      await f.wait("document.querySelector('.inspector-preview video')?.readyState >= 2", "Synthetic video has a decoded frame");
+    }
+    const image = await f.client.send('Page.captureScreenshot',{format:'png'});
+    await writeFile(process.env.AIYOU_ASSET_INSPECTOR_SCREENSHOT,Buffer.from(image.data,'base64'));
+  }
+  assert.equal(await e("document.querySelector('[data-inspector-action=edit-prompt]').textContent"),"编辑关联");
+  await e("document.querySelector('[data-inspector-action=edit-prompt]').click(); document.querySelector('[data-prompt-form]').elements.prompt.value='手动补录的原始提示词'; document.querySelector('[data-prompt-form]').requestSubmit()");
+  (await f.take(x=>x.url.pathname==='/api/assets/prompt' && x.url.searchParams.get('optional')==='1')).resolve({association:{prompt:'手动补录的原始提示词',source:'manual-registration'}});
+  await f.wait("document.querySelector('[data-inspector-prompt]').textContent==='手动补录的原始提示词' && document.querySelector('[data-prompt-form]').hidden","Manual prompt stays linked to selected file");
+  await e("document.querySelector('[data-asset-id=doc]').dispatchEvent(new MouseEvent('click',{bubbles:true,shiftKey:true}))");
+  assert.equal(await e("document.querySelector('#libraryInspector h3').textContent"),'已选 2 项');
+  assert.equal(await e("document.querySelector('#libraryInspector .inspector-facts').textContent.includes('示例')"),true);
+  await e("document.querySelector('[data-inspector-action=final]').click()");
+  (await f.take(x=>x.url.pathname==='/api/library')).resolve(page([{...video,final:true},{...doc,final:true}]));
+  await f.wait("document.querySelectorAll('.asset-card[data-final]').length===2","Marking final returns visible card badges");
+  await e("document.querySelector('#libraryFinalButton').click()");
+  (await f.take(x=>x.url.pathname==='/api/library' && x.url.searchParams.get('final')==='1')).resolve(page([{...video,final:true},{...doc,final:true}]));
+  await e("document.querySelector('[data-asset-id=doc]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
+  (await f.take(x=>x.url.pathname==='/api/text')).resolve({title:'拍摄资料',format:'MD',content:'正文',editable:true});
+  await f.wait("document.querySelector('#textPreviewNav [data-preview-id=video]')!==null","Quick preview has a filmstrip");
+  await e("document.querySelector('#textPreviewNav [data-preview-id=video]').click()");
+  await f.wait("document.getElementById('mediaPreviewDialog').open && !document.getElementById('textViewerDialog').open && document.getElementById('mediaPreviewTitle').textContent==='交付镜头'","Filmstrip can switch from document to media");
 });

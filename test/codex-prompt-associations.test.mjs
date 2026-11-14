@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -38,8 +38,57 @@ test("imports Codex image generation events and keeps the prompt linked to the e
     assert.equal(association.threadId, threadId);
     assert.equal(association.cwd, "/work/current-project");
     assert.equal(association.source, "codex-session");
+    await store.register({ assetPath: outputPath, prompt: "手动补全的原始提示词" });
+    await appendFile(path.join(sessionDirectory, "rollout.jsonl"), JSON.stringify({
+      type: "event_msg", payload: { type: "image_generation_end", call_id: callId, revised_prompt: "后续到达的生成事件" },
+    }) + "\n");
+    await store.syncCodexSessions();
+    assert.equal((await store.get(outputPath)).prompt, "手动补全的原始提示词");
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("discovers exact markdown companion files and disambiguates shared media stems", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codex-prompt-links-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new CodexPromptAssociationStore({ registryPath: path.join(root, "associations.json") });
+  const image = path.join(root, "镜头.PNG");
+  const video = path.join(root, "镜头.mp4");
+  const shared = path.join(root, "镜头.prompt.md");
+  await writeFile(image, "image");
+  await writeFile(shared, "固定机位，没有字幕");
+  assert.equal((await store.get(image)).prompt, "固定机位，没有字幕");
+  await writeFile(video, "video");
+  assert.equal(await store.get(image), null);
+  assert.equal(await store.get(video), null);
+  await writeFile(shared, [
+    "# 生成提示词与结果记录", "", "- 结果文件：镜头.mp4", "- 生成工具：Seedance", "- 模型：v2",
+    "## 正向提示词", "", "雨中开始", "### 运镜", "保持水平", "", "## 负向提示词 / 稳定性约束", "",
+    "不要字幕", "", "## 参考素材", "", "- 镜头.PNG", "", "## 生成参数", "", "\x60\x60\x60json",
+    '{"duration":5}', "\x60\x60\x60", "", "## 备注", "", "不作为提示词",
+  ].join("\n"));
+  assert.equal(await store.get(image), null);
+  const linked = await store.get(video);
+  assert.equal(linked.source, "markdown-sidecar");
+  assert.equal(linked.prompt, "雨中开始\n### 运镜\n保持水平");
+  assert.equal(linked.negativePrompt, "不要字幕");
+  assert.equal(linked.generator, "Seedance");
+  assert.equal(linked.model, "v2");
+  assert.deepEqual(linked.references, ["镜头.PNG"]);
+  assert.deepEqual(linked.settings, { duration: 5 });
+  await writeFile(image + ".prompt.md", "独立图片提示词");
+  assert.equal((await store.get(image)).prompt, "独立图片提示词");
+
+  const oversized = path.join(root, "oversized.png");
+  await writeFile(oversized, "image");
+  await writeFile(oversized + ".prompt.md", Buffer.alloc(256 * 1024 + 1, 65));
+  assert.equal(await store.get(oversized), null);
+  if (process.platform !== "win32") {
+    const symlinked = path.join(root, "link.png");
+    await writeFile(symlinked, "image");
+    await symlink(image + ".prompt.md", symlinked + ".prompt.md");
+    assert.equal(await store.get(symlinked), null);
   }
 });
 

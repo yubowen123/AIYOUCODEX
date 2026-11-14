@@ -16,6 +16,8 @@ import { createProjectFolder, renameProjectFolder } from "./folder-operations.js
 import { replaceFileAtomically } from "./atomic-file-replace.js";
 import { buildImageSequenceProfiles, classifyLocalAsset } from "./asset-smart-classifier.js";
 import { readImageDimensions } from "./image-dimensions.js";
+import { readAssetFileInspector } from "./asset-file-inspector.js";
+import { PlatformAssetSync, readPlatformAssetDetails } from "./platform-asset-sync.js";
 import { createAssetScanCoordinator } from "./asset-scan-coordinator.js";
 import { filterLibraryResult } from "./asset-library-filter.js";
 import { AssetLibraryPager } from "./asset-library-pagination.js";
@@ -284,6 +286,8 @@ function normalizeAssetMetadata(value = {}) {
     category: String(meta?.category || ""),
     tags: [...new Set((Array.isArray(meta?.tags) ? meta.tags : []).map((item) => String(item || "").trim()).filter(Boolean))],
     smartGroup: ["asset", "review", "noise"].includes(meta?.smartGroup) ? meta.smartGroup : "",
+    ...(meta?.final === true ? { final: true } : {}),
+    ...(typeof meta?.notes === "string" && meta.notes ? { notes: meta.notes.slice(0, 2000) } : {}),
     ...(normalizeCharacterMetadata(meta?.character) ? { character: normalizeCharacterMetadata(meta.character) } : {}),
   }]));
 }
@@ -760,6 +764,19 @@ async function addProject({ name, path: projectPath, scanRoots, folders }) {
   notifyClients("project-change");
   return project;
 }
+
+const platformAssetSync = new PlatformAssetSync({
+  root: path.join(path.dirname(configPath), "platform-projects"),
+  async register(name, folder) {
+    const config = await loadConfig();
+    const existing = config.projects.find(project => project.folders.includes(folder));
+    const project = existing || await addProject({ name, folders: [folder] });
+    // Reconcile immediately so downloaded files and their sidecars appear together.
+    await libraryScanCoordinator.run(project.id, () => loadLibraryIndexView(project.id, { force: true }));
+    notifyClients("asset-change");
+    return project.id;
+  },
+});
 
 async function updateProject(projectId, body = {}) {
   const requestedFolders = Array.isArray(body.folders)
@@ -1348,6 +1365,12 @@ async function resolveManagedAsset(config, assetRef) {
   if (!managed) throw new Error("素材不属于任何本地项目");
   const stats = await fs.lstat(filePath).catch(() => null);
   if (!stats?.isFile() || stats.isSymbolicLink()) throw new Error("素材文件不存在或不是普通文件");
+  const real = await fs.realpath(filePath);
+  const looksManaged = allManagedFolders(config).filter(folder => isPathInside(folder, filePath));
+  const roots = await Promise.all(looksManaged.map(folder => fs.realpath(folder).catch(() => "")));
+  const canonicalParent = path.join(await fs.realpath(path.dirname(filePath)), path.basename(filePath));
+  if (!roots.some(folder => folder && isPathInside(folder, real))
+    && !(Object.hasOwn(config.assetAssignments || {}, filePath) && real === canonicalParent)) throw new Error("素材原件越过受管目录");
   return { filePath, stats };
 }
 
@@ -1527,6 +1550,7 @@ async function buildLibraryAsset(filePath, project, config, assignment, classifi
     classificationReason: classification.reason,
     classificationSource: classification.source,
     tokenCost: classification.tokenCost,
+    final: metadata.final === true,
     size: stats.size,
     width: dimensions?.width || 0,
     height: dimensions?.height || 0,
@@ -1886,6 +1910,34 @@ async function updateLibraryAssetMetadata(body = {}) {
   return metadata;
 }
 
+async function resolveLibraryInspection(projectId, assetId, config) {
+  const project = config.projects.find(item => item.id === projectId);
+  const { filePath, stats } = await resolveManagedAsset(config, assetId);
+  if (!project || !projectContainsAsset(project, filePath, config)) {
+    throw Object.assign(new Error("素材不属于当前项目"), { statusCode: 404 });
+  }
+  return { filePath, stats, project };
+}
+
+async function updateAssetCuration(body) {
+  const ids = [...new Set(Array.isArray(body.ids) ? body.ids : [])];
+  const patch = {};
+  if (typeof body.final === "boolean") patch.final = body.final;
+  if (typeof body.notes === "string" && ids.length === 1) patch.notes = body.notes.slice(0, 2000);
+  if (!ids.length || ids.length > 240 || !Object.keys(patch).length) {
+    throw Object.assign(new Error("素材范围或修改字段无效"), { statusCode: 400 });
+  }
+  const config = await loadConfig(), files = [];
+  for (const id of ids) files.push((await resolveLibraryInspection(body.project, id, config)).filePath);
+  await updateConfig(draft => {
+    for (const filePath of files) draft.assetMetadata[filePath] = { ...draft.assetMetadata[filePath], ...patch };
+  });
+  // A bounded batch stays below the index queue's normal per-change workload.
+  await enqueueAssetIndexUpdate(files);
+  notifyClients("asset-change");
+  return { ok: true, count: files.length, ...patch };
+}
+
 async function characterAssetContext(projectId, assetId) {
   const config = await loadConfig();
   const { filePath } = await resolveManagedAsset(config, assetId);
@@ -1969,7 +2021,9 @@ function openFinder(targetPath, reveal = true) {
     args = [reveal ? path.dirname(targetPath) : targetPath];
   }
   const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: false });
+  child.on("error", () => {});
   child.unref();
+  return child;
 }
 
 function localDateStamp(date = new Date()) {
@@ -2726,6 +2780,8 @@ const server = createServer(async (req, res) => {
       const view = await libraryScanCoordinator.run(projectId, () => loadLibraryIndexView(projectId, { force }));
       const filters = {
         related: url.searchParams.get("related") || "1",
+        finalOnly: url.searchParams.get("final") === "1",
+        directory: view.project?.folders.includes(url.searchParams.get("directory")) ? url.searchParams.get("directory") : "",
         characterId: url.searchParams.get("characterId") || "",
         kind: url.searchParams.get("kind") || "",
         category: url.searchParams.get("category") || "",
@@ -2734,7 +2790,7 @@ const server = createServer(async (req, res) => {
         searchMode: url.searchParams.get('searchMode') || '',
         searchRevision: url.searchParams.get('searchRevision') || '',
       };
-      if (url.searchParams.has("limit") || filters.searchMode === 'laya' && filters.query.trim()) {
+      if (url.searchParams.has("limit") || filters.finalOnly || filters.directory || filters.searchMode === 'laya' && filters.query.trim()) {
         Object.assign(filters, { limit: url.searchParams.get("limit"), offset: url.searchParams.get("offset"), sort: url.searchParams.get("sort"), revision: url.searchParams.get("revision") });
         if (!url.searchParams.has('sort') && filters.searchMode === 'laya') filters.sort = 'relevance';
         const page = await paginatedLibraryAssets(view, filters, { all: !url.searchParams.has('limit') });
@@ -2750,6 +2806,63 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/api/asset-platforms" && req.method === "GET") {
+      sendJson(res, { sources: platformAssetSync.sources() });
+      return;
+    }
+
+    if (url.pathname === "/api/asset-platforms/projects" && req.method === "POST") {
+      const body = await readRequestBody(req);
+      sendJson(res, platformAssetSync.beginProjects(String(body.source || "")),202);
+      return;
+    }
+
+    if (url.pathname === "/api/asset-platforms/projects" && req.method === "GET") {
+      const read = platformAssetSync.getProjects(url.searchParams.get("id"));
+      sendJson(res, read || { error:"项目读取任务不存在" }, read ? 200 : 404);
+      return;
+    }
+
+    if (url.pathname === "/api/asset-platforms/sync" && req.method === "POST") {
+      const body = await readRequestBody(req);
+      const source=String(body.source || "");
+      sendJson(res, body.exportFolder ? platformAssetSync.startLocal(source, body.exportFolder, body.projectName) : platformAssetSync.start(source, String(body.project || "")), 202);
+      return;
+    }
+
+    if (url.pathname === "/api/asset-platforms/sync" && req.method === "GET") {
+      const job = platformAssetSync.get(url.searchParams.get("id"));
+      sendJson(res, job || { error: "同步任务不存在" }, job ? 200 : 404);
+      return;
+    }
+
+    if (url.pathname === "/api/assets/inspection" && req.method === "GET") {
+      const config = await loadConfig();
+      const { filePath, stats } = await resolveLibraryInspection(url.searchParams.get("project"), url.searchParams.get("id"), config);
+      const data = await readAssetFileInspector({ filePath, stats, kind: libraryAssetKind(filePath) });
+      sendJson(res, { ...data, notes: config.assetMetadata[filePath]?.notes || "", final: config.assetMetadata[filePath]?.final === true });
+      return;
+    }
+
+    if (url.pathname === "/api/assets/curation" && req.method === "PATCH") {
+      sendJson(res, await updateAssetCuration(await readRequestBody(req)));
+      return;
+    }
+
+    if (url.pathname === "/api/assets/reveal" && req.method === "POST") {
+      const body = await readRequestBody(req);
+      const { filePath } = await resolveLibraryInspection(body.project, body.id, await loadConfig());
+      await new Promise((resolve, reject) => {
+        const child = openFinder(filePath, true);
+        child.once("error", reject);
+        // Explorer starts as a delegated process; its exit status does not describe the request.
+        if (process.platform === "win32") child.once("spawn", resolve);
+        else child.once("exit", code => code === 0 ? resolve() : reject(new Error("系统未能打开文件位置")));
+      });
+      sendJson(res, { ok: true });
+      return;
+    }
+
     if (url.pathname === "/api/assets/character" && req.method === "GET") {
       sendJson(res, await characterAssetContext(url.searchParams.get("project"), url.searchParams.get("id"))); return;
     }
@@ -2758,8 +2871,16 @@ const server = createServer(async (req, res) => {
     }
     if (url.pathname === "/api/assets/prompt" && req.method === "GET") {
       const config = await loadConfig();
-      const { filePath } = await resolveManagedAsset(config, url.searchParams.get("id") || "");
+      const id = url.searchParams.get("id") || "", project = url.searchParams.get("project");
+      const { filePath } = project ? await resolveLibraryInspection(project, id, config) : await resolveManagedAsset(config, id);
       const association = await promptAssociations.get(filePath);
+      if (url.searchParams.get("optional") === "1") {
+        sendJson(res, { association: association ? {
+          prompt: association.prompt, negativePrompt: association.negativePrompt, references: association.references,
+          generator: association.generator, model: association.model, source: association.source, threadId: association.threadId,
+        } : null, platform: await readPlatformAssetDetails(filePath) });
+        return;
+      }
       if (!association) throw new Error("该资产没有关联提示词");
       sendJson(res, association);
       return;
@@ -2768,8 +2889,12 @@ const server = createServer(async (req, res) => {
     if (url.pathname === "/api/assets/prompt" && req.method === "POST") {
       const body = await readRequestBody(req);
       const config = await loadConfig();
-      const { filePath } = await resolveManagedAsset(config, body.assetId);
-      const association = await promptAssociations.register({ ...body, assetPath: filePath });
+      const { filePath } = body.project ? await resolveLibraryInspection(body.project, body.assetId, config) : await resolveManagedAsset(config, body.assetId);
+      const prior = await promptAssociations.get(filePath);
+      const association = await promptAssociations.register(body.project ? {
+        ...prior, assetPath: filePath, prompt: String(body.prompt || "").trim().slice(0, 24000),
+        negativePrompt: String(body.negativePrompt || "").trim().slice(0, 12000), source: "manual-registration",
+      } : { ...body, assetPath: filePath });
       await enqueueAssetIndexUpdate([filePath]);
       notifyClients("asset-change");
       sendJson(res, { ok: true, association });

@@ -3679,6 +3679,7 @@
       expand.title = expanded ? "还原侧栏宽度" : "展开至整个工作区";
       expand.setAttribute("aria-pressed", String(expanded));
       expand.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${expanded ? 'M8 3v5H3m18 0h-5V3M3 16h5v5m8 0v-5h5' : 'M3 9V3h6m6 0h6v6M3 15v6h6m6 0h6v-6'}"/></svg>`;
+      if (page.id === ASSET_CONSOLE_PAGE_ID) syncAssetConsoleFullscreen(page);
     };
     expand.onclick = () => {
       const expanded = page.dataset.aiyouPanelExpanded === "true";
@@ -4546,14 +4547,23 @@
     const url = new URL(state.url); url.searchParams.set("aiyou_loading_key", assetConsoleLoadingKey);
     frame.dataset.assetSourceUrl = state.url;
     frame.src = url.href;
-    frame.setAttribute("allow", "clipboard-read; clipboard-write; autoplay");
+    frame.setAttribute("allow", "clipboard-read; clipboard-write; autoplay; fullscreen");
+    frame.allowFullscreen = true;
     frame.onload = () => {
       if (frame !== assetConsoleFrame || !frame.isConnected) return;
       frame.dataset.assetDocumentLoaded = "true"; finishAssetConsoleLoading(frame);
+      syncAssetConsoleFullscreen(assetConsolePage);
     };
     frame.onerror = () => { if (frame === assetConsoleFrame && !assetConsolePage?.hidden) renderAssetConsoleLoading("页面连接失败，请重新连接后再试。", true); };
     assetConsoleFrame = frame;
     body.appendChild(frame);
+  }
+
+  function syncAssetConsoleFullscreen(page) {
+    if (!assetConsoleFrame?.isConnected || assetConsoleKind === "arena") return;
+    assetConsoleFrame.contentWindow?.postMessage({
+      source: "codex-sidebar-enhancer", action: "workspace-fullscreen", fullscreen: page?.dataset.aiyouPanelExpanded === "true",
+    }, "https://web-sandbox.oaiusercontent.com");
   }
 
   function currentComposer() {
@@ -4605,6 +4615,10 @@
     if (event.origin !== "https://web-sandbox.oaiusercontent.com" || event.source !== assetConsoleFrame?.contentWindow) return;
     const message = event.data;
     if (!message || message.source !== "asset-console") return;
+    if (message.action === "toggle-workspace-fullscreen" && assetConsoleKind !== "arena" && assetConsolePage && !assetConsolePage.hidden) {
+      assetConsolePage.querySelector("[data-aiyou-panel-expand]")?.click();
+      return;
+    }
     if (message.action === "return-to-codex") {
       closeAssetConsolePanel();
       requestAnimationFrame(() => currentComposer()?.focus());
