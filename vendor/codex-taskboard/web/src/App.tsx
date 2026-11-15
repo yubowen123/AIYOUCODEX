@@ -21,6 +21,8 @@ import {
 import { buildTaskExecutionPrompt } from "../../shared/task-guidance.mjs";
 import { compareTaskActivity } from "../../shared/task-activity.mjs";
 import { useThreadActivity } from "./useThreadActivity";
+import { PipelineBoard } from "./PipelineBoard";
+import { TaskHall } from "./TaskHall";
 import {
   ApiError,
   addTaskRelation,
@@ -108,7 +110,7 @@ import { createRevisionPoller, getRevisionPollingInterval } from "./revisionPoll
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
-type BoardView = "issues" | "workflow";
+type BoardView = "hall" | "pipeline" | "issues" | "workflow";
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
 
 const WorkflowBoard = lazy(() => import("./components/WorkflowBoard").then((module) => ({
@@ -736,6 +738,7 @@ function LocalRealtimeSync({
 export function App() {
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
   const embedded = query.get("host") === "codex" || window.name === "codex-taskboard-frame";
+  const localViewsAvailable = embedded || isLocalTaskboardOrigin(window.location.origin);
   const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const [hostContext, setHostContext] = useState<HostContext | null>(null);
@@ -762,7 +765,7 @@ export function App() {
   const [filters, setFilters] = useState(readTaskFilters);
   const [showEmptyColumns, setShowEmptyColumns] = useState(readShowEmptyColumns);
   const [columnVisibilityByProject, setColumnVisibilityByProject] = useState(readColumnVisibilityByProject);
-  const [boardView, setBoardView] = useState<BoardView>("issues");
+  const [boardView, setBoardView] = useState<BoardView>(() => !localViewsAvailable || readIssueIdentifier(window.location.search) ? "issues" : "hall");
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [detailTaskIdentifier, setDetailTaskIdentifier] = useState<string | null>(
     () => readIssueIdentifier(window.location.search),
@@ -1201,6 +1204,7 @@ export function App() {
   function openTaskDetail(task: Pick<Task, "identifier" | "projectId">) {
     closeContextMenu();
     setProjectMenuOpen(false);
+    setBoardView("issues");
     setDetailTaskIdentifier(task.identifier);
     const currentIssue = readIssueIdentifier(window.location.search);
     const boardUrl = buildIssueUrl(window.location.href, task.projectId, null);
@@ -1230,9 +1234,10 @@ export function App() {
     function syncRouteFromLocation() {
       const url = new URL(window.location.href);
       const routeProjectId = url.searchParams.get("project") ?? "";
-      setDetailTaskIdentifier(readIssueIdentifier(url.search));
+      const issue = readIssueIdentifier(url.search);
+      setDetailTaskIdentifier(issue);
+      setBoardView((current) => issue || current === "issues" ? "issues" : "hall");
       if (routeProjectId === selectedProjectId) return;
-      setBoardView("issues");
       setSelectedProjectId(routeProjectId);
       if (routeProjectId) window.localStorage.setItem(LAST_PROJECT_KEY, routeProjectId);
       else window.localStorage.removeItem(LAST_PROJECT_KEY);
@@ -1354,7 +1359,7 @@ export function App() {
       window.removeEventListener("resize", publish);
       window.parent.postMessage({ type: "taskboard:drag-region", payload: null }, "*");
     };
-  }, [detailTaskId, embedded, selectedProjectId]);
+  }, [detailTaskId, embedded, selectedProjectId, boardView]);
 
   const loadProjectList = useCallback(async (signal?: AbortSignal) => {
     setProjectsLoading(true);
@@ -1390,7 +1395,8 @@ export function App() {
       setDeviceProjects(nextDeviceProjects);
       setSelectedProjectId((current) => {
         const fromQuery = new URLSearchParams(window.location.search).get("project");
-        const remembered = embedded ? null : window.localStorage.getItem(LAST_PROJECT_KEY);
+        const remembered = readIssueIdentifier(window.location.search) && !embedded
+          ? window.localStorage.getItem(LAST_PROJECT_KEY) : null;
         if (fromQuery && nextProjects.some((project) => project.id === fromQuery)) return fromQuery;
         if (current && nextProjects.some((project) => project.id === current)) return current;
         if (remembered && nextProjects.some((project) => project.id === remembered)) return remembered;
@@ -1739,6 +1745,7 @@ export function App() {
 
   function selectBoardView(view: BoardView) {
     closeContextMenu();
+    if (view === "hall" && detailTaskIdentifier) closeTaskDetail();
     setBoardView(view);
   }
 
@@ -2033,6 +2040,7 @@ export function App() {
 
   function openProjectSwimlaneTask(task: Task) {
     changeProject(task.projectId);
+    setBoardView("issues");
     setDetailTaskIdentifier(task.identifier);
     const url = buildIssueUrl(window.location.href, task.projectId, task.identifier);
     if (canSyncTaskboardHistory(window.location.href)) {
@@ -2159,7 +2167,7 @@ export function App() {
     closeContextMenu();
     setProjectMenuOpen(false);
     setDetailTaskIdentifier(null);
-    setBoardView("issues");
+    setBoardView((current) => current === "issues" ? "issues" : "hall");
     setSelectedProjectId(projectId);
     window.localStorage.setItem(LAST_PROJECT_KEY, projectId);
     setSearch("");
@@ -2177,6 +2185,7 @@ export function App() {
     closeContextMenu();
     setProjectMenuOpen(false);
     setDetailTaskIdentifier(null);
+    setBoardView(localViewsAvailable ? "hall" : "issues");
     setSelectedProjectId("");
     window.localStorage.removeItem(LAST_PROJECT_KEY);
     setSearch("");
@@ -2280,8 +2289,10 @@ export function App() {
     ? { "--codex-titlebar-left-inset": `${hostContext?.titlebarLeftInset ?? 0}px` } as CSSProperties
     : undefined;
 
+  const hallActive = localViewsAvailable && boardView === "hall" && !detailTaskIdentifier;
+
   return (
-    <div className={`app-shell${embedded ? " embedded" : ""}`} style={appShellStyle}>
+    <div className={`app-shell${embedded ? " embedded" : ""}${hallActive ? " task-hall-shell" : ""}`} style={appShellStyle}>
       {taskboardMetadata && taskboardMetadata.mode !== "cloud" && (
         <LocalRealtimeSync
           selectedProjectId={selectedProjectId}
@@ -2295,7 +2306,7 @@ export function App() {
           setAttachmentsRevision={setAttachmentsRevision}
         />
       )}
-      {!embedded && (
+      {!embedded && !hallActive && (
         <aside className="app-nav" aria-label="Taskboard navigation">
           <div className="brand-row">
             <span className="brand-mark" aria-hidden="true"><LinearIcon name="project" /></span>
@@ -2348,7 +2359,7 @@ export function App() {
       )}
 
       <main className="workspace">
-        {selectedProjectId ? (
+        {!hallActive && (selectedProjectId ? (
           <header className="workspace-header">
           <div className="workspace-title">
             <div className="workspace-kicker">
@@ -2472,7 +2483,7 @@ export function App() {
                 <span>{organizingHistory ? "整理中…" : "自动化整理"}</span>
               </button>
             )}
-            {selectedProjectId && (
+            {selectedProjectId && boardView === "issues" && (
               <ProjectAutomationMenu
                 automation={selectedProjectAutomation}
                 pending={automationPending}
@@ -2497,10 +2508,19 @@ export function App() {
           </header>
         ) : (
           <div ref={dragRegionRef} className="home-window-drag-region" aria-hidden="true" />
-        )}
+        ))}
 
-        {selectedProjectId && !detailTask && <div className="board-toolbar">
+        {!hallActive && !detailTask && <div className="board-toolbar">
           <div className="view-tabs" aria-label="看板视图">
+            {localViewsAvailable && <button type="button" className="view-tab" onClick={() => selectBoardView("hall")}>任务大厅</button>}
+            {localViewsAvailable && selectedProjectId && <button
+              className={`view-tab${boardView === "pipeline" ? " active" : ""}`}
+              type="button"
+              aria-pressed={boardView === "pipeline"}
+              onClick={() => selectBoardView("pipeline")}
+            >
+              自动化规则
+            </button>}
             <button
               className={`view-tab${boardView === "issues" ? " active" : ""}`}
               type="button"
@@ -2520,7 +2540,7 @@ export function App() {
               </button>
             )}
           </div>
-          {boardView === "issues" && <div className="toolbar-tools">
+          {selectedProjectId && boardView === "issues" && <div className="toolbar-tools">
             <label className={`search-field${search ? " has-value" : ""}`} title="搜索议题 (/)" >
               <LinearIcon className="search-icon" name="search" />
               <span className="sr-only">搜索议题</span>
@@ -2570,7 +2590,7 @@ export function App() {
           />
         )}
 
-        {(loadError || actionError) && (
+        {((!hallActive && loadError) || actionError) && (
           <div className="error-banner" role="alert">
             <span className="error-mark" aria-hidden="true"><LinearIcon name="alert" /></span>
             <div><strong>Taskboard needs attention</strong><p>{actionError ?? loadError}</p></div>
@@ -2587,7 +2607,28 @@ export function App() {
           </div>
         )}
 
-        {!selectedProjectId ? (
+        {hallActive ? (
+          <TaskHall
+            key={selectedProjectId || "all"}
+            projectId={selectedProjectId}
+            projects={projectChoices}
+            openingProject={openingProjectId !== null}
+            onProject={(id) => {
+              if (!id) { returnToProjectHome(); return; }
+              const choice = projectChoices.find((project) => project.id === id);
+              if (choice) void selectProject(choice);
+            }}
+            onHistory={() => selectBoardView("issues")}
+            onRules={() => selectBoardView("pipeline")}
+            onOpenNativeThread={openThread}
+            headerStart={embedded && hostContext?.sidebarCollapsed ? (
+              <button type="button" className="hall-button" title="展开宿主侧边栏" aria-label="展开宿主侧边栏" onClick={expandCodexSidebar}>
+                <LinearIcon name="codexSidebarExpand" />
+              </button>
+            ) : null}
+            headerDrag={<div ref={dragRegionRef} className="workspace-drag-region" aria-hidden="true" />}
+          />
+        ) : !selectedProjectId ? (
           <section className="project-home">
             <div className="project-home-heading">
               <div>
@@ -2595,16 +2636,29 @@ export function App() {
                 <h1>项目总览</h1>
                 <p>各栏按最近消息倒序，最新在前；暂无消息时按创建时间排列。</p>
               </div>
-              <label className="project-folder-filter">
-                <LinearIcon name="folder" />
-                <span>项目文件夹</span>
-                <select value={projectFolderFilter} onChange={(event) => setProjectFolderFilter(event.target.value)}>
-                  <option value="">全部文件夹</option>
-                  {projectFolderOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
+              <div className="pipeline-home-controls">
+                <label className="project-folder-filter">
+                  <LinearIcon name="project" />
+                  <span>查看项目议题</span>
+                  <select value="" disabled={openingProjectId !== null} onChange={(event) => {
+                    const project = projectChoices.find((choice) => choice.id === event.target.value);
+                    if (project) void selectProject(project);
+                  }}>
+                    <option value="" disabled>选择项目</option>
+                    {projectChoices.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+                  </select>
+                </label>
+                <label className="project-folder-filter">
+                  <LinearIcon name="folder" />
+                  <span>项目文件夹</span>
+                  <select value={projectFolderFilter} onChange={(event) => setProjectFolderFilter(event.target.value)}>
+                    <option value="">全部文件夹</option>
+                    {projectFolderOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
             </div>
             <section className="project-swimlane-section" aria-labelledby="project-swimlane-heading">
               <div className="project-group-heading project-swimlane-heading">
@@ -2651,6 +2705,8 @@ export function App() {
             onError={setActionError}
             onAnnounce={setAnnouncement}
           />
+        ) : boardView === "pipeline" ? (
+          <PipelineBoard key={selectedProjectId} projectId={selectedProjectId} projectName={headerProjectName} tasks={tasks} />
         ) : boardView === "workflow" ? (
           <Suspense fallback={<div className="workflow-board-loading">正在打开节点模式…</div>}>
             <WorkflowBoard

@@ -59,7 +59,7 @@ const binaryExtensions = new Set([
   ".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".flac", ".ogg", ".m4a",
   ".zip", ".gz", ".tgz", ".br", ".7z", ".tar", ".pdf", ".docx", ".xlsx",
   ".pptx", ".woff", ".woff2", ".ttf", ".otf", ".exe", ".dll", ".dylib",
-  ".so", ".node", ".wasm", ".dmg", ".sqlite", ".db",
+  ".so", ".node", ".wasm", ".dmg", ".sqlite", ".db", ".glb",
 ]);
 
 export function containsPrivateContent(content, fingerprints = PRIVATE_CONTENT_FINGERPRINTS) {

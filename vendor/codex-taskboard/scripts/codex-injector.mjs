@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-import { resolvePort } from "../server/app.mjs";
+import { resolvePort, resolveServerOptions } from "../server/app.mjs";
 import {
   parseTaskboardAutomationHostRequest,
   reconcileTaskboardAutomation,
@@ -1008,7 +1008,7 @@ async function readInjectionStatus(cdp) {
       sourceHash: window.__codexTaskboardInjection__?.sourceHash || null,
       scriptIdentifier: window[${JSON.stringify(injectionScriptIdentifierName)}] || null,
       entryMounted: Boolean(document.getElementById("codex-taskboard-entry")
-        || document.querySelector('#codex-sidebar-shortcut-grid[data-codex-shortcut-layout="rail"] [data-codex-sidebar-shortcut-name="项目管理"]')),
+        || document.querySelector('#codex-sidebar-shortcut-grid[data-codex-shortcut-layout="rail"] [data-codex-sidebar-shortcut-name="任务大厅"]')),
       pageMounted: Boolean(document.getElementById("codex-taskboard-page")),
       pageVisible: document.getElementById("codex-taskboard-page")?.hidden === false,
       frameUrl: document.getElementById("codex-taskboard-frame")?.src || null
@@ -1247,13 +1247,30 @@ async function injectAll(
   return results;
 }
 
+let pipelineTokenPromise;
+function pipelineHostToken() {
+  if (pipelineTokenPromise) return pipelineTokenPromise;
+  const { dataDirectory } = resolveServerOptions();
+  pipelineTokenPromise = (async () => {
+    const filename = path.join(dataDirectory, "pipeline-host.token");
+    await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
+    await writeFile(filename, randomBytes(32).toString("hex"), { mode: 0o600, flag: "wx" })
+      .catch(error => { if (error.code !== "EEXIST") throw error; });
+    const token = await readFile(filename, "utf8");
+    if (!/^[a-f0-9]{64}$/.test(token)) throw new Error("Invalid local pipeline host token");
+    return token;
+  })();
+  return pipelineTokenPromise;
+}
 async function currentInjectionSource() {
-  const [userScript, taskboardDocument] = await Promise.all([
+  const [userScript, taskboardDocument, pipelineToken] = await Promise.all([
     readFile(injectionPath, "utf8"),
     readFile(path.join(projectRoot, "dist", "web", "index.html"), "utf8"),
+    pipelineHostToken().catch(() => ""),
   ]);
   const runtimeSource = `window.__CODEX_TASKBOARD_MANAGED_ORIGIN__ = ${JSON.stringify(taskboardOrigin)};
 window.__CODEX_TASKBOARD_DOCUMENT__ = ${JSON.stringify(taskboardDocument)};
+window.__AIYOU_TASKBOARD_PIPELINE_TOKEN__ = ${JSON.stringify(pipelineToken)};
 if (typeof window.__CODEX_TASKBOARD_URL__ !== "string" || !window.__CODEX_TASKBOARD_URL__.trim()) {
   window.__CODEX_TASKBOARD_URL__ = ${JSON.stringify(taskboardPageUrl)};
 }
@@ -1363,7 +1380,7 @@ async function main() {
       { timeoutMs: 15_000, intervalMs: 100 },
     );
 
-    const { source, sourceHash } = await currentInjectionSource();
+    let { source, sourceHash } = await currentInjectionSource();
     const injectedTargets = new Map();
     const firstResults = await injectAll(
       options.port,
@@ -1418,6 +1435,8 @@ async function main() {
         console.error(`Waiting for Taskboard service: ${error.message}`);
       }
       try {
+        const latest = await currentInjectionSource();
+        ({ source, sourceHash } = latest);
         const results = await injectAll(
           options.port,
           source,

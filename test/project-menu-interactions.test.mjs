@@ -65,6 +65,8 @@ test("six lanes follow live message order and colors; popup shortcuts toggle and
     await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
   ({ client } = await connectFixtureBrowser({ browser, profile, url: origin }));
+  await waitForBrowserState(client, "!!document.querySelector('.hall-shell') || !!document.querySelector('.hall-link')", "Task Hall is the local entry");
+  await client.evaluate(`[...document.querySelectorAll(".hall-link")].find(el=>el.textContent.trim()==="议题历史").click()`);
   const order = (age) => `Array.from(document.querySelectorAll('.project-swimlane')).length===6&&Array.from(document.querySelectorAll('.project-swimlane')).every(l=>l.querySelectorAll('.project-swimlane-card').length===2&&l.querySelector('.project-swimlane-card').textContent.includes('-${age}'))`;
   await waitForBrowserState(client, order("new"), "All six lanes render most recent real conversation first");
   const colors = await client.evaluate(`['urgent','high','low'].map(p=>{const c=document.querySelector('.project-swimlane-card.priority-'+p),s=getComputedStyle(c);return {color:s.borderTopColor,width:s.borderTopWidth}})`);
@@ -89,14 +91,14 @@ test("six lanes follow live message order and colors; popup shortcuts toggle and
   }
   const shown = (selector) => `(()=>{const e=document.querySelector(${JSON.stringify(selector)});return !!e&&!e.hidden&&e.getAttribute('aria-hidden')!=='true'})()`;
   const separateChrome = `(()=>{const p=document.getElementById('codex-taskboard-page'),c=document.getElementById('codex-taskboard-close'),h=document.getElementById('native-toolbar');if(!p||p.hidden||!c)return false;const r=c.getBoundingClientRect(),n=h.getBoundingClientRect();return r.top>=n.bottom+4&&r.bottom<=innerHeight&&r.width>=40&&r.height>=40&&[[.15,.15],[.85,.15],[.5,.5],[.15,.85],[.85,.85]].every(([x,y])=>c.contains(document.elementFromPoint(r.x+r.width*x,r.y+r.height*y)))})()`;
-  await click(shortcut("项目管理"));
+  await click(shortcut("任务大厅"));
   await waitForBrowserState(client, shown("#codex-taskboard-page"), "Project panel opens");
   await waitForBrowserState(client, separateChrome, "Project close is below native toolbar, not competing in the same hit region");
   await click("#native-share");
   assert.equal(await client.evaluate("window.nativeShareClicks"), 1, "The original native toolbar remains usable while Taskboard is open");
   await click("#codex-taskboard-close");
   await waitForBrowserState(client, `!${shown("#codex-taskboard-page")}`, "Close works even during loading");
-  await click(shortcut("项目管理"));
+  await click(shortcut("任务大厅"));
   try {
     await waitForBrowserState(client, "!!document.querySelector('#codex-taskboard-frame')&&!document.querySelector('#codex-taskboard-frame').hidden", "Project frame ready");
   } catch (error) {
@@ -104,9 +106,9 @@ test("six lanes follow live message order and colors; popup shortcuts toggle and
     throw new Error(`${error.message}; ${JSON.stringify(state)}`, { cause: error });
   }
   await client.evaluate("window.fixtureFrame=document.getElementById('codex-taskboard-frame');window.fixtureFrame.contentDocument.getElementById('draft').value='Unsubmitted board draft'");
-  await click(shortcut("项目管理"));
+  await click(shortcut("任务大厅"));
   await waitForBrowserState(client, `!${shown("#codex-taskboard-page")}`, "Second project click collapses");
-  await click(shortcut("项目管理"));
+  await click(shortcut("任务大厅"));
   assert.equal(await client.evaluate("window.fixtureFrame===document.getElementById('codex-taskboard-frame')&&window.fixtureFrame.contentDocument.getElementById('draft').value==='Unsubmitted board draft'"), true, "Reopen keeps frame and draft");
   await client.evaluate("document.getElementById('native-toolbar').style.height='76px'");
   await waitForBrowserState(client, separateChrome, "Changing native header height recomputes separation");

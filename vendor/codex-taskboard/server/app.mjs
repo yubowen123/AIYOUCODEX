@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -23,6 +23,13 @@ import {
 } from "../shared/project-organization.mjs";
 import { normalizeWorkflowSnapshot } from "../shared/workflow-control-flow.mjs";
 import { AiChatService } from "./ai-chat.mjs";
+import { createPipeline } from "./pipeline.mjs";
+import { createTaskHall } from "./task-hall.mjs";
+import { createTaskHallAgents } from "./task-hall-agents.mjs";
+import { createCodexHallActivity } from "./task-hall-native.mjs";
+import { readHallScheduledActivity } from "./task-hall-automation.mjs";
+import { createCodexPipelineRunner } from "./pipeline-runner.mjs";
+import { resolveAiWorkspace } from "./ai-chat-catalog.mjs";
 import { createCloudConfigStore } from "./cloud-config.mjs";
 import {
   CloudProxyError,
@@ -50,6 +57,13 @@ const INLINE_ATTACHMENT_TYPES = new Set([
 ]);
 const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const TRUSTED_EMBED_ORIGINS = new Set(["app://-"]);
+const PIPELINE_HOST_HEADER = "x-aiyou-pipeline-host";
+async function trustedPipelineHost(request, dataDirectory) {
+  const header = request.headers[PIPELINE_HOST_HEADER];
+  if (typeof header !== "string" || !/^[a-f0-9]{64}$/.test(header)) return false;
+  const expected = await readFile(path.join(dataDirectory, "pipeline-host.token"), "utf8").catch(() => "");
+  return /^[a-f0-9]{64}$/.test(expected) && timingSafeEqual(Buffer.from(expected), Buffer.from(header));
+}
 const CODEX_AGENT_ACTOR = {
   type: "agent",
   id: "codex-agent",
@@ -68,6 +82,7 @@ const CONTENT_TYPES = new Map([
   [".png", "image/png"],
   [".svg", "image/svg+xml"],
   [".webp", "image/webp"],
+  [".glb", "model/gltf-binary"],
   [".woff", "font/woff"],
   [".woff2", "font/woff2"],
 ]);
@@ -1441,6 +1456,42 @@ export function createTaskboardServer(options = {}) {
     manageTaskboardSkillPath: resolved.skillPath,
   });
   const aiEventResponses = new Set();
+  let pipeline;
+  let taskHall, taskHallAgents;
+  const nativeHallActivity = options.nativeHallActivity === true ? createCodexHallActivity({
+    codexHome: path.dirname(resolved.codexStatePath), codexStatePath: resolved.codexStatePath,
+  }) : null;
+  async function scheduledHallActivity(projectId) {
+    let codexProjectId = null;
+    if (nativeHallActivity && projectId) {
+      codexProjectId = database.getProjectProfile(projectId)?.codexProjectId
+        ?? (Object.hasOwn(await readCodexProjectWorkspaces(resolved.codexStatePath), projectId) ? projectId : null);
+    }
+    return readHallScheduledActivity({ projectId, codexProjectId,
+      pipelineFile: path.join(resolved.dataDirectory, "pipeline.sqlite"),
+      codexHome: nativeHallActivity ? path.dirname(resolved.codexStatePath) : undefined,
+    });
+  }
+  function localTaskHall() {
+    return taskHall ??= createTaskHall({
+      // Explicit fixture data directories stay isolated. The normal desktop
+      // companion and the DSH native module use the same per-user hall.
+      file: options.taskHallFile ?? (options.dataDirectory ? path.join(resolved.dataDirectory, "task-hall.sqlite") : undefined),
+    });
+  }
+  function localPipeline() {
+    return pipeline ??= createPipeline({
+      file: path.join(resolved.dataDirectory, "pipeline.sqlite"),
+      engine: "Codex CLI",
+      runner: options.pipelineRunner ?? createCodexPipelineRunner({
+        resolveWorkspace: id => resolveAiWorkspace(id, resolved.codexStatePath, database),
+      }),
+      project: id => database.getProject(id),
+      task: (_projectId, id) => database.getTask(id),
+      issues: id => database.listTasks({ projectId: id, archived: "false" }),
+      canDispatch: async () => !(await cloudConfig.read()).remoteUrl,
+    });
+  }
 
   const server = createServer(async (request, response) => {
     response.setHeader("x-content-type-options", "nosniff");
@@ -1452,7 +1503,7 @@ export function createTaskboardServer(options = {}) {
         response.setHeader("access-control-allow-methods", "GET, HEAD, POST, PATCH, DELETE, OPTIONS");
         response.setHeader(
           "access-control-allow-headers",
-          "content-type, x-taskboard-user-id, x-taskboard-user-name, x-taskboard-user-avatar",
+          "content-type, x-taskboard-user-id, x-taskboard-user-name, x-taskboard-user-avatar, x-aiyou-pipeline-host",
         );
         response.setHeader("access-control-allow-private-network", "true");
         response.setHeader("vary", "Origin");
@@ -1479,6 +1530,71 @@ export function createTaskboardServer(options = {}) {
       if (pathname === "/health") {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
         return sendJson(response, 200, { status: "ok" });
+      }
+
+      if (pathname === "/api/local/task-hall") {
+        assertAiLoopbackRequest(request);
+        const origin = request.headers.origin;
+        const embedded = origin === "app://-" || origin === "null";
+        const codexEmbed = embedded && await trustedPipelineHost(request, resolved.dataDirectory);
+        if (!codexEmbed && (request.headers["sec-fetch-site"] === "cross-site" ||
+          (origin && origin !== "http://" + request.headers.host))) {
+          throw new ApiError(403, "TASK_HALL_ORIGIN", "请从本机任务大厅发起操作");
+        }
+        if (request.method !== "GET" && request.method !== "POST") return methodNotAllowed(response, ["GET", "POST"]);
+        response.setHeader("cache-control", "no-store");
+        try {
+          if (request.method === "GET") {
+            assertAllowedQuery(url.searchParams, new Set(["projectId"]), pathname);
+            const projectId = url.searchParams.get("projectId");
+            const snapshot = localTaskHall().listOperator(projectId);
+            const [nativeActivity, roster, scheduledActivity] = await Promise.all([
+              nativeHallActivity?.(projectId), options.hallRoster?.(), scheduledHallActivity(projectId),
+            ]);
+            return sendJson(response, 200, { ...snapshot, ...(nativeActivity ? { nativeActivity } : {}), ...(roster ? { roster } : {}), scheduledActivity });
+          }
+          assertNoQuery(url.searchParams, pathname);
+          if (!/^application\/json(?:;|$)/i.test(request.headers["content-type"] || "")) {
+            return sendJson(response, 415, { error: { message: "写入仅接受 JSON" } });
+          }
+          const command = await readJson(request);
+          assertPlainObject(command);
+          return sendJson(response, 200, localTaskHall().asOperator("codex", command));
+        } catch (error) {
+          if (error.status && !(error instanceof ApiError)) throw new ApiError(error.status, "TASK_HALL_REQUEST", error.message);
+          throw error;
+        }
+      }
+
+      if (pathname === "/api/local/pipeline") {
+        assertAiLoopbackRequest(request);
+        // Accept the same-origin UI and Codex-owned app://- frame,
+        // but never opaque or third-party web origins.
+        const origin = request.headers.origin;
+        const embedded = origin === "app://-" || origin === "null";
+        const codexEmbed = embedded && await trustedPipelineHost(request, resolved.dataDirectory);
+        if (!codexEmbed && (request.headers["sec-fetch-site"] === "cross-site" ||
+          (origin && origin !== "http://" + request.headers.host))) {
+          throw new ApiError(403, "PIPELINE_ORIGIN", "请从本机项目管理打开流水线");
+        }
+        if (request.method !== "GET" && request.method !== "POST") return methodNotAllowed(response, ["GET", "POST"]);
+        let command;
+        if (request.method === "POST") {
+          assertNoQuery(url.searchParams, pathname);
+          if (!/^application\/json(?:;|$)/i.test(request.headers["content-type"] || "")) return sendJson(response, 415, { error: { message: "写入仅接受 JSON" } });
+          command = await readJson(request);
+          assertPlainObject(command);
+        } else {
+          assertAllowedQuery(url.searchParams, new Set(["projectId"]), pathname);
+        }
+        try {
+          const config = await cloudConfig.read();
+          if (config.remoteUrl) return sendJson(response, 409, { error: { message: "流水线使用本机项目；共享看板暂不自动运行。" } });
+          return sendJson(response, 200, await localPipeline().request(command ? command.projectId : url.searchParams.get("projectId"), command));
+        } catch (error) {
+          if (error.status && !(error instanceof ApiError)) throw new ApiError(error.status, "PIPELINE_REQUEST", error.message);
+          throw error;
+        }
       }
 
       if (pathname === "/api/local/cloud-session") {
@@ -2292,6 +2408,18 @@ export function createTaskboardServer(options = {}) {
         server.listen(port, host);
       });
       listening = true;
+      // Restart recovery and interval rules do not depend on opening the UI.
+      try { localPipeline(); }
+      catch (error) { console.error("Pipeline startup:", error.code || error.name); }
+      if (options.taskHallAgents) {
+        try {
+          taskHallAgents = createTaskHallAgents({
+            hall: localTaskHall(), adapters: options.taskHallAgents,
+            onError: ({ host, phase }) => console.error('Task Hall Agent:', host, phase),
+          });
+          taskHallAgents.start();
+        } catch (error) { console.error('Task Hall startup:', error.code || error.name); }
+      }
       return server.address();
     },
     async close() {
@@ -2303,8 +2431,11 @@ export function createTaskboardServer(options = {}) {
       events.close();
       for (const response of aiEventResponses) response.end();
       aiEventResponses.clear();
+      await pipeline?.close();
       await aiChat.close();
       await serverClosed;
+      await taskHallAgents?.close();
+      taskHall?.close();
       listening = false;
       database.close();
     },

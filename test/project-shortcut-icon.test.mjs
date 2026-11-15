@@ -58,7 +58,7 @@ test("project icons do not depend on the native icon format or label nesting", {
     const native = await client.evaluate(`(()=>{const b=document.getElementById('codex-taskboard-entry'),s=b.querySelector('svg'),c=s&&getComputedStyle(s);return {label:b.textContent.trim(),icon:!!s?.querySelector('rect,path'),namespace:s?.namespaceURI,visible:!!s&&c.display!=='none'&&c.visibility==='visible'&&c.opacity!=='0',staleIcons:b.querySelectorAll('.native-mask-icon,.native-hidden-icon').length,source:document.getElementById('fixture-plugin').innerHTML}})()`);
     assert.equal(native.icon, true, `Native entry must own its icon (host variant ${index})`);
     assert.equal(native.namespace, "http://www.w3.org/2000/svg");
-    assert.equal(native.label, "项目管理");
+    assert.equal(native.label, "任务大厅");
     assert.equal(native.visible, true);
     assert.equal(native.staleIcons, 0);
     assert.equal(native.source, referenceHtml, "Do not mutate the native reference");
@@ -66,14 +66,14 @@ test("project icons do not depend on the native icon format or label nesting", {
     // supply its own artwork rather than clone an empty native source.
     await client.evaluate("document.querySelector('#codex-taskboard-entry svg').remove()");
     await client.evaluate(sidebar);
-    const selector = '[data-codex-sidebar-shortcut-name="项目管理"]';
+    const selector = '[data-codex-sidebar-shortcut-name="任务大厅"]';
     await waitForBrowserState(client, `!!document.querySelector(${JSON.stringify(selector)})`, "Project shortcut exists");
     const icon = await client.evaluate(`(()=>{const b=document.querySelector(${JSON.stringify(selector)}),s=b.querySelector('svg'),r=s?.getBoundingClientRect();return {label:b.textContent,paths:s?.querySelectorAll('rect,path').length,width:r?.width,height:r?.height,count:document.querySelectorAll(${JSON.stringify(selector)}).length}})()`);
     assert.ok(icon.paths > 0, "Shortcut artwork must not depend on native source SVG");
     assert.equal(icon.width, 18);
     assert.equal(icon.height, 18);
     assert.equal(icon.count, 1);
-    assert.equal(icon.label, "项目管理");
+    assert.equal(icon.label, "任务大厅");
     assert.equal(await client.evaluate("document.querySelector('[contenteditable]').textContent"), "Keep my draft");
     if (index === 0 && process.env.AIYOUCODEX_ICON_SCREENSHOT) {
       const screenshot = await client.send("Page.captureScreenshot", { format: "png" });
@@ -83,13 +83,13 @@ test("project icons do not depend on the native icon format or label nesting", {
 
   await client.evaluate(`document.body.insertAdjacentHTML('afterbegin', '<nav data-app-navigation-rail style="display:block;width:64px;height:100vh"><button>Home</button></nav>')`);
   await waitForBrowserState(client,
-    `document.querySelector('#codex-sidebar-shortcut-grid[data-codex-shortcut-layout="rail"] [data-codex-sidebar-shortcut-name="项目管理"]') && !document.getElementById('codex-taskboard-entry')`,
+    `document.querySelector('#codex-sidebar-shortcut-grid[data-codex-shortcut-layout="rail"] [data-codex-sidebar-shortcut-name="任务大厅"]') && !document.getElementById('codex-taskboard-entry')`,
     "The new icon rail replaces the legacy project card");
   const runtimeSource = await readFile(new URL("../vendor/codex-taskboard/scripts/codex-injector.mjs", import.meta.url), "utf8");
   assert.match(runtimeSource, /entryMounted: Boolean\(document\.getElementById\("codex-taskboard-entry"\)[\s\S]*?data-codex-shortcut-layout/,
     "The resident injector must accept the rail shortcut as a healthy entry");
-  assert.equal(await client.evaluate("document.querySelectorAll('[data-codex-sidebar-shortcut-name=\"项目管理\"]').length"), 1);
-  await client.evaluate("document.querySelector('[data-codex-sidebar-shortcut-name=\"项目管理\"]').click()");
+  assert.equal(await client.evaluate("document.querySelectorAll('[data-codex-sidebar-shortcut-name=\"任务大厅\"]').length"), 1);
+  await client.evaluate("document.querySelector('[data-codex-sidebar-shortcut-name=\"任务大厅\"]').click()");
   assert.equal(await client.evaluate("document.documentElement.getAttribute('data-codex-taskboard-open')"), "true",
     "The remaining rail shortcut still opens Taskboard");
   await client.evaluate("window.__codexTaskboardInjection__.close()");

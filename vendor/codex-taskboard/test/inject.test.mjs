@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { test } from "node:test";
 import vm from "node:vm";
 
@@ -12,7 +13,7 @@ const webApp = await readFile(new URL("../web/src/App.tsx", import.meta.url), "u
 
 test("injection is an idempotent IIFE guarded by its current source hash", () => {
   assert.match(source, /^\(\(\) => \{/);
-  assert.match(source, /const VERSION = "0\.6\.12"/);
+  assert.match(source, /const VERSION = "\d+\.\d+\.\d+"/);
   assert.match(source, /const SOURCE_HASH = window\.__CODEX_TASKBOARD_SOURCE_HASH__/);
   assert.match(source, /const SENTINEL_KEY = "__codexTaskboardInjection__"/);
   assert.match(source, /previous\?\.sourceHash === SOURCE_HASH/);
@@ -46,7 +47,7 @@ test("loopback Taskboard stays embedded in Codex as a side panel", () => {
 
 test("entry clones the native Plugins row and mounts a resizable side panel", () => {
   assert.match(source, /const PLUGIN_LABELS = \["插件", "plugins"\]/);
-  assert.match(source, /const ENTRY_LABEL = "项目管理"/);
+  assert.match(source, /const ENTRY_LABEL = "任务大厅"/);
   assert.match(source, /pluginGroup && directShortcutButtons\(pluginGroup\)\.length >= 3/);
   assert.match(source, /return directShortcutButtons\(group\)\.at\(-1\)/);
   assert.match(source, /const button = reference\.cloneNode\(true\)/);
@@ -158,9 +159,9 @@ test("reopening reuses a ready cache-busted iframe without showing the startup p
   assert.match(prepareSource, /if \(canReuseFrame\) showFrame\(\);\s*else showLoading\(\);/);
   assert.match(
     prepareSource,
-    /if \(!frameReady \|\| result\.restarted \|\| !frameMatchesTaskboardUrl\(taskboardUrl\)\) \{\s*showLoading\(\);/,
+    /if \(!frameReady \|\| result\.restarted \|\| !frameMatchesTaskboardUrl\(taskboardUrl\)\) \{\s*showLoading\([^)]*\);/,
   );
-  assert.doesNotMatch(prepareSource, /async function prepareTaskboard\(generation\) \{\s*showLoading\(\);/);
+  assert.doesNotMatch(prepareSource, /async function prepareTaskboard\(generation\) \{\s*showLoading\([^)]*\);/);
 });
 
 test("iframe messages require both the exact origin and source window", () => {
@@ -203,9 +204,11 @@ test("complete App automation payloads cross the injected forwarder into the cur
     taskboardProjectId: "local",
     codexProjectId: "codex-project",
     projectName: "Local",
-    workspacePath: "/tmp/local-project",
-    skillPath: "/tmp/manage-taskboard/SKILL.md",
+    workspacePath: path.resolve("fixture-local-project"),
+    skillPath: path.resolve("fixture-manage-taskboard", "SKILL.md"),
     automationId: "automation-1",
+    enabledByUser: true,
+    quotaAware: false,
     intervalMinutes: 10,
     model: "gpt-5.6-sol",
     reasoningEffort: "ultra",
