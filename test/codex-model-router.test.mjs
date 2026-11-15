@@ -8,6 +8,7 @@ const deepseek = {
 };
 
 function fixture({ busy = false, status = 'idle', unloadError = false, onUnsubscribe,
+  compactionUsage = 10000, compactionStatus = 'completed', unrelatedCompletion = false,
   resolveContextWindow = async model => ({'gpt-6.1-sol': 500000, 'gpt-5.5': 272000}[model] ?? null)} = {}) {
   const calls = [], loaded = new Map(), stored = new Map();
   const call = async (method, params) => {
@@ -25,6 +26,15 @@ function fixture({ busy = false, status = 'idle', unloadError = false, onUnsubsc
       loaded.delete(params.threadId); return {status: 'unsubscribed'};
     }
     if (method === 'thread/loaded/list') return {data: [...loaded.keys()]};
+    if (method === 'thread/compact/start') {
+      queueMicrotask(() => {
+        router.notification({method: 'turn/started', params: {threadId: params.threadId, turn: {id: 'compact-one'}}});
+        if (unrelatedCompletion) router.notification({method: 'turn/completed', params: {threadId: params.threadId, turn: {id: 'older-turn', status: 'failed'}}});
+        router.notification({method: 'thread/tokenUsage/updated', params: {threadId: params.threadId, tokenUsage: {last: {totalTokens: compactionUsage}}}});
+        router.notification({method: 'turn/completed', params: {threadId: params.threadId, turn: {id: 'compact-one', status: compactionStatus}}});
+      });
+      return {};
+    }
     if (method === 'thread/resume') {
       if (loaded.has(params.threadId)) return {thread: loaded.get(params.threadId), modelProvider: loaded.get(params.threadId).modelProvider};
       const thread = {...stored.get(params.threadId), modelProvider: params.modelProvider || 'openai'};
@@ -52,6 +62,35 @@ test('ordinary GPT requests and account login requests pass through unchanged', 
   await router.request('thread/start', params);
   assert.deepEqual(calls[0], {method: 'thread/start', params});
   assert.deepEqual(await router.request('account/read', {refreshToken: false}), {account: {type: 'chatgpt'}});
+});
+
+test('unavailable native catalog prevents new and restored DeepSeek generation or compaction', async () => {
+  const calls = [];
+  const router = createModelRouter({catalogUnavailable: true, call: async (method, params) => {
+    calls.push({method, params});
+    if (method === 'thread/read') return {thread: {id: params.threadId, modelProvider: 'deepseek'}};
+    throw new Error('Unexpected native mutation');
+  }});
+  await assert.rejects(router.request('thread/start', {model: 'deepseek-flash'}), /完整模型目录未加载/);
+  await assert.rejects(router.request('thread/start', {modelProvider: 'deepseek'}), /完整模型目录未加载/);
+  for (const method of ['thread/resume', 'thread/fork', 'turn/start', 'thread/settings/update', 'thread/compact/start']) {
+    await assert.rejects(router.request(method, {threadId: 'stored-ds'}), /完整模型目录未加载/);
+  }
+  assert.ok(calls.every(x => x.method === 'thread/read'));
+});
+
+test('unavailable additive catalog preserves ordinary GPT operations and account access', async () => {
+  const calls = [];
+  const router = createModelRouter({catalogUnavailable: true, call: async (method, params) => {
+    calls.push({method, params});
+    return method === 'thread/read' ? {thread: {id: params.threadId, modelProvider: 'openai'}} : {ok: true};
+  }});
+  const params = {model: 'gpt-6.1-sol'};
+  assert.deepEqual(await router.request('thread/start', params), {ok: true});
+  await router.request('turn/start', {threadId: 'gpt', ...params});
+  await router.request('account/read', {refreshToken: false});
+  assert.deepEqual(calls[0], {method: 'thread/start', params});
+  assert.equal(calls.at(-1).method, 'account/read');
 });
 
 test('the first turn of a new cached thread does not require a rollout to already exist', async () => {
@@ -95,26 +134,53 @@ test('GPT → DeepSeek → GPT unloads before reloading the same thread and pres
   const back = await router.request('turn/start', {threadId: 'thread-one', model: 'gpt-6.1-sol', input: []});
   assert.equal(back.provider, 'openai');
   const lastResume = calls.filter(x => x.method === 'thread/resume').at(-1).params;
-  assert.deepEqual(lastResume.config, {keep: true, model_context_window: 500000});
+  assert.deepEqual(lastResume.config, {keep: true});
   assert.ok(calls.findIndex(x => x.method === 'thread/unsubscribe') < calls.findIndex(x => x.method === 'thread/resume'));
 });
 
-test('returning from DeepSeek binds compaction to the actual GPT window and refreshes it for smaller GPT models', async () => {
+test('a long DeepSeek history compacts once on its original provider before switching to a smaller GPT', async () => {
   const {router, calls} = fixture();
   await router.request('thread/start', {model: 'deepseek-flash', config: {keep: true}});
-  await router.request('turn/start', {threadId: 'thread-one', model: 'gpt-6.1-sol', input: []});
-  let reload = calls.filter(x => x.method === 'thread/resume').at(-1).params;
-  assert.equal(reload.config.model_context_window, 500000);
+  router.notification({method: 'thread/tokenUsage/updated', params: {threadId: 'thread-one', tokenUsage: {last: {totalTokens: 600000}}}});
   await router.request('thread/settings/update', {threadId: 'thread-one', model: 'gpt-5.5'});
-  reload = calls.filter(x => x.method === 'thread/resume').at(-1).params;
+  const reload = calls.filter(x => x.method === 'thread/resume').at(-1).params;
   assert.equal(reload.model, 'gpt-5.5');
-  assert.equal(reload.config.model_context_window, 272000, 'A previous GPT override must not exceed a smaller model window');
-  assert.equal(calls.filter(x => x.method === 'thread/unsubscribe').length, 2);
+  assert.deepEqual(reload.config, {keep: true}, 'Ineffective thread-level window overrides must not alter native metadata');
+  assert.equal(calls.filter(x => x.method === 'thread/compact/start').length, 1);
+  assert.ok(calls.findIndex(x => x.method === 'thread/compact/start') < calls.findIndex(x => x.method === 'thread/unsubscribe'));
+  await router.request('thread/settings/update', {threadId: 'thread-one', model: 'gpt-6.1-sol'});
+  assert.equal(calls.filter(x => x.method === 'thread/unsubscribe').length, 1, 'Ordinary GPT model changes remain native');
   await router.request('thread/settings/update', {threadId: 'thread-one', model: 'deepseek-flash'});
-  reload = calls.filter(x => x.method === 'thread/resume').at(-1).params;
-  assert.equal(reload.config.model_context_window, undefined, 'The router window must not leak into the DeepSeek baseline');
-  assert.equal(reload.config.keep, true);
+  assert.equal(calls.filter(x => x.method === 'thread/resume').at(-1).params.config.model_context_window, undefined);
 });
+
+test('only the managed compaction turn can finish preparation for a provider switch', async () => {
+  const {router, calls} = fixture({unrelatedCompletion: true});
+  await router.request('thread/start', {model: 'deepseek-flash'});
+  router.notification({method: 'thread/tokenUsage/updated', params: {threadId: 'thread-one', tokenUsage: {last: {totalTokens: 600000}}}});
+  await router.request('thread/settings/update', {threadId: 'thread-one', model: 'gpt-5.5'});
+  assert.equal(calls.filter(x => x.method === 'thread/compact/start').length, 1);
+  assert.equal(calls.filter(x => x.method === 'thread/resume').at(-1).params.modelProvider, 'openai');
+});
+
+test('a short DeepSeek history returns to GPT without unnecessary compaction', async () => {
+  const {router, calls} = fixture();
+  await router.request('thread/start', {model: 'deepseek-flash'});
+  router.notification({method: 'thread/tokenUsage/updated', params: {threadId: 'thread-one', tokenUsage: {last: {totalTokens: 100000}}}});
+  await router.request('thread/settings/update', {threadId: 'thread-one', model: 'gpt-6.1-sol'});
+  assert.equal(calls.some(x => x.method === 'thread/compact/start'), false);
+});
+
+for (const options of [{compactionUsage: 300000}, {compactionStatus: 'interrupted'}]) {
+  test(`a failed or insufficient compact never loops or switches providers: ${JSON.stringify(options)}`, async () => {
+    const {router, calls} = fixture(options);
+    await router.request('thread/start', {model: 'deepseek-flash'});
+    router.notification({method: 'thread/tokenUsage/updated', params: {threadId: 'thread-one', tokenUsage: {last: {totalTokens: 600000}}}});
+    await assert.rejects(router.request('thread/settings/update', {threadId: 'thread-one', model: 'gpt-5.5'}), /压缩/);
+    assert.equal(calls.filter(x => x.method === 'thread/compact/start').length, 1);
+    assert.equal(calls.some(x => x.method === 'thread/unsubscribe' || x.method === 'turn/start'), false);
+  });
+}
 
 test('missing target window metadata rejects a return to GPT before releasing the original thread', async () => {
   const {router, calls} = fixture({resolveContextWindow: async () => null});

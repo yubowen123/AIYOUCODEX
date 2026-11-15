@@ -1,15 +1,17 @@
 # GPT 与 DeepSeek 同时使用
 
-AIYOUcodex v1.7.0 的 **macOS 版**在原生模型菜单中追加 **DeepSeek V4.1 Flash**（API 模型名 `deepseek-flash`）。GPT 模型和已有 ChatGPT 登录继续保留；选择 DeepSeek 后，可在同一对话中继续工作，也可切回 GPT。
+AIYOUcodex 的 **macOS 版**在原生模型菜单中追加 **DeepSeek V4.1 Flash**（API 模型名 `deepseek-flash`）。GPT 模型和已有 ChatGPT 登录继续保留；选择 DeepSeek 后，可在同一对话中继续工作，也可切回 GPT。
 
 ## 开始使用
 
-1. 安装或更新到 AIYOUcodex v1.7.0。结束正在生成的回答后，完整退出客户端，再通过 **AIYOUcodex** 入口打开。
+1. 安装包含本次修复的 AIYOUcodex 版本。2026-10-15 的本次源码更新不自动替换既有发行包，请按对应发布记录核对。结束正在生成的回答后，完整退出客户端，再通过 **AIYOUcodex** 入口打开。
 2. 打开 **AIYOUcodex 设置 → DeepSeek**，填写自己的 DeepSeek API Key 并保存。已保存的 Key 只显示配置状态，不会回显。
 3. 在原生模型菜单选择 **DeepSeek V4.1 Flash**，再发送消息。可选推理强度为 `low`、`high`、`max`。
 4. 切回 GPT 时，选择目标 GPT 模型后继续发送即可。正在生成或等待审批的回答需要先结束，才能切换。
 
 新安装无需手工追加 provider、下载模型目录或安装 Python 凭证脚本。发布包内包含模型 metadata 和 Node.js 认证 helper；启动时仅向子进程添加 DeepSeek 配置，不改写全局默认模型、`config.toml` 或 `auth.json`。
+
+DeepSeek 还需要原生 Codex 的完整模型缓存。启动时以该缓存为基础生成仅含公开模型 metadata 的 `models/aiyou-gpt-deepseek.json`，完整保留原 GPT 条目，再追加 DeepSeek。若新配置目录尚无缓存，或缓存损坏、不完整，GPT 继续按原生方式启动，暂不启用 DeepSeek；先让原生 GPT 完成模型目录同步，再完整退出并重新启动 AIYOUcodex。不会用仅含 DeepSeek 的目录替换原模型列表。
 
 DeepSeek 路由需要安装器完成 npm 依赖安装。如果安装时仅使用桌面应用自带 Node、没有安装 npm 依赖，GPT 仍按原生方式工作，此时不会追加 DeepSeek 条目；补齐依赖后重新启动即可启用。
 
@@ -29,19 +31,24 @@ DeepSeek 路由需要安装器完成 npm 依赖安装。如果安装时仅使用
 
 - 切换前确认对话可恢复且没有正在生成的回答；保持原 thread ID、历史、项目、工作目录及权限设置。
 - 新建 DeepSeek 对话使用 DeepSeek 的模型目录，支持文本和图片输入。不会把 GPT 的专属服务档位、推理摘要或原生网络搜索配置发给 DeepSeek。
-- 从 DeepSeek 回到 GPT 时，从原生模型缓存精确读取目标 GPT 的上下文上限，绑定到该次恢复。压缩与后续回答使用目标 GPT，不把旧模型名发往新供应商。
+- 从 DeepSeek 回到 GPT 时，精确读取目标 GPT 的窗口。历史较长或用量未知时，先在原 DeepSeek 通道压缩一次，等待对应压缩 turn 完成并确认用量低于目标预算，再释放并恢复到 GPT；短历史直接切换。后续回答才使用目标 GPT，不把 DeepSeek 名发往 GPT。
+- 压缩失败、中断、超时或结果仍超预算时，保留原提供方并提示错误，不循环压缩、不自动提交下一次生成。
 - 若目标 GPT 的窗口信息缺失或不合法，在释放对话前提示错误。刷新原生模型目录后重试；不会猜测上限或自动换模型提交。
 - DeepSeek metadata 的 `comp_hash` 使用 `null`，避免跨供应商切换时触发不兼容的上一模型预压缩路径。
 
+## 连续压缩修复（2026-10-15）
+
+仅向模型菜单追加名称、或在线程级设置模型目录/窗口，不能使原生全局模型管理器识别 DeepSeek 的 1M 窗口。原生 CLI `0.162.0-alpha.17.2` 在这种情况下仍采用 258,400 Token 的未知模型回退窗口；正常带工具请求约 28 万 Token，导致压缩后每步工具调用再次触发压缩。
+
+本次修复在 `app-server` 子命令参数末尾追加合并模型目录，使 DeepSeek 有效窗口达到 996,147 Token。保留正常自动压缩，不修改服务器 usage，也不隐藏压缩通知。已经运行的旧后端必须完整退出重启才能加载，单独切换菜单无效。
+
 ## 验证范围
 
-本版 65 项 DeepSeek、启动器和安装专项检查通过，覆盖菜单共存、双向切换、忙碌和错误状态、原生审批请求透传、压缩窗口绑定，以及 Key 保存、环境变量优先、原子写入和错误脱敏。首次安装检查使用空配置目录，确认随包依赖齐全且不更改默认配置和登录文件；无 npm 依赖的隔离安装确认 GPT 可继续使用；设置界面使用隔离浏览器验证。
+Node 22 完整回归为 878 项通过、0 失败、1 项平台跳过；另 4 项 task-activity 回归通过。本次移植的 62 项模型路由、模型目录、便携配置和 Key 设置专项检查全部通过，包括无 npm 依赖时 GPT 直通、自定义 provider/profile 优先级、完整 GPT metadata 保留、目录原子写入、无缓存保护，以及单次原提供方预压缩的失败与中断处理。
 
-另以发布包代理连接原生 Codex CLI `0.162.0-alpha.17.2`，在空配置目录成功初始化并创建 `deepseek-flash` / `deepseek` 临时对话，未创建 `config.toml` 或 `auth.json`，未提交模型回答请求。该项确认首次加载与 metadata 解析，不代表桌面窗口验收。
+本机此前真实 DeepSeek 服务回归：最高 294,694 输入 Token、连续 3 次无副作用工具调用、0 次自动压缩，合成标记保留，有效窗口 996,147。另以实际 bundled native 和 localhost 合成服务，对照线程级目录仍循环压缩、启动级完整目录不循环，以及 600k DeepSeek 历史经原通道单次压缩后返回 270k GPT；测试不使用私人对话。
 
-前期已在 macOS 的原生 Codex CLI 完成 GPT → DeepSeek → DeepSeek 主动压缩 → DeepSeek 继续回答 → GPT 的真实服务验证；同一合成标记持续保留，登录类型和登录文件不变。另以 localhost 模拟服务验证了约 600k 上下文返回 270k GPT 窗口时的压缩目标模型。
-
-以上不等同于所有桌面版本的实机验收。更新后原生窗口的完整冷启动、Windows 原生请求链路和使用者实际历史仍需实机确认；发布包内不包含前期测试的私人对话、账号或凭证。
+前期 GPT → DeepSeek → DeepSeek 主动压缩 → DeepSeek 继续回答 → GPT 的短对话真实服务测试仅证明模型切换和标记保留，不能单独证明长任务压缩正常。当前窗口冷启动、实际使用者历史及 Windows 原生 DeepSeek 请求链路仍需分别实机确认；公开仓库不包含私人账号、对话或凭证。
 
 ## 资料
 
