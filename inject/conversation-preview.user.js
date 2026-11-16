@@ -2,7 +2,7 @@
   "use strict";
 
   const SENTINEL = "__codexConversationPreviewInjection__";
-  const RUNTIME_VERSION = "2026-10-14.1-deepseek-search";
+  const RUNTIME_VERSION = "2026-11-16.1-navigation-rail";
   const DOCUMENT_EPOCH = `${performance.timeOrigin}:${globalThis.crypto?.randomUUID?.() || Math.random()}`;
   const STYLE_ID = "codex-conversation-preview-style";
   const TOGGLE_ID = "codex-conversation-view-toggle";
@@ -964,6 +964,21 @@
         overflow-y: auto;
       }
       [data-aiyoucodex-icon-rail="true"]:not([data-app-navigation-rail]) > :not(#${SHORTCUT_GRID_ID}) { flex-shrink: 0; }
+      [data-aiyoucodex-icon-rail="true"][data-aiyoucodex-fallback-icon-rail] {
+        box-sizing: border-box;
+        flex: 0 0 46px;
+        align-self: stretch;
+        width: 46px;
+        min-width: 0;
+        overflow: hidden;
+        border-inline-end: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+        -webkit-app-region: no-drag;
+      }
+      [data-aiyoucodex-fallback-icon-rail] > #${SHORTCUT_GRID_ID}[data-codex-shortcut-layout="rail"] {
+        box-sizing: border-box;
+        min-height: 0;
+        overscroll-behavior: contain;
+      }
       #${SHORTCUT_GRID_ID}[data-codex-shortcut-layout="rail"] {
         display: flex !important;
         flex: 1 1 0;
@@ -1956,6 +1971,10 @@
       #${RESET_NOTICE_ID} strong { font-size: 11px; font-weight: 700; line-height: 13px; }
       #${RESET_NOTICE_ID}:hover { background: color-mix(in srgb, currentColor 10%, Canvas); }
       #${RESET_NOTICE_ID}:focus-visible { outline: 2px solid #3878ef; outline-offset: 2px; }
+      #app-shell-sidebar:has([data-aiyoucodex-fallback-icon-rail]) #${USAGE_ID} {
+        flex: 0 1 112px !important;
+        min-width: 64px !important;
+      }
       #${RESET_DIALOG_ID} {
         width: min(520px, calc(100vw - 32px)); max-height: min(760px, calc(100vh - 48px)); box-sizing: border-box;
         border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius: 22px;
@@ -6811,21 +6830,26 @@
   // sr-only text, not aria-label, and host zoom scales their geometry. Neither
   // a minimum labelled-button count nor fixed pixel bounds is a valid gate.
   function nativeIconRail() {
-    const declared = Array.from(document.querySelectorAll('nav[data-app-navigation-rail]'))
+    const sidebar = sidebarRoot();
+    const frame = sidebar?.closest('[data-app-shell-frame]');
+    const declared = Array.from((frame || document).querySelectorAll('nav[data-app-navigation-rail]'))
       .find((node) => {
         const rect = node.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden";
+        return rect.width > 0 && rect.height > 0 && nativeSidebarSourceAvailable(node);
       });
     if (declared) return declared;
     // Compatibility for older hosts without the semantic landmark.
+    // In a current shell, unrelated narrow toolbars are not navigation rails.
+    if (frame?.hasAttribute("data-app-shell-feature-navigation")) return null;
     const own = `#${SHORTCUT_GRID_ID}, #${SHORTCUT_SETTINGS_ID}`;
-    const actions = Array.from(document.querySelectorAll("button[aria-label], a[aria-label]"))
+    const actions = Array.from((frame || document).querySelectorAll("button[aria-label], a[aria-label]"))
       .filter((node) => !node.closest(own) && node.getBoundingClientRect().left < 105);
     const candidates = new Set();
     for (const action of actions) {
       for (let node = action.parentElement; node && node !== document.body; node = node.parentElement) {
         const rect = node.getBoundingClientRect();
-        if (rect.left > 30 || rect.width < 42 || rect.width > 105) continue;
+        if (node.contains(sidebar) || node.closest(own) || node.hasAttribute("data-aiyoucodex-fallback-icon-rail")
+          || !nativeSidebarSourceAvailable(node) || rect.left > 30 || rect.width < 42 || rect.width > 105) continue;
         if (rect.height < Math.min(250, window.innerHeight * .35)) continue;
         const visibleActions = Array.from(node.querySelectorAll("button[aria-label], a[aria-label]"))
           .filter((button) => !button.closest(own) && button.getBoundingClientRect().height > 0);
@@ -6845,6 +6869,22 @@
       if (scroller) return scroller;
     }
     return rail;
+  }
+
+  function fallbackIconRailLane() {
+    const sidebar = sidebarRoot();
+    const frame = sidebar?.closest('[data-app-shell-frame]');
+    const scroller = nativeSidebarContentRoot();
+    if (!frame?.hasAttribute("data-app-shell-feature-navigation") || !sidebar || scroller === sidebar || !scroller
+      || !nativeSidebarSourceAvailable(sidebar)) return null;
+    // The new shell may turn off its own rail while retaining a horizontal
+    // sidebar content lane. Derive the lane from the active conversation
+    // scroller; the host's generated class names can change on every update.
+    return Array.from(sidebar.children).find((child) => {
+      if (!child.contains(scroller)) return false;
+      const style = getComputedStyle(child);
+      return /^(?:inline-)?flex$/u.test(style.display) && style.flexDirection === "row";
+    }) || null;
   }
 
   function shortcutGroupButtons(group) {
@@ -6889,6 +6929,7 @@
   function nativeShortcutSources() {
     const newConversation = findNativeShortcutButton("新对话");
     const rail = nativeIconRail();
+    const fallbackLane = rail ? null : fallbackIconRailLane();
     const managedItems = normalizedManagedShortcuts();
     const enhancementItems = [
       { id: "agent-workspace", name: "Agent 工作区", kind: "enhancement", icon: "agent", activate: () => window.__aiyouAgentWorkspace__?.open?.() },
@@ -6904,9 +6945,9 @@
         } },
     ];
     const settingsItem = { id: "settings", name: "设置", kind: "settings" };
-    if (rail) {
+    if (rail || fallbackLane) {
       const catalogItems = orderedShortcuts([
-        { name: "新对话", kind: "native", icon: "newChat", button: newConversation },
+        ...(newConversation ? [{ name: "新对话", kind: "native", icon: "newChat", button: newConversation }] : []),
         ...managedItems,
         ...enhancementItems,
         ...normalizedCustomShortcuts(),
@@ -6914,10 +6955,13 @@
       ]);
       const items = catalogItems.filter((item) => item.kind === "settings"
         || !shortcutSettings.hidden.includes(shortcutItemKey(item)));
-      return { mode: "rail", rail, mountHost: nativeIconRailMount(rail),
+      return { mode: "rail", rail, mountHost: rail ? nativeIconRailMount(rail) : null, fallbackLane,
         newConversationRow: newConversationShortcutMount(newConversation)?.newConversationRow,
         sourceItems: [], catalogItems, items };
     }
+    // Do not flash a legacy header grid while the current shell is mounting
+    // its sidebar (or while the sidebar is collapsed).
+    if (sidebarRoot()?.closest('[data-app-shell-frame][data-app-shell-feature-navigation]')) return null;
     const mount = newConversationShortcutMount(newConversation);
     if (!mount) return null;
     const { header, newConversationRow, quickButton } = mount;
@@ -7098,6 +7142,7 @@
   function clearShortcutEnhancement() {
     if (shortcutDrag?.container.id === SHORTCUT_GRID_ID) clearShortcutDrag();
     document.getElementById(SHORTCUT_GRID_ID)?.remove();
+    document.querySelectorAll('[data-aiyoucodex-fallback-icon-rail]').forEach((node) => node.remove());
     document.querySelectorAll('[data-aiyoucodex-icon-rail]').forEach((node) => node.removeAttribute('data-aiyoucodex-icon-rail'));
     document.querySelectorAll("[data-codex-sidebar-shortcut-source-hidden]").forEach((node) => {
       node.removeAttribute("data-codex-sidebar-shortcut-source-hidden");
@@ -7129,7 +7174,10 @@
     shortcutSourcesMissingSince = 0;
     let grid = document.getElementById(SHORTCUT_GRID_ID);
     const railMode = sources.mode === "rail";
-    const mountHost = railMode ? sources.mountHost : sources.header;
+    const fallbackLane = sources.fallbackLane;
+    let rail = sources.rail || Array.from(fallbackLane?.children || [])
+      .find((node) => node.hasAttribute("data-aiyoucodex-fallback-icon-rail"));
+    let mountHost = railMode ? sources.mountHost || rail : sources.header;
     const needsRebuild = grid?.dataset.codexPreviewRuntime !== RUNTIME_TOKEN
       || !shortcutRoots.has(grid)
       || grid?.parentElement !== mountHost
@@ -7141,6 +7189,13 @@
       || sources.items.some((item) => shortcutSources.get(shortcutItemKey(item)) !== (item.button || item.id || item.url || item.kind));
     if (needsRebuild) {
       clearShortcutEnhancement();
+      if (fallbackLane) {
+        rail = document.createElement("nav");
+        rail.setAttribute("aria-label", "AIYOUcodex 快捷入口");
+        rail.setAttribute("data-aiyoucodex-fallback-icon-rail", "");
+        fallbackLane.prepend(rail);
+        mountHost = rail;
+      }
       grid = document.createElement("div");
       grid.id = SHORTCUT_GRID_ID;
       grid.setAttribute("role", "group");
@@ -7155,8 +7210,8 @@
     if (railMode) {
       // Leave every native rail control in place; only our own tools are added.
       if (grid.parentElement !== mountHost) mountHost.appendChild(grid);
-      grid.dataset.codexShortcutRailScroll = mountHost !== sources.rail ? "native" : "self";
-      sources.rail.setAttribute("data-aiyoucodex-icon-rail", "true");
+      grid.dataset.codexShortcutRailScroll = mountHost !== rail ? "native" : "self";
+      rail.setAttribute("data-aiyoucodex-icon-rail", "true");
       document.querySelectorAll("[data-codex-sidebar-shortcut-source-hidden], [data-codex-sidebar-shortcut-source-group-hidden]")
         .forEach((node) => {
           node.removeAttribute("data-codex-sidebar-shortcut-source-hidden");
@@ -9968,7 +10023,7 @@
   function observeHost() {
     if (!destroyed && observer) observer.observe(document.documentElement, {
       childList: true, subtree: true, attributes: true,
-      attributeFilter: ["style", "hidden", "data-app-shell-active-page", "data-state", "aria-expanded", "aria-label", "aria-disabled", "disabled", "title", "data-app-action-sidebar-project-id", "data-app-action-sidebar-project-label", "data-app-action-sidebar-thread-id", "data-app-action-sidebar-thread-title"],
+      attributeFilter: ["style", "hidden", "data-app-shell-active-page", "data-app-shell-feature-navigation", "data-app-shell-sidebar-open", "data-app-navigation-rail", "data-state", "aria-expanded", "aria-label", "aria-disabled", "disabled", "title", "data-app-action-sidebar-project-id", "data-app-action-sidebar-project-label", "data-app-action-sidebar-thread-id", "data-app-action-sidebar-thread-title"],
     });
   }
 
@@ -9981,9 +10036,9 @@
       // scrollers/headers. Ignore unrelated animation style mutations.
       if (["style", "hidden", "data-app-shell-active-page"].includes(record.attributeName)) {
         const sidebar = sidebarRoot();
-        return Boolean(target && sidebar?.contains(target)
+        return Boolean(target && (target.matches('[data-app-navigation-rail]') || sidebar?.contains(target)
           && (target.matches('[data-app-action-sidebar-scroll]')
-            || target.querySelector('[data-app-action-sidebar-scroll], button[aria-label="搜索"], button[aria-label="Search"]')));
+            || target.querySelector('[data-app-action-sidebar-scroll], button[aria-label="搜索"], button[aria-label="Search"]'))));
       }
       // Our synchronous renderer is disconnected from this observer. Removed
       // descendants here therefore need repair even inside an enhanced root.

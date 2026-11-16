@@ -201,10 +201,58 @@ test("shortcut grid stays above conversations with optional quick chat, rerender
   await client.evaluate(`document.getElementById('native-rail').outerHTML=${JSON.stringify(markedRail)}`);
   await waitForBrowserState(client, `document.getElementById('rail-scroll').contains(${grid})`, 'Whole semantic rail replacement self-heals');
   await verifyMarkedRail('redrawn semantic rail');
+  // November host: the navigation flag is false and the native rail is absent.
+  // The sidebar keeps an ordinary horizontal lane around its content.
+  await client.evaluate(`(() => {
+    document.body.setAttribute('data-app-shell-frame', 'true');
+    document.body.setAttribute('data-app-shell-feature-navigation','false');
+    document.getElementById('native-rail').remove();
+    const sidebar = document.getElementById('app-shell-sidebar');
+    sidebar.style.width = '390px';
+    const nav = sidebar.querySelector('nav');
+    const lane = document.createElement('div');
+    lane.id = 'sidebar-content-lane';
+    lane.style.cssText = 'display:flex;flex:1;min-height:0;min-width:0';
+    nav.before(lane); lane.append(nav);
+  })()`);
+  const fallback = '[data-aiyoucodex-fallback-icon-rail]';
+  const fallbackRail = `document.querySelector('${fallback}')`;
+  const insideFallback = `${fallbackRail}?.contains(${grid})`;
+  await client.send('Emulation.setDeviceMetricsOverride', {width:1000,height:400,deviceScaleFactor:1,mobile:false});
+  await waitForBrowserState(client, insideFallback, 'Current shell without native rail mounts a persistent left rail');
+  async function verifyFallback() {
+    const state = await client.evaluate(`(() => {
+      const rail=${fallbackRail}, g=${grid}, area=document.querySelector('[data-app-action-sidebar-scroll]');
+      const header=document.getElementById('native-header'), profile=document.getElementById('profile');
+      const r=rail.getBoundingClientRect(), c=area.getBoundingClientRect(), h=header.getBoundingClientRect();
+      const search=header.querySelector('button[aria-label="Search"]').getBoundingClientRect();
+      const usage=header.querySelector('#codex-conversation-usage-status').getBoundingClientRect();
+      return {railCount:document.querySelectorAll('${fallback}').length, gridCount:document.querySelectorAll('#codex-sidebar-shortcut-grid').length,
+        railWidth:r.width, sideBySide:r.right<=c.left+1, headerAbove:h.bottom<=c.top+1, headerGrid:header.contains(g),
+        scrollable:g.scrollHeight>g.clientHeight, toolbar:!!header.querySelector('#aiyoucodex-reset-notice')&&!!header.querySelector('#codex-conversation-usage-status'),
+        searchFits:usage.right<=search.left+1 && search.right<=h.right+1,
+        profile:profile.getBoundingClientRect().height>0, draft:document.querySelector('[contenteditable]').textContent};
+    })()`);
+    assert.deepEqual(state, {railCount:1, gridCount:1, railWidth:46, sideBySide:true, headerAbove:true, headerGrid:false, scrollable:true, toolbar:true, searchFits:true, profile:true, draft:'Keep my draft'});
+  }
+  await verifyFallback();
+  await client.evaluate(`document.getElementById('app-shell-sidebar').style.width='315px'`);
+  await verifyFallback();
+  await client.evaluate(`${fallbackRail}.remove()`);
+  await waitForBrowserState(client, insideFallback, 'Host redraw restores the owned left rail');
+  await verifyFallback();
+  await client.evaluate(`${grid}.querySelector('[data-codex-sidebar-shortcut-name="新对话"]').click()`);
+  assert.equal(await client.evaluate('window.chatClicks'), 3, 'Owned rail reaches the current native new-chat action');
+  await client.evaluate(`document.body.insertAdjacentHTML('afterbegin',${JSON.stringify(markedRail)})`);
+  await waitForBrowserState(client, `!${fallbackRail} && document.getElementById('rail-scroll').contains(${grid})`, 'Prefer the restored native rail without duplication');
+  await client.evaluate(`document.getElementById('native-rail').style.display='none'`);
+  await waitForBrowserState(client, insideFallback, 'A retained but hidden native rail must not capture shortcuts');
+  await verifyFallback();
   if (process.env.AIYOUCODEX_TEST_SCREENSHOT) {
     const { data } = await client.send('Page.captureScreenshot', {format:'png'});
     await writeFile(process.env.AIYOUCODEX_TEST_SCREENSHOT, Buffer.from(data, 'base64'));
   }
   await client.evaluate('window.__codexConversationPreviewInjection__.destroy()');
   assert.equal(await client.evaluate("document.querySelectorAll('[data-aiyoucodex-icon-rail]').length"), 0);
+  assert.equal(await client.evaluate(`document.querySelectorAll('${fallback}').length`), 0);
 });
