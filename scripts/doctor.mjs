@@ -3,14 +3,13 @@
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash } from "node:crypto";
 
 import { createRuntimePlan } from "../lib/runtime-plan.mjs";
 import { TASKBOARD_VERSION } from "../lib/runtime-plan.mjs";
 import { trustedTaskboardRuntimeBaseUrl } from "../lib/taskboard-status.mjs";
 import { CdpClient, readTargets, selectMainCodexTargets } from "./cdp-client.mjs";
 import { RENDERER_HEALTH_EXPRESSION, rendererReadiness } from "../lib/renderer-health.mjs";
-import { readManagedShortcuts } from "../lib/managed-shortcuts.mjs";
+import { readRendererSource } from "../lib/renderer-source.mjs";
 
 function parseArgs(argv) {
   const options = { json: false, strict: false, port: 9231 };
@@ -145,11 +144,7 @@ if (options.strict) {
   const renderers = [];
   let expectedSourceHash = null;
   try {
-    expectedSourceHash = createHash("sha256")
-      .update(await readFile(path.join(root, "inject", "conversation-preview.user.js"), "utf8"))
-      .update("\n")
-      .update(await readFile(path.join(root, "inject", "claude-code.user.js"), "utf8"))
-      .update(JSON.stringify(await readManagedShortcuts())).digest("hex");
+    ({ sourceHash: expectedSourceHash } = await readRendererSource(root));
   } catch {} // An invalid private profile fails readiness without exposing its contents.
   try {
     for (const target of selectMainCodexTargets(await readTargets(options.port))) {

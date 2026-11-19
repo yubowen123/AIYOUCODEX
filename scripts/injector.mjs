@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,20 +32,15 @@ import { executeConfirmedContext } from "../lib/context-execution.mjs";
 import { createClaudeController, CLAUDE_BINDING } from "../lib/claude-code.mjs";
 import { RENDERER_HEALTH_EXPRESSION, acceptDocumentHealth, canReuseRenderer, recordUpdateFailure, rendererReadiness } from "../lib/renderer-health.mjs";
 import { createAgentWorkspace, AGENT_BINDING } from "../lib/agent-workspace.mjs";
-import { readOptionalThemeSource } from "../lib/theme-package.mjs";
 import { createLayaSearchController, LocalLayaRuntime, LAYA_SEARCH_BINDING } from "../lib/laya-search.mjs";
 import { createLayaDocumentSearch } from "../lib/laya-document-search.mjs";
 import { createSkillSearchController } from "../lib/skill-search.mjs";
 import { createOpenChatCutController } from "../lib/openchatcut-controller.mjs";
 import { createOpenChatCutInstaller } from "../lib/openchatcut-install.mjs";
-import { registerRendererSource, evaluateRendererSource, removeRendererScripts } from "../lib/renderer-source.mjs";
+import { readRendererSource, registerRendererSource, evaluateRendererSource, removeRendererScripts } from "../lib/renderer-source.mjs";
 import { isEnhancementEnabled, createEnhancementController, guardEnhancementSource, ENHANCEMENT_TEARDOWN_EXPRESSION, ENHANCEMENT_RESUME_EXPRESSION } from "../lib/enhancement-state.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const sourcePath = path.join(root, "inject", "conversation-preview.user.js");
-const agentSourcePath = path.join(root, "inject", "agent-workspace.user.js");
-const openChatCutSourcePath = path.join(root, "inject", "openchatcut.user.js");
-const claudeSourcePath = path.join(root, "inject", "claude-code.user.js");
 const SCRIPT_ID_GLOBAL = "__CODEX_CONVERSATION_PREVIEW_SCRIPT_IDENTIFIER__";
 
 function parseArgs(argv) {
@@ -131,14 +125,10 @@ async function expectedRendererSourceHash() {
   if (now - rendererSourceHashCheckedAt < 5_000) return cachedRendererSourceHash;
   rendererSourceHashCheckedAt = now;
   try {
-    const [baseSource, claudeSource, managedShortcuts] = await Promise.all([
-      readFile(sourcePath, "utf8"), readFile(claudeSourcePath, "utf8"), readManagedShortcuts(),
-    ]);
-    const userSource = baseSource + "\n" + claudeSource + "\n" + await readFile(agentSourcePath, "utf8") + "\n" + await readFile(openChatCutSourcePath, "utf8") + "\n" + await readOptionalThemeSource(root);
+    const { source, sourceHash } = await readRendererSource(root);
     // A partial edit must not replace a healthy renderer with invalid source.
-    new Function(userSource);
-    cachedRendererSourceHash = createHash("sha256").update(userSource)
-      .update(JSON.stringify(managedShortcuts)).digest("hex");
+    new Function(source);
+    cachedRendererSourceHash = sourceHash;
   } catch {
     cachedRendererSourceHash = null;
   }
@@ -254,18 +244,12 @@ async function attachTarget(target) {
     await client.send("Page.enable");
     rendererPhase = "script-identity";
     const oldIdentifier = await client.evaluate(`window[${JSON.stringify(SCRIPT_ID_GLOBAL)}] || null`);
-    const [baseSource, claudeSource, managedShortcuts] = await Promise.all([
-      readFile(sourcePath, "utf8"),
-      readFile(claudeSourcePath, "utf8"),
-      readManagedShortcuts().catch((error) => {
-        // A malformed/unreadable private profile is not an intentionally empty
-        // configuration. Do not replace a working page with an empty shortcut set.
-        process.stderr.write(`[managed-shortcuts] profile unavailable (${error.name || "Error"}); keeping existing page\n`);
-        throw new Error("Managed shortcut profile could not be read");
-      }),
-    ]);
-    const userSource = baseSource + "\n" + claudeSource + "\n" + await readFile(agentSourcePath, "utf8") + "\n" + await readFile(openChatCutSourcePath, "utf8") + "\n" + await readOptionalThemeSource(root);
-    const sourceHash = createHash("sha256").update(userSource).update(JSON.stringify(managedShortcuts)).digest("hex");
+    const shortcuts = readManagedShortcuts().catch((error) => {
+      // Keep the existing page if its private shortcut profile is unavailable.
+      process.stderr.write(`[managed-shortcuts] profile unavailable (${error.name || "Error"}); keeping existing page\n`);
+      throw new Error("Managed shortcut profile could not be read");
+    });
+    const { source: userSource, sourceHash, managedShortcuts } = await readRendererSource(root, shortcuts);
     const rendererSource = guardEnhancementSource(`if (window.top === window) { window.__CODEX_SIDEBAR_RENDERER_TARGET_ID__ = ${JSON.stringify(target.id)}; window.__CODEX_SIDEBAR_MANAGED_SHORTCUTS__ = ${JSON.stringify(managedShortcuts)}; ${userSource}\n window.__AIYOUCODEX_RUNTIME_SOURCE_HASH__ = ${JSON.stringify(sourceHash)}; }`);
     if (enhancementClosing || !await isEnhancementEnabled()) throw new Error('AIYOUcodex enhancement is disabled');
     await client.evaluate(ENHANCEMENT_RESUME_EXPRESSION);
