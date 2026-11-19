@@ -251,9 +251,9 @@ Intel 和 Apple Silicon 有独立的[离线安装包](docs/OFFLINE-INSTALL.md)�
 2. 使用系统 Node.js，或 Codex/ChatGPT 桌面应用内置的 Node.js；
 3. 安装固定版本的本地项目管理看板、Skills 分组层、资产控制台和用户级 LaunchAgent，登录和应用重启后自动恢复；后台默认不会因为连接暂时不可用而退出或重启 Codex；
 4. 在 `~/Applications` 创建 **AIYOUcodex.app** 启动器，并自动移除旧名称的启动器；
-5. 打开启动器。首次启用时，如 Codex 正在运行，会重启一次以挂载增强界面。
+5. 打开启动器。如果 ChatGPT 或 Codex 已经以普通方式运行，启动器会聚焦现有窗口。要挂载增强界面，请在方便时完全退出宿主，再打开 AIYOUcodex。
 
-以后建议从 Spotlight、访达的“应用程序”或 `~/Applications` 打开 **AIYOUcodex**，让启动器配置增强端口。直接打开 Codex/ChatGPT 时，后台会连接已就绪的窗口；若缺少调试端口，默认保留当前对话并等待通过启动器重新打开。注入器只连接 `127.0.0.1:9231`。
+以后建议从 Spotlight、访达的“应用程序”或 `~/Applications` 打开 **AIYOUcodex**，让启动器配置增强端口。直接打开 Codex/ChatGPT 时，后台会连接已就绪的窗口；若缺少调试端口，默认保留当前对话并等待通过启动器重新打开。注入器只连接 `127.0.0.1:9231`。如果需要在会话空闲时自动重启宿主以启用增强，可在源码目录运行 `CODEX_SIDEBAR_ALLOW_HOST_RESTART=1 bash install.sh`。
 
 > 不想直接执行远程脚本？先[查看 install.sh](./install.sh)，或下载仓库后运行 `bash install.sh`。
 

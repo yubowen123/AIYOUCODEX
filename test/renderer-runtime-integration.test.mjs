@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, access, mkdtemp, rm } from "node:fs/promises";
+import { readFile, access, cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -15,11 +15,10 @@ import { EfficiencyBridge } from "../lib/efficiency-bridge.mjs";
 import { createSkillSearchController } from "../lib/skill-search.mjs";
 import { createLayaDocumentSearch } from "../lib/laya-document-search.mjs";
 import { SkillOrganizationBridge, createSkillOrganizationController } from "../lib/skill-organization.mjs";
-import { registerRendererSource, evaluateRendererSource, removeRendererScripts } from "../lib/renderer-source.mjs";
+import { readRendererSource, registerRendererSource, evaluateRendererSource, removeRendererScripts } from "../lib/renderer-source.mjs";
 import { guardEnhancementSource, ENHANCEMENT_TEARDOWN_EXPRESSION, ENHANCEMENT_RESUME_EXPRESSION } from '../lib/enhancement-state.mjs';
 
 const injectorSource = await readFile(new URL("../scripts/injector.mjs", import.meta.url), "utf8");
-const userSourcePath = new URL("../inject/conversation-preview.user.js", import.meta.url);
 function productionFunction(name) {
   const match = new RegExp(`(?:async )?function ${name}\\(`).exec(injectorSource);
   assert.ok(match, `Production function ${name} exists`);
@@ -76,7 +75,11 @@ test("production attach and delivery survive CDP reconnect; real document reload
   const shortcutLoaded = `(()=>{const frame=document.querySelector('iframe[data-codex-custom-shortcut-frame]');return !!frame&&frame.contentDocument?.readyState==='complete'&&frame.contentWindow.location.href===${JSON.stringify(`${origin}/panel`)}})()`;
   const assetVisible = "!!document.getElementById('codex-asset-console-frame')&&!document.getElementById('codex-asset-console-page').hidden";
   const assetLoaded = `(()=>{const frame=document.getElementById('codex-asset-console-frame'),page=document.getElementById('codex-asset-console-page');return !!frame&&!page.hidden&&page.dataset.state==='ready'&&frame.contentDocument?.readyState==='complete'&&new URL(frame.contentWindow.location.href).pathname==='/panel'})()`;
-  const oversizedThemeSource = "/*" + "x".repeat(106 * 1024 * 1024) + "*/window.__fixtureLargeTheme=true;";
+  const sourceRoot = path.join(profile, "renderer-source");
+  await mkdir(path.join(sourceRoot, "themes"), { recursive: true });
+  await cp(new URL("../inject/", import.meta.url), path.join(sourceRoot, "inject"), { recursive: true });
+  await writeFile(path.join(sourceRoot, "themes", "active-theme.js"),
+    "/*" + "x".repeat(106 * 1024 * 1024) + "*/window.__fixtureLargeTheme=true;");
   const shortcuts = [{ id: "local-fixture", name: "Local fixture", url: `${origin}/panel`, icon: "link", openMode: "internal", keepAlive: true }];
   const catalog = [{ projectId: "fixture-project", projectName: "Fixture project", threadId: "11111111-1111-4111-8111-111111111111", title: "Fixture thread", updatedAt: "2026-09-05T10:00:00Z" }];
   const history = { ...catalog[0], totalCount: 1, sourceSize: 100,
@@ -100,16 +103,13 @@ test("production attach and delivery survive CDP reconnect; real document reload
     }, EfficiencyBridge, SkillOrganizationBridge, createSkillOrganizationController,
     skillOrganizationStore: { read: async () => ({ version: 0, groups: [], assignments: {} }) },
     skillProvenance: { trace: async () => ({ status: "unassociated" }) },
-    SCRIPT_ID_GLOBAL: "__CODEX_CONVERSATION_PREVIEW_SCRIPT_IDENTIFIER__", readFile, sourcePath: userSourcePath,
-    claudeSourcePath: new URL("../inject/claude-code.user.js", import.meta.url),
-    root: path.resolve('test-theme-fixture'),
-    readOptionalThemeSource: async () => oversizedThemeSource,
+    SCRIPT_ID_GLOBAL: "__CODEX_CONVERSATION_PREVIEW_SCRIPT_IDENTIFIER__",
+    root: sourceRoot,
+    readRendererSource,
     claudeController: { request: async () => ({ available: false }) },
     CLAUDE_BINDING: "__AIYOUCODEX_CLAUDE_REQUEST__",
     agentWorkspace: { request: async () => ({ agents: [], receipts: [], version: 0 }) },
     AGENT_BINDING: "__AIYOUCODEX_AGENT_REQUEST__",
-    agentSourcePath: new URL("../inject/agent-workspace.user.js", import.meta.url),
-    openChatCutSourcePath: new URL("../inject/openchatcut.user.js", import.meta.url),
     openChatCutReady: Promise.resolve(), openChatCutOwnerTargetId: "",
     openChatCutController: { handle: async () => ({ state: "not-installed", installed: false }) },
     layaSearchController: { snapshot: () => ({ ready: false, enabled: false }), request: async () => ({ status: { ready: false, enabled: false } }) },

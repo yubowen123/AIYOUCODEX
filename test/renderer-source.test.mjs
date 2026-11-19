@@ -1,10 +1,33 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
-import { rendererScriptParts, registerRendererSource, evaluateRendererSource, removeRendererScripts } from '../lib/renderer-source.mjs';
+import { readRendererSource, rendererScriptParts, registerRendererSource, evaluateRendererSource, removeRendererScripts } from '../lib/renderer-source.mjs';
 
 const source = '/*' + ('x'.repeat(256 * 1024 - 3) + '😀\n').repeat(5) + '*/window.loaded=(window.loaded||0)+1;window.result="中文\\n🦊";';
 function documentContext() { const window = {}; window.top = window; return vm.createContext({ window }); }
+
+test('renderer fingerprint covers the complete script, optional theme and managed shortcuts', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'aiyou-renderer-source-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'inject'));
+  await mkdir(path.join(root, 'themes'));
+  const names = ['conversation-preview', 'claude-code', 'agent-workspace', 'openchatcut'];
+  await Promise.all(names.map(name => writeFile(path.join(root, 'inject', `${name}.user.js`), `// ${name}`)));
+  const shortcuts = [{ id: 'fixture' }];
+  const base = '// conversation-preview\n// claude-code\n// agent-workspace\n// openchatcut\n';
+  assert.equal((await readRendererSource(root, shortcuts)).source, base);
+
+  await writeFile(path.join(root, 'themes', 'active-theme.js'), '// theme');
+  const loaded = await readRendererSource(root, shortcuts);
+  assert.equal(loaded.source, base + '// theme');
+  const expected = createHash('sha256').update(base + '// theme').update('[{"id":"fixture"}]').digest('hex');
+  assert.equal(loaded.sourceHash, expected);
+  assert.notEqual((await readRendererSource(root, [])).sourceHash, expected);
+});
 
 test('preload reconstructs the exact Unicode program through bounded transfers', () => {
   const parts = rendererScriptParts(source);

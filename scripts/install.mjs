@@ -27,7 +27,10 @@ function parseArgs(argv) {
 }
 
 const options = parseArgs(process.argv.slice(2));
-const plan = createInstallPlan(options);
+const plan = createInstallPlan({
+  ...options,
+  allowHostRestart: process.env.CODEX_SIDEBAR_ALLOW_HOST_RESTART === "1",
+});
 
 if (options.dryRun) {
   process.stdout.write(`${JSON.stringify(plan)}\n`);

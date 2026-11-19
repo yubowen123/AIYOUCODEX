@@ -241,6 +241,18 @@ function mock_osascript() { print -r -- "UNEXPECTED osascript $*" >> "$AIYOU_TES
     assert.match(log, /kickstart gui\/.*com\.aiyoucodex\.theme-runtime/);
     assert.ok(log.includes(`open -a ${fakeApp}`));
     assert.doesNotMatch(log, /UNEXPECTED|kickstart -k|open .* -na/);
-    assert.match(plan.plist, /CODEX_SIDEBAR_ALLOW_HOST_RESTART<\/key>\s*<string>1<\/string>/);
+    assert.match(plan.plist, /CODEX_SIDEBAR_ALLOW_HOST_RESTART<\/key>\s*<string>0<\/string>/);
   } finally { await rm(testHome, {recursive: true, force: true}); }
+});
+
+test("macOS installation requires an explicit opt-in to restart the native app", () => {
+  for (const [value, expected] of [["", "0"], ["0", "0"], ["1", "1"]]) {
+    const result = spawnSync(process.execPath, ["scripts/install.mjs", "--dry-run"], {
+      encoding: "utf8",
+      env: { ...process.env, CODEX_SIDEBAR_ALLOW_HOST_RESTART: value },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const { plist } = JSON.parse(result.stdout);
+    assert.match(plist, new RegExp(`CODEX_SIDEBAR_ALLOW_HOST_RESTART</key>\\s*<string>${expected}</string>`));
+  }
 });
